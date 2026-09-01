@@ -1,0 +1,39 @@
+[package]
+name = "lc-wasm"
+description = "LC Code as a WebAssembly component: decode and encode over a WIT interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# `cdylib` for the component build, `rlib` so the logic is testable on the host.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# §14.1: the scanner build gets decode and nothing else, so it cannot acquire the encoder
+# by accident. The `scanner` world in wit/lc.wit exports only `decoder` to match.
+default = ["decode", "encode"]
+decode = []
+encode = ["dep:lc-encode", "dep:lc-render"]
+
+[dependencies]
+# `std` is on, deliberately. §14.2's bans are C dependencies and `getrandom`, not the
+# standard library, and neither appears in this tree. `no_std` is not an option in any
+# case: §4's colour conversions use `sqrt`, `powf`, `atan2` and `cbrt`, which live in
+# `std` rather than `core`, so `lc-core --no-default-features` does not compile. Taking a
+# `libm` dependency to change that was considered and declined — see D7.
+lc-core = { workspace = true, features = ["std", "deflate"] }
+lc-decode = { workspace = true, features = ["std", "deflate"] }
+lc-encode = { workspace = true, optional = true }
+lc-render = { workspace = true, optional = true }
+
+# Component Model bindings. Generates the guest side of wit/lc.wit; the `wasm32-wasip2`
+# target links the result into a component directly, so no `cargo-component` is needed.
+wit-bindgen = { version = "0.46", default-features = false, features = ["macros"] }
+
+[dev-dependencies]
+lc-encode = { workspace = true }
+lc-render = { workspace = true }
+wasmtime = { version = "34.0.2", default-features = false, features = ["cranelift", "component-model", "runtime", "std"] }

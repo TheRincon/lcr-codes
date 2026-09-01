@@ -1,0 +1,21 @@
+[package]
+name = "lc-decode"
+description = "LC Code decoder: detection, sampling, illumination fit, soft demodulation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std", "deflate"]
+std = ["lc-core/std"]
+deflate = ["lc-core/deflate"]
+brotli = ["lc-core/brotli"]
+
+[dependencies]
+lc-core = { workspace = true }
+
+[dev-dependencies]
+lc-encode = { workspace = true }
+lc-render = { workspace = true }

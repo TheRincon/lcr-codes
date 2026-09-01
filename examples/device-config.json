@@ -1,0 +1,1 @@
+{"dev":"sensor-14","fw":"2.3.1","net":{"host":"10.0.4.2","port":8883,"tls":true},"rate":30,"tags":["hvac","floor-3"],"cal":[1.004,-0.117,0.998]}

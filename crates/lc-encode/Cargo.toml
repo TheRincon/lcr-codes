@@ -1,0 +1,17 @@
+[package]
+name = "lc-encode"
+description = "LC Code encoder: framing, compression, ECC, masking, colourisation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std", "deflate"]
+std = ["lc-core/std"]
+deflate = ["lc-core/deflate"]
+brotli = ["lc-core/brotli"]
+
+[dependencies]
+lc-core = { workspace = true }

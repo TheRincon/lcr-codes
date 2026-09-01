@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lc-core",
+    "crates/lc-decode",
+    "crates/lc-encode",
+    "crates/lc-render",
+    "crates/lc-verify",
+    "crates/lc-wasm",
+    "crates/lc-ffi",
+    "crates/lc-cli",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/example/lc-code"
+authors = ["LC Code contributors"]
+
+[workspace.dependencies]
+lc-core   = { path = "crates/lc-core",   version = "0.4.0", default-features = false }
+lc-decode = { path = "crates/lc-decode", version = "0.4.0", default-features = false }
+lc-encode = { path = "crates/lc-encode", version = "0.4.0", default-features = false }
+lc-render = { path = "crates/lc-render", version = "0.4.0", default-features = false }
+lc-verify = { path = "crates/lc-verify", version = "0.4.0", default-features = false }
+
+miniz_oxide   = { version = "0.9", default-features = false, features = ["with-alloc"] }
+p256          = { version = "0.13", default-features = false, features = ["ecdsa", "sha256"] }
+ed25519-dalek = { version = "2",    default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Size-tuned profile used for the wasm scanner bundle (§14.2).
+[profile.wasm-min]
+inherits = "release"
+opt-level = "z"
+strip = true

@@ -1,0 +1,21 @@
+[package]
+name = "lc-render"
+description = "LC Code renderers: SVG, RGB raster, PNG"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std", "png"]
+std = ["lc-core/std"]
+png = ["dep:miniz_oxide"]
+
+[dependencies]
+lc-core = { workspace = true }
+miniz_oxide = { workspace = true, optional = true }
+
+[dev-dependencies]
+lc-encode = { workspace = true }
+lc-decode = { workspace = true }

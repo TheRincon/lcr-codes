@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# Runs the same checks CI does, before anything leaves the machine.
+#
+# pre-push rather than pre-commit, deliberately: this builds two wasm components and runs
+# the full suite in release mode, which is far too slow to sit between typing `git commit`
+# and getting your prompt back. Committing stays fast; pushing is where the gate belongs.
+#
+# Install with `just hooks`. Bypass with `git push --no-verify` when you genuinely need to.
+set -euo pipefail
+
+if ! command -v just >/dev/null 2>&1; then
+    echo "pre-push: just is not installed — skipping checks" >&2
+    exit 0
+fi
+
+echo "pre-push: running just ci"
+just ci

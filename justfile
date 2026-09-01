@@ -1,0 +1,186 @@
+# LC Code — project automation.
+#
+# Two layers, split by whether a task needs the project's own types:
+#
+#   * Recipes here orchestrate shells — builds, size gates, artifact generation.
+#   * `xtask` holds the tasks that must call into the crates. `capacity` recomputes the
+#     §6.1 table from `lc_core::capacity` rather than restating it, and `ldpc` generates
+#     the §8.2 base graphs, which the spec forbids building at runtime. No command runner
+#     can do either.
+#
+# The recipes below wrap xtask so `just --list` is the single front door.
+
+set shell := ["bash", "-uc"]
+
+# §14.2's budget for the decode-only component: 200 KB.
+#
+# Measured **raw**, not compressed. The spec says "gzipped" because it assumed a browser
+# bundle fetched over a network (D8); a component is loaded from disk by a host, so the
+# uncompressed size is the one that has to fit. The difference is not cosmetic — the
+# scanner is 93% of budget raw against 33% zstd-compressed, so the compressed figure would
+# report comfort that does not exist.
+scanner_budget := "204800"
+
+wasm_target := "wasm32-unknown-unknown"
+wasm_out := "target/wasm32-unknown-unknown/release/lc_wasm.wasm"
+
+_default:
+    @just --list --unsorted
+
+# ---------------------------------------------------------------- check
+
+# Everything CI should run.
+ci: fmt-check test wasm-size
+
+# Depends on `component` because `lc-wasm/tests/component.rs` loads the built artifact
+# from dist/ and runs it under wasmtime. Without that ordering the component tests would
+# either fail confusingly or, worse, pass against a stale build.
+
+# The whole test suite, including the component under wasmtime.
+test: component
+    cargo test --workspace --release
+
+# Just the native tests, skipping the component build. Faster inner loop.
+test-fast:
+    cargo test --workspace --release --exclude lc-wasm
+    cargo test -p lc-wasm --release --test surface
+
+# Build everything, including examples and tests, and fail on any warning.
+build:
+    cargo build --workspace --release --examples --tests
+
+fmt:
+    cargo fmt --all
+
+fmt-check:
+    cargo fmt --all -- --check
+
+clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+
+# ---------------------------------------------------------------- component
+
+# Build both wasm components: the full build and the decode-only scanner.
+component: _component-full _component-scanner
+    @ls -l dist/*.wasm | awk '{printf "  %-32s %8d bytes\n", $9, $5}'
+
+_dist:
+    @mkdir -p dist
+
+# Decode + encode.
+_component-full: _dist
+    cargo build -p lc-wasm --release --target {{wasm_target}}
+    wasm-tools component new {{wasm_out}} -o dist/lc-code.wasm
+    wasm-tools validate --features=component-model dist/lc-code.wasm
+
+# Decode only. §14.1 keeps the encoder out so a scanner cannot acquire it by accident.
+_component-scanner: _dist
+    cargo build -p lc-wasm --release --target {{wasm_target}} \
+        --no-default-features --features decode
+    wasm-tools component new {{wasm_out}} -o dist/lc-code-scanner.wasm
+    wasm-tools validate --features=component-model dist/lc-code-scanner.wasm
+
+# Print the WIT interface each component actually exports.
+component-wit: component
+    @echo "=== full"
+    @wasm-tools component wit dist/lc-code.wasm | grep -E '^\s*(import|export)'
+    @echo "=== scanner"
+    @wasm-tools component wit dist/lc-code-scanner.wasm | grep -E '^\s*(import|export)'
+
+# Gate the scanner component against §14.2's size budget (open decision #16).
+#
+# zstd rather than gzip for the transfer figure: ~10% smaller on these artifacts, and the
+# format anyone shipping a component today would reach for.
+wasm-size: component
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in dist/lc-code.wasm dist/lc-code-scanner.wasm; do
+        raw=$(wc -c < "$f")
+        zs=$(zstd -19 -c "$f" 2>/dev/null | wc -c)
+        printf "  %-28s raw %7d  zstd %7d\n" "$(basename $f)" "$raw" "$zs"
+    done
+    raw=$(wc -c < dist/lc-code-scanner.wasm)
+    pct=$(( raw * 100 / {{scanner_budget}} ))
+    echo "  scanner is ${pct}% of the §14.2 budget ({{scanner_budget}} bytes, raw)"
+    if [ "$raw" -gt "{{scanner_budget}}" ]; then
+        echo "  OVER BUDGET" >&2
+        exit 1
+    fi
+
+# Check the WIT interface parses and round-trips.
+wit-check:
+    wasm-tools component wit crates/lc-wasm/wit/lc.wit > /dev/null && echo "  wit ok"
+
+# ---------------------------------------------------------------- hosts
+
+# Build and run the C host trial against the built component.
+#
+# Proves §17.3's "embedding is cheap" claim from a non-Rust host. Needs the wasmtime C
+# API; `WASMTIME_C_API` may point at an unpacked release, otherwise this falls back to
+# the copy bundled in the wasmtime-go module cache — which is there because that module
+# ships a component-capable C library its own Go bindings do not expose (see D9).
+c-host: component
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="${WASMTIME_C_API:-}"
+    if [ -z "$root" ]; then
+        root=$(ls -d "$(go env GOMODCACHE 2>/dev/null)"/github.com/bytecodealliance/wasmtime-go/v*@* 2>/dev/null | tail -1)/build
+    fi
+    if [ ! -d "$root/include" ]; then
+        echo "wasmtime C API not found. Set WASMTIME_C_API to an unpacked" >&2
+        echo "wasmtime-c-api release, or 'go get github.com/bytecodealliance/wasmtime-go/v34'." >&2
+        exit 1
+    fi
+    case "$(uname -s)-$(uname -m)" in
+        Darwin-arm64) plat=macos-aarch64;   libs="-framework Security -framework CoreFoundation" ;;
+        Darwin-x86_64) plat=macos-x86_64;   libs="-framework Security -framework CoreFoundation" ;;
+        Linux-aarch64) plat=linux-aarch64;  libs="-lpthread -ldl -lm" ;;
+        Linux-x86_64) plat=linux-x86_64;    libs="-lpthread -ldl -lm" ;;
+        *) echo "unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+    esac
+    mkdir -p target/c-host
+    cc -std=c11 -O2 -Wall -I"$root/include" examples/c-host/main.c \
+        "$root/$plat/libwasmtime.a" $libs -o target/c-host/lc-host
+    ./target/c-host/lc-host
+
+# ---------------------------------------------------------------- artifacts
+
+# Regenerate examples/ — a symbol per payload, each decoded before it is written.
+gallery:
+    cargo run -p lc-render --release --example gallery -- examples
+
+# What JSON-shaped payloads cost, end to end.
+payload-sizes:
+    cargo run -p lc-decode --release --example json
+
+# Sweep each degradation to find where decoding stops working.
+envelope:
+    cargo run -p lc-decode --release --example envelope
+
+# Print detection internals for a degraded capture.
+diagnose:
+    cargo run -p lc-decode --release --example diagnose
+
+# ---------------------------------------------------------------- codegen (xtask)
+
+# Regenerate the §8.2 LDPC base graphs. §8.2 forbids generating these at runtime.
+ldpc:
+    cargo run --release -p xtask -- ldpc > crates/lc-core/src/ecc/tables.rs
+    cargo fmt --all
+
+# Recompute the §6.1 capacity table from the real layout (open decision #8).
+capacity:
+    cargo run --release -p xtask -- capacity
+
+# ---------------------------------------------------------------- git
+
+# Point git at the tracked hooks. Run once per clone.
+hooks:
+    git config core.hooksPath .githooks
+    @echo '  hooks installed — .githooks/pre-push runs: just ci'
+
+# ---------------------------------------------------------------- housekeeping
+
+clean:
+    cargo clean
+    rm -rf dist

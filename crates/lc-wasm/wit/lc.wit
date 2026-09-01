@@ -1,0 +1,200 @@
+// LC Code as a WebAssembly component (§14.2, §17.3).
+//
+// §14.2 was written around a browser — `Uint8ClampedArray` from canvas `getImageData`,
+// a gzipped bundle served over the network. This interface targets the Component Model
+// instead, so the consumer is a host application embedding a wasm runtime rather than a
+// page. The argument in §17.3 is unchanged and if anything stronger: a typed, versioned
+// interface lets a host in Rust, Go, C or C++ add LC Code support with no native
+// dependency and no hand-written ABI.
+//
+// Design notes that are not obvious from the types:
+//
+//   * `packet` is a variant, not a record with an optional body, so the §10.8 guarantee
+//     survives the interface boundary: `unverified` has no payload to extract, and
+//     `partial` yields a `prefix` that cannot be mistaken for a `body`. A host cannot
+//     read unverified content by forgetting to check a flag.
+//   * Diagnostics are not optional. §14.3 keeps them because "colour codes fail for
+//     diagnosable reasons", and a scanning UI needs `snr-db` and `chroma-recovered` to
+//     tell a user to move closer or tilt away from glare.
+//   * Errors are strings rather than an enum. The set is open — new decode failures are
+//     expected as the §15 harness grows — and a host's only sane response to any of them
+//     is to retry or report, so an exhaustive enum would buy nothing.
+
+package lc:code@0.4.0;
+
+interface types {
+  /// Colour configuration (§5).
+  enum profile {
+    /// Monochrome fallback, 1.00 bits/module.
+    mono,
+    /// Screen default: 4 colours, co-sited chroma.
+    c1,
+    /// Print default: 4 colours, 2x2 chroma cells.
+    c2,
+    /// 8 colours, 2x2 cells. Optional.
+    c3,
+  }
+
+  /// Wire content type (§9.2).
+  enum content-type {
+    opaque,
+    text,
+    json,
+    cbor,
+    cose-sign1,
+    multipart,
+  }
+
+  /// Pixel layout of a supplied frame.
+  enum pixel-format {
+    /// One byte per pixel. Chroma is unavailable, so only the luma layer decodes.
+    gray8,
+    /// Three bytes per pixel.
+    rgb8,
+    /// Four bytes per pixel; the fourth is ignored.
+    rgba8,
+  }
+
+  /// Compression applied to the framed body (§9.3).
+  enum compression {
+    none,
+    deflate,
+    brotli,
+  }
+
+  /// A decoded body and what it is.
+  record payload {
+    ctype: content-type,
+    body: list<u8>,
+  }
+
+  /// The result of a decode (§14.3).
+  variant packet {
+    /// Decoded and carries no signature — the §1.2 common case.
+    unsigned(payload),
+    /// Signature verified against a host-supplied key.
+    verified(payload),
+    /// Well-formed COSE, not verified. No body, by construction (§10.8).
+    unverified,
+    /// A luma-only prefix (§12.5). A **diagnostic**, not content: it has no CRC to check
+    /// until the whole frame arrives, and §8.1 forbids acting on it.
+    partial(list<u8>),
+  }
+
+  /// Why a decode went the way it did (§14.3).
+  record diagnostics {
+    luma-iterations: u16,
+    chroma-iterations: u16,
+    /// False means the chroma layer was unrecoverable.
+    chroma-recovered: bool,
+    /// RMS residual of the §12.3 illumination fit, in linear light.
+    illum-residual-rms: f32,
+    /// References discarded by §12.3's robust refit. High means glare.
+    references-rejected: u8,
+    /// Per-module luma SNR. The most useful single number for user guidance.
+    snr-db: f32,
+    /// Frames combined before decoding (§12.4).
+    frames-combined: u8,
+    /// Symbol version, 1..=32.
+    version: u8,
+    profile: profile,
+    /// Confidence margin of the winning format-region copy.
+    format-margin: f32,
+    /// Whether a full homography was fitted rather than an affine fallback.
+    alignment-found: bool,
+  }
+
+  record decode-result {
+    packet: packet,
+    diagnostics: diagnostics,
+  }
+
+  /// A captured frame.
+  record image {
+    pixels: list<u8>,
+    width: u32,
+    height: u32,
+    /// Bytes per row. May exceed width * channels for a padded camera plane.
+    stride: u32,
+    format: pixel-format,
+  }
+}
+
+/// Reading symbols (§12).
+interface decoder {
+  use types.{image, decode-result};
+
+  /// Decode a single frame.
+  decode: func(img: image) -> result<decode-result, string>;
+
+  /// Multi-frame LLR combining (§12.4), which the spec calls "the single best use of a
+  /// live camera preview": banding and glare move between frames, so accumulating soft
+  /// information across them is far cheaper than tightening the code rate.
+  resource accumulator {
+    constructor();
+    /// Add a frame.
+    push: func(img: image) -> result<_, string>;
+    /// How many frames have been combined.
+    frames: func() -> u8;
+    /// Attempt a decode from everything pushed so far.
+    try-decode: func() -> result<decode-result, string>;
+    /// Discard accumulated frames.
+    reset: func();
+  }
+}
+
+/// Writing symbols (§8).
+interface encoder {
+  use types.{profile, compression};
+
+  /// Encoding knobs. `version` and `mask` are chosen automatically when absent, and
+  /// `compression` is chosen by trying each and keeping the smallest — which at LC Code
+  /// payload sizes is frequently no compression at all (§9.3).
+  record options {
+    profile: profile,
+    version: option<u8>,
+    ecc-luma: u8,
+    ecc-chroma: u8,
+    compression: option<compression>,
+    /// Emit the §6.4 screen reference border. Costs no payload capacity — it lives
+    /// outside the symbol grid — and materially improves decoding under glare.
+    reference-border: bool,
+    mask: option<u8>,
+  }
+
+  /// A rendered symbol.
+  record rendered {
+    /// Row-major RGB triples, width * height * 3 bytes.
+    pixels: list<u8>,
+    width: u32,
+    height: u32,
+    /// Symbol version actually used.
+    version: u8,
+    /// Grid side in modules, excluding the quiet zone.
+    side: u32,
+  }
+
+  /// Encode JSON. Converted to CBOR first — §9.4's "author in JSON, transmit CBOR".
+  encode-json: func(json: string, opts: options, module-px: u32) -> result<rendered, string>;
+
+  /// Encode UTF-8 text.
+  encode-text: func(text: string, opts: options, module-px: u32) -> result<rendered, string>;
+
+  /// Encode opaque bytes.
+  encode-bytes: func(data: list<u8>, opts: options, module-px: u32) -> result<rendered, string>;
+
+  /// Encode JSON and render to SVG rather than pixels.
+  encode-json-svg: func(json: string, opts: options, module-px: u32) -> result<string, string>;
+}
+
+/// Decode only — the scanner build. §14.1 keeps the encoder out so a scanner cannot
+/// acquire it by accident.
+world scanner {
+  export decoder;
+}
+
+/// Decode and encode.
+world lc-code {
+  export decoder;
+  export encoder;
+}
