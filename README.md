@@ -14,7 +14,7 @@ shipped as a **WebAssembly component**.
 
 ## What it looks like
 
-<img src="examples/event-admission.png" width="240" alt="An LC Code symbol">
+<img src="examples/profile-c3.png" width="360" alt="An LC Code symbol">
 
 Three finder bullseyes and an alignment marker do the geometry — rendered in black and
 white only, so detection works before any colour processing exists. The colour carries the
