@@ -71,7 +71,15 @@ pub fn cell_index(x: i32, y: i32, side: u16, colors: usize) -> Option<usize> {
     let s = side as i32;
     let out_x = x < 0 || x >= s;
     let out_y = y < 0 || y >= s;
-    let depth = |c: i32| if c < 0 { -c } else if c >= s { c - s + 1 } else { 0 };
+    let depth = |c: i32| {
+        if c < 0 {
+            -c
+        } else if c >= s {
+            c - s + 1
+        } else {
+            0
+        }
+    };
     let t = if out_y && !out_x {
         x
     } else if out_x && !out_y {
@@ -93,9 +101,9 @@ pub fn cell_color(x: i32, y: i32, side: u16, palette: &Palette) -> Option<Srgb8>
 pub fn cells(side: u16) -> impl Iterator<Item = (i32, i32)> {
     let lo = -(QUIET + WIDTH);
     let hi = side as i32 + QUIET + WIDTH;
-    (lo..hi).flat_map(move |y| (lo..hi).map(move |x| (x, y))).filter(move |&(x, y)| {
-        (QUIET + 1..=QUIET + WIDTH).contains(&shell(x, y, side))
-    })
+    (lo..hi)
+        .flat_map(move |y| (lo..hi).map(move |x| (x, y)))
+        .filter(move |&(x, y)| (QUIET + 1..=QUIET + WIDTH).contains(&shell(x, y, side)))
 }
 
 #[cfg(test)]
@@ -123,7 +131,11 @@ mod tests {
         for y in -8..(side as i32 + 8) {
             for x in -8..(side as i32 + 8) {
                 let d = shell(x, y, side);
-                assert_eq!(cell_index(x, y, side, 4).is_some(), (3..=4).contains(&d), "({x},{y})");
+                assert_eq!(
+                    cell_index(x, y, side, 4).is_some(),
+                    (3..=4).contains(&d),
+                    "({x},{y})"
+                );
             }
         }
     }
@@ -157,7 +169,10 @@ mod tests {
                 .map(|c| c.to_hex())
                 .collect();
             for i in 0..cycle_len(palette.len()) {
-                assert!(seen.contains(&cycle_color(&palette, i).to_hex()), "{profile:?} missing {i}");
+                assert!(
+                    seen.contains(&cycle_color(&palette, i).to_hex()),
+                    "{profile:?} missing {i}"
+                );
             }
             assert!(seen.contains(&BORDER_WHITE.to_hex()));
             assert!(seen.contains(&BORDER_BLACK.to_hex()));

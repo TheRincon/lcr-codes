@@ -142,7 +142,12 @@ impl Layout {
             // extended one module past the corner so the finder is fully enclosed.
             let (sx, sy) = (ox as i32, oy as i32);
             for i in -1i32..=7 {
-                for &(px, py) in &[(sx + 7, sy + i), (sx - 1, sy + i), (sx + i, sy + 7), (sx + i, sy - 1)] {
+                for &(px, py) in &[
+                    (sx + 7, sy + i),
+                    (sx - 1, sy + i),
+                    (sx + i, sy + 7),
+                    (sx + i, sy - 1),
+                ] {
                     if px >= 0 && py >= 0 && (px as u16) < side && (py as u16) < side {
                         let (px, py) = (px as u16, py as u16);
                         if *roles.at(px, py) == ModuleRole::Payload {
@@ -188,7 +193,13 @@ impl Layout {
         // 5. Palette anchors: 2k per finder, cycling the palette once.
         let n_anchors = 2 * profile.hues();
         for corner in [Corner::TopLeft, Corner::TopRight, Corner::BottomLeft] {
-            let cells = claim(&mut roles, corner, side, n_anchors, ModuleRole::PaletteAnchor);
+            let cells = claim(
+                &mut roles,
+                corner,
+                side,
+                n_anchors,
+                ModuleRole::PaletteAnchor,
+            );
             for (i, &(x, y)) in cells.iter().enumerate() {
                 ref_color.set(x, y, (i % n_colors) as u8);
             }
@@ -251,9 +262,10 @@ impl Layout {
             ModuleRole::PaletteAnchor | ModuleRole::Reference => {
                 Some(palette.colors[*self.ref_color.at(x, y) as usize])
             }
-            ModuleRole::Finder | ModuleRole::Separator | ModuleRole::Timing | ModuleRole::Alignment => {
-                self.fixed.at(x, y).map(|l| palette.luma_only(l))
-            }
+            ModuleRole::Finder
+            | ModuleRole::Separator
+            | ModuleRole::Timing
+            | ModuleRole::Alignment => self.fixed.at(x, y).map(|l| palette.luma_only(l)),
             _ => None,
         }
     }
@@ -275,12 +287,18 @@ pub fn alignment_centers(version: Version) -> Vec<(u16, u16)> {
     let last = side - 7;
     let span = last - 6;
     // As few steps as keeps every spacing at or under 28 modules.
-    let count: u16 = if v <= 13 { 2 } else { 2 + span.div_ceil(28).saturating_sub(1) };
+    let count: u16 = if v <= 13 {
+        2
+    } else {
+        2 + span.div_ceil(28).saturating_sub(1)
+    };
     let coords: Vec<u16> = if count == 2 {
         alloc::vec![6, last]
     } else {
         let step = 2 * (span as f32 / (2 * (count - 1)) as f32).round() as u16;
-        let mut c: Vec<u16> = (0..count - 1).map(|i| last - (count - 2 - i) * step).collect();
+        let mut c: Vec<u16> = (0..count - 1)
+            .map(|i| last - (count - 2 - i) * step)
+            .collect();
         c.insert(0, 6);
         c
     };
@@ -289,7 +307,8 @@ pub fn alignment_centers(version: Version) -> Vec<(u16, u16)> {
     for &cy in &coords {
         for &cx in &coords {
             // Skip the three that would sit on a finder.
-            let on_finder = (cx == 6 && cy == 6) || (cx == 6 && cy == last) || (cx == last && cy == 6);
+            let on_finder =
+                (cx == 6 && cy == 6) || (cx == 6 && cy == last) || (cx == last && cy == 6);
             if !on_finder {
                 out.push((cx, cy));
             }
@@ -456,8 +475,20 @@ mod tests {
     #[test]
     fn every_version_and_profile_allocates_without_collision() {
         for l in all_layouts() {
-            assert_eq!(l.format_cells[0].len(), 30, "v{} {:?}", l.version.get(), l.profile);
-            assert_eq!(l.format_cells[1].len(), 30, "v{} {:?}", l.version.get(), l.profile);
+            assert_eq!(
+                l.format_cells[0].len(),
+                30,
+                "v{} {:?}",
+                l.version.get(),
+                l.profile
+            );
+            assert_eq!(
+                l.format_cells[1].len(),
+                30,
+                "v{} {:?}",
+                l.version.get(),
+                l.profile
+            );
 
             let mut seen = ModuleGrid::new(l.side, 0u8);
             for copy in &l.format_cells {
@@ -467,7 +498,12 @@ mod tests {
                     seen.set(x, y, 1);
                 }
             }
-            let anchors = l.roles.cells().iter().filter(|r| **r == PaletteAnchor).count();
+            let anchors = l
+                .roles
+                .cells()
+                .iter()
+                .filter(|r| **r == PaletteAnchor)
+                .count();
             assert_eq!(anchors, 3 * 2 * l.profile.hues(), "v{}", l.version.get());
         }
     }
@@ -507,11 +543,20 @@ mod tests {
     fn every_version_has_usable_payload() {
         for l in all_layouts() {
             let cap = l.capacity();
-            assert!(cap.luma_bits > 0, "v{} {:?} has no payload", l.version.get(), l.profile);
+            assert!(
+                cap.luma_bits > 0,
+                "v{} {:?} has no payload",
+                l.version.get(),
+                l.profile
+            );
         }
         // v1 C1 is the tightest case in the whole format; assert it is not degenerate.
         let v1 = Layout::new(Version::new(1).unwrap(), Profile::C1);
-        assert!(v1.capacity().total() >= 240, "v1 C1 total {:?}", v1.capacity());
+        assert!(
+            v1.capacity().total() >= 240,
+            "v1 C1 total {:?}",
+            v1.capacity()
+        );
     }
 
     /// §5 quotes 1.00 / 2.00 / 1.25 / 1.50 bits per module. `M` and `C1` hit their
@@ -534,10 +579,26 @@ mod tests {
             let l = Layout::new(v, p);
             l.capacity().total() as f32 / l.payload.len() as f32
         };
-        assert!((ratio(Profile::M) - 1.00).abs() < 0.001, "{}", ratio(Profile::M));
-        assert!((ratio(Profile::C1) - 2.00).abs() < 0.001, "{}", ratio(Profile::C1));
-        assert!((ratio(Profile::C2) - 1.227).abs() < 0.01, "{}", ratio(Profile::C2));
-        assert!((ratio(Profile::C3) - 1.455).abs() < 0.01, "{}", ratio(Profile::C3));
+        assert!(
+            (ratio(Profile::M) - 1.00).abs() < 0.001,
+            "{}",
+            ratio(Profile::M)
+        );
+        assert!(
+            (ratio(Profile::C1) - 2.00).abs() < 0.001,
+            "{}",
+            ratio(Profile::C1)
+        );
+        assert!(
+            (ratio(Profile::C2) - 1.227).abs() < 0.01,
+            "{}",
+            ratio(Profile::C2)
+        );
+        assert!(
+            (ratio(Profile::C3) - 1.455).abs() < 0.01,
+            "{}",
+            ratio(Profile::C3)
+        );
     }
 
     #[test]
@@ -562,7 +623,11 @@ mod tests {
             runs.push(n);
             runs
         };
-        assert_eq!(runs, alloc::vec![1, 1, 3, 1, 1, 1], "dark/light runs across finder: {runs:?}");
+        assert_eq!(
+            runs,
+            alloc::vec![1, 1, 3, 1, 1, 1],
+            "dark/light runs across finder: {runs:?}"
+        );
     }
 
     #[test]
@@ -602,7 +667,10 @@ mod tests {
         let refs = l.roles.cells().iter().filter(|r| **r == Reference).count();
         let payload_area = refs + l.payload.len();
         let overhead = refs as f32 / payload_area as f32;
-        assert!((0.013..0.020).contains(&overhead), "reference overhead {overhead}");
+        assert!(
+            (0.013..0.020).contains(&overhead),
+            "reference overhead {overhead}"
+        );
     }
 
     #[test]

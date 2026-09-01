@@ -42,7 +42,10 @@ impl ModuleRole {
     /// to fit the §12.3 illumination model.
     #[inline]
     pub const fn is_reference(self) -> bool {
-        matches!(self, ModuleRole::PaletteAnchor | ModuleRole::Reference | ModuleRole::Border)
+        matches!(
+            self,
+            ModuleRole::PaletteAnchor | ModuleRole::Reference | ModuleRole::Border
+        )
     }
 }
 
@@ -56,7 +59,10 @@ pub struct ModuleGrid<T> {
 impl<T: Clone> ModuleGrid<T> {
     /// Fill a `side × side` grid with `fill`.
     pub fn new(side: u16, fill: T) -> ModuleGrid<T> {
-        ModuleGrid { side, cells: vec![fill; side as usize * side as usize].into_boxed_slice() }
+        ModuleGrid {
+            side,
+            cells: vec![fill; side as usize * side as usize].into_boxed_slice(),
+        }
     }
 }
 
@@ -81,13 +87,22 @@ impl<T> ModuleGrid<T> {
     /// Read `(x, y)`, or `None` if out of bounds.
     #[inline]
     pub fn get(&self, x: u16, y: u16) -> Option<&T> {
-        if self.contains(x, y) { Some(&self.cells[self.idx(x, y)]) } else { None }
+        if self.contains(x, y) {
+            Some(&self.cells[self.idx(x, y)])
+        } else {
+            None
+        }
     }
 
     /// Mutable access to `(x, y)`, or `None` if out of bounds.
     #[inline]
     pub fn get_mut(&mut self, x: u16, y: u16) -> Option<&mut T> {
-        if self.contains(x, y) { let i = self.idx(x, y); Some(&mut self.cells[i]) } else { None }
+        if self.contains(x, y) {
+            let i = self.idx(x, y);
+            Some(&mut self.cells[i])
+        } else {
+            None
+        }
     }
 
     /// Read `(x, y)`. Panics if out of bounds.
@@ -128,7 +143,12 @@ impl<T> ModuleGrid<T> {
     pub fn map<U>(&self, f: impl FnMut(&T) -> U) -> ModuleGrid<U> {
         ModuleGrid {
             side: self.side,
-            cells: self.cells.iter().map(f).collect::<Vec<U>>().into_boxed_slice(),
+            cells: self
+                .cells
+                .iter()
+                .map(f)
+                .collect::<Vec<U>>()
+                .into_boxed_slice(),
         }
     }
 }

@@ -6,32 +6,57 @@
 #![allow(dead_code)]
 
 use lc_core::{Compression, Profile};
-use lc_decode::image::{ImageView, PixelFormat, binarize};
 use lc_decode::detect;
+use lc_decode::image::{ImageView, PixelFormat, binarize};
 use lc_encode::EncodeOptions;
 use lc_render::{Raster, RenderOptions, render_rgb};
 
 include!("../tests/support/ops.rs");
 
 fn main() {
-    let opts = EncodeOptions { profile: Profile::C1, reference_border: true,
-        compression: Some(Compression::None), ..Default::default() };
-    let data: Vec<u8> = (0..96u8).map(|i| i.wrapping_mul(101).wrapping_add(29)).collect();
+    let opts = EncodeOptions {
+        profile: Profile::C1,
+        reference_border: true,
+        compression: Some(Compression::None),
+        ..Default::default()
+    };
+    let data: Vec<u8> = (0..96u8)
+        .map(|i| i.wrapping_mul(101).wrapping_add(29))
+        .collect();
     let sym = lc_encode::encode_bytes(&data, &opts).unwrap();
-    println!("true version v{} side {}", sym.format.version.get(), sym.format.version.side());
-    let base = render_rgb(&sym, &RenderOptions { module_px: 12, ..RenderOptions::screen() });
+    println!(
+        "true version v{} side {}",
+        sym.format.version.get(),
+        sym.format.version.side()
+    );
+    let base = render_rgb(
+        &sym,
+        &RenderOptions {
+            module_px: 12,
+            ..RenderOptions::screen()
+        },
+    );
 
     for tilt in [0.0f32, 0.1, 0.2, 0.3, 0.4] {
         let r = perspective(&base, tilt, 0.0);
-        let view = ImageView::new(&r.data, r.width, r.height, r.width * 3, PixelFormat::Rgb8).unwrap();
+        let view =
+            ImageView::new(&r.data, r.width, r.height, r.width * 3, PixelFormat::Rgb8).unwrap();
         let bin = binarize(&view.gray_buffer(), r.width, r.height).denoised();
         let cands = detect::find_finders(&bin);
         print!("tilt {tilt:>4}: {} candidates", cands.len());
         match detect::detect(&bin) {
             Some(d) => {
-                let m: Vec<String> = d.finders.iter().map(|f| format!("{:.1}", f.module)).collect();
-                println!(", est v{}, modules [{}], alignment {:?}",
-                    d.version.get(), m.join(", "), d.alignment.map(|a| (a.0 as i32, a.1 as i32)));
+                let m: Vec<String> = d
+                    .finders
+                    .iter()
+                    .map(|f| format!("{:.1}", f.module))
+                    .collect();
+                println!(
+                    ", est v{}, modules [{}], alignment {:?}",
+                    d.version.get(),
+                    m.join(", "),
+                    d.alignment.map(|a| (a.0 as i32, a.1 as i32))
+                );
             }
             None => {
                 if cands.len() >= 3 {
@@ -44,9 +69,19 @@ fn main() {
                     let (n1, n2) = (n(tl, tr), n(tl, bl));
                     let cos = (v1.0 * v2.0 + v1.1 * v2.1) / (n1 * n2);
                     let mean = (tl.module + tr.module + bl.module) / 3.0;
-                    let spread = [tl, tr, bl].iter().map(|f| (f.module - mean).abs()).fold(0.0f32, f32::max);
-                    println!(", DETECTION FAILED: |cos|={:.3} ratio={:.3} spread/mean={:.3} modules=[{:.1},{:.1},{:.1}]",
-                        cos.abs(), (n1 / n2).max(n2 / n1), spread / mean, tl.module, tr.module, bl.module);
+                    let spread = [tl, tr, bl]
+                        .iter()
+                        .map(|f| (f.module - mean).abs())
+                        .fold(0.0f32, f32::max);
+                    println!(
+                        ", DETECTION FAILED: |cos|={:.3} ratio={:.3} spread/mean={:.3} modules=[{:.1},{:.1},{:.1}]",
+                        cos.abs(),
+                        (n1 / n2).max(n2 / n1),
+                        spread / mean,
+                        tl.module,
+                        tr.module,
+                        bl.module
+                    );
                 } else {
                     println!(", DETECTION FAILED: only {} candidates", cands.len());
                 }

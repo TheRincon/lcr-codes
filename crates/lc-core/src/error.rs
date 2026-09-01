@@ -78,11 +78,17 @@ impl fmt::Display for LcError {
             LcError::BadFrame => write!(f, "malformed container frame"),
             LcError::CrcMismatch => write!(f, "frame CRC mismatch"),
             LcError::BadContentType(t) => write!(f, "reserved content type {t:#x}"),
-            LcError::UnsupportedCompression(c) => write!(f, "unsupported compression flag {c:#04b}"),
+            LcError::UnsupportedCompression(c) => {
+                write!(f, "unsupported compression flag {c:#04b}")
+            }
             LcError::CompressionFailed => write!(f, "compression codec failed"),
             LcError::FormatUndecodable => write!(f, "both format region copies failed BCH decode"),
             LcError::EccFailure { luma } => {
-                write!(f, "{} layer LDPC did not converge", if *luma { "luma" } else { "chroma" })
+                write!(
+                    f,
+                    "{} layer LDPC did not converge",
+                    if *luma { "luma" } else { "chroma" }
+                )
             }
             LcError::NotFound => write!(f, "no LC Code symbol found"),
             LcError::BadGeometry => write!(f, "finder geometry is not a plausible symbol"),

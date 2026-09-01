@@ -42,9 +42,8 @@ fn capacity_table() -> String {
     use lc_core::capacity::capacity;
     use lc_core::version::{EccLevel, Profile, Version};
 
-    let mut s = String::from(
-        "| Version | Side | M | C1 | C2 | C3 |\n|---:|---:|---:|---:|---:|---:|\n",
-    );
+    let mut s =
+        String::from("| Version | Side | M | C1 | C2 | C3 |\n|---:|---:|---:|---:|---:|---:|\n");
     for v in Version::all() {
         let _ = write!(s, "| {} | {} |", v.get(), v.side());
         for p in [Profile::M, Profile::C1, Profile::C2, Profile::C3] {
@@ -65,7 +64,14 @@ struct Base {
 }
 
 fn main_rates() -> [(usize, &'static str); 6] {
-    [(85, "R085"), (75, "R075"), (65, "R065"), (55, "R055"), (45, "R045"), (35, "R035")]
+    [
+        (85, "R085"),
+        (75, "R075"),
+        (65, "R065"),
+        (55, "R055"),
+        (45, "R045"),
+        (35, "R035"),
+    ]
 }
 
 /// Parity-column incidence, fixed by the §8.2 encoder structure.
@@ -128,7 +134,11 @@ fn peg(n_b: usize, k_b: usize) -> Vec<[u8; DV]> {
                 (0..m_b)
                     .filter(|r| !taken.contains(r))
                     .max_by_key(|&r| {
-                        let d = if depth[r] == usize::MAX { usize::MAX } else { depth[r] };
+                        let d = if depth[r] == usize::MAX {
+                            usize::MAX
+                        } else {
+                            depth[r]
+                        };
                         // Deepest first, then lowest degree, then lowest index.
                         (d, usize::MAX - row_adj[r].len(), usize::MAX - r)
                     })
@@ -149,7 +159,9 @@ fn peg(n_b: usize, k_b: usize) -> Vec<[u8; DV]> {
 /// close a four-cycle at another. Scoring against a spread of lifts covering the real
 /// operating range — v1 chroma layers lift by 2, v32 luma layers by ~324 — gives a single
 /// table that behaves at both ends.
-const TEST_Z: [u16; 17] = [2, 3, 4, 5, 6, 7, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256, 324];
+const TEST_Z: [u16; 17] = [
+    2, 3, 4, 5, 6, 7, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256, 324,
+];
 
 /// Assign shifts greedily, minimising four-cycles across [`TEST_Z`].
 fn assign_shifts(n_b: usize, k_b: usize, rows: &[[u8; DV]], seed: u64) -> Vec<[(u8, u16); DV]> {
@@ -159,7 +171,9 @@ fn assign_shifts(n_b: usize, k_b: usize, rows: &[[u8; DV]], seed: u64) -> Vec<[(
     let mut by_row: Vec<Vec<(usize, usize)>> = vec![Vec::new(); m_b]; // (col, edge index)
     let mut rng = seed;
     let mut next = || {
-        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (rng >> 33) as u32
     };
 
@@ -216,13 +230,20 @@ fn assign_shifts(n_b: usize, k_b: usize, rows: &[[u8; DV]], seed: u64) -> Vec<[(
         }
     }
 
-    (0..k_b).map(|j| core::array::from_fn(|e| (rows[j][e], shift[j][e]))).collect()
+    (0..k_b)
+        .map(|j| core::array::from_fn(|e| (rows[j][e], shift[j][e])))
+        .collect()
 }
 
 fn build(n_b: usize, rate_pct: usize, seed: u64) -> Base {
     let k_b = (n_b * rate_pct / 100).min(n_b - MIN_MB).max(1);
     let rows = peg(n_b, k_b);
-    Base { n_b, k_b, m_b: n_b - k_b, info: assign_shifts(n_b, k_b, &rows, seed) }
+    Base {
+        n_b,
+        k_b,
+        m_b: n_b - k_b,
+        info: assign_shifts(n_b, k_b, &rows, seed),
+    }
 }
 
 /// Count residual four-cycles at a given lift, for the report emitted alongside the table.
@@ -237,7 +258,9 @@ fn four_cycles(b: &Base, z: u16) -> usize {
                             if e == e2 || f == f2 {
                                 continue;
                             }
-                            if b.info[j][e].0 != b.info[j2][f].0 || b.info[j][e2].0 != b.info[j2][f2].0 {
+                            if b.info[j][e].0 != b.info[j2][f].0
+                                || b.info[j][e2].0 != b.info[j2][f2].0
+                            {
                                 continue;
                             }
                             let d = b.info[j][e].1 as i64 - b.info[j2][f].1 as i64
@@ -273,7 +296,10 @@ fn generate_tables() -> String {
          //! spread of lift sizes the format actually uses, since `shift(Z) = shift₀ mod Z`\n\
          //! makes cycle structure lift-dependent.\n\n",
     );
-    let _ = writeln!(s, "/// Information-column degree of every base graph.\npub const DV: usize = {DV};\n");
+    let _ = writeln!(
+        s,
+        "/// Information-column degree of every base graph.\npub const DV: usize = {DV};\n"
+    );
     let _ = writeln!(
         s,
         "/// One information column: `DV` `(base row, shift)` pairs.\npub type Column = [(u8, u16); DV];\n"
@@ -306,7 +332,11 @@ fn generate_tables() -> String {
                 b.m_b
             );
             let _ = writeln!(s, "pub static {ident}: BaseGraph = BaseGraph {{");
-            let _ = writeln!(s, "    n_b: {},\n    k_b: {},\n    m_b: {},", b.n_b, b.k_b, b.m_b);
+            let _ = writeln!(
+                s,
+                "    n_b: {},\n    k_b: {},\n    m_b: {},",
+                b.n_b, b.k_b, b.m_b
+            );
             let _ = writeln!(s, "    info: &{ident}_INFO,");
             let _ = writeln!(s, "}};\n");
             let _ = writeln!(s, "static {ident}_INFO: [Column; {}] = [", b.k_b);
@@ -319,9 +349,15 @@ fn generate_tables() -> String {
             }
             s.push_str("];\n\n");
 
-            let c4: Vec<String> =
-                [2u16, 8, 32, 128, 324].iter().map(|&z| format!("Z={z}:{}", four_cycles(&b, z))).collect();
-            let _ = writeln!(report, "//! * `{ident}` residual four-cycles — {}", c4.join(", "));
+            let c4: Vec<String> = [2u16, 8, 32, 128, 324]
+                .iter()
+                .map(|&z| format!("Z={z}:{}", four_cycles(&b, z)))
+                .collect();
+            let _ = writeln!(
+                report,
+                "//! * `{ident}` residual four-cycles — {}",
+                c4.join(", ")
+            );
         }
     }
 
@@ -332,9 +368,16 @@ fn generate_tables() -> String {
         ("SMALL", "small family (`n_b = 20`)"),
         ("TINY", "tiny family (`n_b = 10`)"),
     ] {
-        let names: Vec<String> = main_rates().iter().map(|(_, n)| format!("{n}_{family}")).collect();
+        let names: Vec<String> = main_rates()
+            .iter()
+            .map(|(_, n)| format!("{n}_{family}"))
+            .collect();
         let _ = writeln!(s, "/// Base graphs by rate index, {doc}.");
-        let _ = writeln!(s, "pub static BY_RATE_{family}: [&BaseGraph; 6] = [&{}];\n", names.join(", &"));
+        let _ = writeln!(
+            s,
+            "pub static BY_RATE_{family}: [&BaseGraph; 6] = [&{}];\n",
+            names.join(", &")
+        );
     }
 
     s.push_str("\n// Construction report, for the record:\n");

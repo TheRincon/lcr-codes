@@ -18,7 +18,10 @@ use lc_render::{RenderOptions, render_rgb};
 /// sizes those families actually occur at.
 const CASES: &[(&str, &str)] = &[
     ("contact (§6.1)", r#"{"name":"Fred","loc":"45.00,55.0"}"#),
-    ("location fix", r#"{"lat":51.4779,"lon":-0.0015,"acc":8,"t":1756512000}"#),
+    (
+        "location fix",
+        r#"{"lat":51.4779,"lon":-0.0015,"acc":8,"t":1756512000}"#,
+    ),
     (
         "allergen profile (App. A)",
         r#"{"allergens":["gluten","peanuts","milk"],"severity":"anaphylaxis"}"#,
@@ -66,7 +69,13 @@ fn main() {
         // Decode the render rather than the encoder's own bit buffer, so the round-trip
         // goes through the real sampling path. 10 px/module is §13.1's preferred pitch;
         // note that its normative floor of 8 does not currently detect at all.
-        let raster = render_rgb(&sym, &RenderOptions { module_px: 10, ..RenderOptions::screen() });
+        let raster = render_rgb(
+            &sym,
+            &RenderOptions {
+                module_px: 10,
+                ..RenderOptions::screen()
+            },
+        );
         let out = Decoder::new()
             .decode_rgb(&raster.data, raster.width, raster.height, raster.width * 3)
             .expect("decodes");
@@ -103,10 +112,17 @@ fn main() {
 fn profile_comparison() {
     let json = CASES[6].1;
     println!("`{}` at each profile:", CASES[6].0);
-    println!("{:<10} {:>5} {:>6} {:>9}", "profile", "ver", "side", "modules");
+    println!(
+        "{:<10} {:>5} {:>6} {:>9}",
+        "profile", "ver", "side", "modules"
+    );
 
     for profile in [Profile::M, Profile::C1, Profile::C2, Profile::C3] {
-        let opts = EncodeOptions { profile, reference_border: true, ..Default::default() };
+        let opts = EncodeOptions {
+            profile,
+            reference_border: true,
+            ..Default::default()
+        };
         match lc_encode::encode_json(json, &opts) {
             Ok(sym) => {
                 let side = sym.format.version.side();
@@ -148,14 +164,24 @@ fn round_trip_shape() {
         sym.format.mask,
     );
 
-    let raster = render_rgb(&sym, &RenderOptions { module_px: 10, ..RenderOptions::screen() });
+    let raster = render_rgb(
+        &sym,
+        &RenderOptions {
+            module_px: 10,
+            ..RenderOptions::screen()
+        },
+    );
     let out = Decoder::new()
         .decode_rgb(&raster.data, raster.width, raster.height, raster.width * 3)
         .unwrap();
     let d = &out.diagnostics;
     println!(
         "  decode       luma {} iters, chroma {} iters, chroma recovered {}, snr {:.1} dB, illum residual {:.4}",
-        d.luma_iterations, d.chroma_iterations, d.chroma_recovered, d.estimated_snr_db, d.illum_residual_rms,
+        d.luma_iterations,
+        d.chroma_iterations,
+        d.chroma_recovered,
+        d.estimated_snr_db,
+        d.illum_residual_rms,
     );
     if let Packet::Unsigned { body, .. } = &out.packet {
         let back = lc_core::cbor::Value::from_slice(body).unwrap();

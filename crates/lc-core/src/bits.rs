@@ -18,17 +18,26 @@ pub struct BitVec {
 impl BitVec {
     /// Empty buffer.
     pub const fn new() -> BitVec {
-        BitVec { bytes: Vec::new(), len: 0 }
+        BitVec {
+            bytes: Vec::new(),
+            len: 0,
+        }
     }
 
     /// Empty buffer with room for `bits` bits.
     pub fn with_capacity(bits: usize) -> BitVec {
-        BitVec { bytes: Vec::with_capacity(bits.div_ceil(8)), len: 0 }
+        BitVec {
+            bytes: Vec::with_capacity(bits.div_ceil(8)),
+            len: 0,
+        }
     }
 
     /// Wrap whole bytes, MSB of `bytes[0]` becoming bit 0.
     pub fn from_bytes(bytes: &[u8]) -> BitVec {
-        BitVec { bytes: bytes.to_vec(), len: bytes.len() * 8 }
+        BitVec {
+            bytes: bytes.to_vec(),
+            len: bytes.len() * 8,
+        }
     }
 
     /// Number of bits held.

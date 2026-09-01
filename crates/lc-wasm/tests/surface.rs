@@ -25,7 +25,13 @@ fn render(json: &str, profile: Profile) -> Raster {
         ..Default::default()
     };
     let sym = lc_encode::encode_json(json, &opts).unwrap();
-    render_rgb(&sym, &RenderOptions { module_px: 10, ..RenderOptions::screen() })
+    render_rgb(
+        &sym,
+        &RenderOptions {
+            module_px: 10,
+            ..RenderOptions::screen()
+        },
+    )
 }
 
 fn to_rgba(r: &Raster) -> Vec<u8> {
@@ -49,8 +55,8 @@ fn to_gray(r: &Raster) -> Vec<u8> {
 fn decodes_rgba_as_a_host_would_supply_it() {
     let r = render(JSON, Profile::C1);
     let rgba = to_rgba(&r);
-    let out = lc_wasm::decode(&rgba, r.width, r.height, r.width * 4, PixelFormat::Rgba8)
-        .expect("decode");
+    let out =
+        lc_wasm::decode(&rgba, r.width, r.height, r.width * 4, PixelFormat::Rgba8).expect("decode");
 
     match &out.packet {
         DecodedPacket::Unsigned { ctype, .. } => assert_eq!(*ctype, ContentType::Cbor),
@@ -84,14 +90,16 @@ fn a_monochrome_symbol_decodes_through_a_grey_sensor() {
 fn a_colour_symbol_through_a_grey_sensor_fails_closed() {
     let c = render(JSON, Profile::C1);
     let out = lc_wasm::decode(&to_gray(&c), c.width, c.height, c.width, PixelFormat::Gray8);
-    assert!(out.is_err(), "a C1 symbol read through grey must not report success");
+    assert!(
+        out.is_err(),
+        "a C1 symbol read through grey must not report success"
+    );
 }
 
 #[test]
 fn diagnostics_describe_a_clean_capture() {
     let r = render(JSON, Profile::C1);
-    let out =
-        lc_wasm::decode(&r.data, r.width, r.height, r.width * 3, PixelFormat::Rgb8).unwrap();
+    let out = lc_wasm::decode(&r.data, r.width, r.height, r.width * 3, PixelFormat::Rgb8).unwrap();
     let d = &out.diagnostics;
 
     assert_eq!(d.version, 2, "the §6.1 worked example is a v2 symbol");
@@ -108,7 +116,10 @@ fn absent_and_malformed_input_are_errors_not_panics() {
     let px = |d: &[u8], w: u32, h: u32| lc_wasm::decode(d, w, h, w * 4, PixelFormat::Rgba8);
 
     // Blank frame: no symbol to find.
-    assert!(matches!(px(&vec![255u8; 200 * 200 * 4], 200, 200), Err(WasmError::Lc(_))));
+    assert!(matches!(
+        px(&vec![255u8; 200 * 200 * 4], 200, 200),
+        Err(WasmError::Lc(_))
+    ));
     // Buffer smaller than the stated geometry.
     assert!(matches!(px(&[0u8; 16], 100, 100), Err(WasmError::Lc(_))));
     // Zero dimensions.
@@ -122,14 +133,19 @@ fn unverified_and_partial_expose_no_body() {
     assert_eq!(DecodedPacket::Unverified.body(), None);
     assert_eq!(DecodedPacket::Unverified.as_json(), None);
 
-    let partial = DecodedPacket::Partial { prefix: vec![1, 2, 3] };
+    let partial = DecodedPacket::Partial {
+        prefix: vec![1, 2, 3],
+    };
     assert_eq!(partial.body(), None, "a prefix is a diagnostic, not a body");
     assert_eq!(partial.as_json(), None);
 }
 
 #[test]
 fn as_json_answers_only_for_cbor() {
-    let text = DecodedPacket::Unsigned { ctype: ContentType::Text, body: b"hello".to_vec() };
+    let text = DecodedPacket::Unsigned {
+        ctype: ContentType::Text,
+        body: b"hello".to_vec(),
+    };
     assert_eq!(text.as_json(), None);
     assert_eq!(text.body(), Some(&b"hello"[..]));
 }
@@ -147,7 +163,8 @@ fn accumulator_combines_frames() {
     assert_eq!(acc.frames(), 0);
 
     for _ in 0..3 {
-        acc.push(&rgba, r.width, r.height, r.width * 4, PixelFormat::Rgba8).expect("push");
+        acc.push(&rgba, r.width, r.height, r.width * 4, PixelFormat::Rgba8)
+            .expect("push");
     }
     assert_eq!(acc.frames(), 3);
 
@@ -173,9 +190,14 @@ fn encodes_json_and_decodes_it_back() {
     assert_eq!(out.side, 25);
     assert_eq!(out.pixels.len(), (out.width * out.height * 3) as usize);
 
-    let back =
-        lc_wasm::decode(&out.pixels, out.width, out.height, out.width * 3, PixelFormat::Rgb8)
-            .expect("round-trip");
+    let back = lc_wasm::decode(
+        &out.pixels,
+        out.width,
+        out.height,
+        out.width * 3,
+        PixelFormat::Rgb8,
+    )
+    .expect("round-trip");
     assert_eq!(back.packet.as_json().as_deref(), Some(JSON));
 }
 
@@ -198,12 +220,20 @@ fn encodes_text_and_bytes() {
 #[test]
 fn encodes_every_profile() {
     for profile in [Profile::M, Profile::C1, Profile::C2, Profile::C3] {
-        let opts = EncodeOptions { profile, ..Default::default() };
+        let opts = EncodeOptions {
+            profile,
+            ..Default::default()
+        };
         let out =
             lc_wasm::encode_json(JSON, &opts, 10).unwrap_or_else(|e| panic!("{profile:?}: {e}"));
-        let back =
-            lc_wasm::decode(&out.pixels, out.width, out.height, out.width * 3, PixelFormat::Rgb8)
-                .unwrap_or_else(|e| panic!("{profile:?} round-trip: {e}"));
+        let back = lc_wasm::decode(
+            &out.pixels,
+            out.width,
+            out.height,
+            out.width * 3,
+            PixelFormat::Rgb8,
+        )
+        .unwrap_or_else(|e| panic!("{profile:?} round-trip: {e}"));
         assert_eq!(back.packet.as_json().as_deref(), Some(JSON), "{profile:?}");
     }
 }
@@ -227,15 +257,24 @@ fn refuses_a_module_pitch_below_the_normative_floor() {
             Some(WasmError::ModulePitchTooSmall(px))
         );
     }
-    assert!(lc_wasm::encode_json(JSON, &opts, 8).is_ok(), "8 is the floor, not below it");
+    assert!(
+        lc_wasm::encode_json(JSON, &opts, 8).is_ok(),
+        "8 is the floor, not below it"
+    );
 }
 
 #[test]
 fn rejects_options_outside_their_ranges() {
-    let bad_version = EncodeOptions { version: Some(99), ..Default::default() };
+    let bad_version = EncodeOptions {
+        version: Some(99),
+        ..Default::default()
+    };
     assert!(lc_wasm::encode_json(JSON, &bad_version, 10).is_err());
 
-    let bad_ecc = EncodeOptions { ecc_luma: 9, ..Default::default() };
+    let bad_ecc = EncodeOptions {
+        ecc_luma: 9,
+        ..Default::default()
+    };
     assert!(lc_wasm::encode_json(JSON, &bad_ecc, 10).is_err());
 }
 

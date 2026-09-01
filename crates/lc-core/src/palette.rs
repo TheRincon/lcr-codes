@@ -190,7 +190,11 @@ impl Palette {
 
     /// Build from an explicit colour list. `colors.len()` must be `2 · hues`.
     pub fn new(hues: usize, colors: &[Srgb8]) -> Palette {
-        assert_eq!(colors.len(), 2 * hues, "palette must be 2 luma levels × k hues");
+        assert_eq!(
+            colors.len(),
+            2 * hues,
+            "palette must be 2 luma levels × k hues"
+        );
         let linear: Vec<Linear> = colors.iter().map(|&c| color::srgb8_to_linear(c)).collect();
         let lab: Vec<Lab> = linear.iter().map(|&c| color::linear_to_lab(c)).collect();
 
@@ -207,7 +211,14 @@ impl Palette {
             })
             .collect();
 
-        Palette { hues, colors: colors.to_vec(), linear, lab, hue_ab, level_l }
+        Palette {
+            hues,
+            colors: colors.to_vec(),
+            linear,
+            lab,
+            hue_ab,
+            level_l,
+        }
     }
 
     /// Number of colours, `2 · k`.
@@ -305,7 +316,12 @@ impl Palette {
             min_chroma = f32::INFINITY;
         }
 
-        let m = PaletteMetrics { inter_level_gap, intra_level_spread, min_hue_sep, min_chroma };
+        let m = PaletteMetrics {
+            inter_level_gap,
+            intra_level_spread,
+            min_hue_sep,
+            min_chroma,
+        };
 
         if inter_level_gap < 40.0 {
             return Err("§4.2 inter-level luma gap below 40");
@@ -368,8 +384,18 @@ mod tests {
 
     #[test]
     fn palettes_match_their_derivations() {
-        assert_eq!(derive_c4(), C4_COLORS, "C4_COLORS drifted; expected {}", show(&derive_c4()));
-        assert_eq!(derive_c3(), C8_COLORS, "C8_COLORS drifted; expected {}", show(&derive_c3()));
+        assert_eq!(
+            derive_c4(),
+            C4_COLORS,
+            "C4_COLORS drifted; expected {}",
+            show(&derive_c4())
+        );
+        assert_eq!(
+            derive_c3(),
+            C8_COLORS,
+            "C8_COLORS drifted; expected {}",
+            show(&derive_c3())
+        );
     }
 
     /// Locks in *why* the shipped palette departs from the printed spec, so the
@@ -377,7 +403,10 @@ mod tests {
     #[test]
     fn spec_4_3_palette_is_recorded_as_non_conforming() {
         let p = Palette::new(2, &SPEC_4_3_COLORS);
-        assert_eq!(p.validate().err(), Some("§4.2 intra-level luma spread above 12"));
+        assert_eq!(
+            p.validate().err(),
+            Some("§4.2 intra-level luma spread above 12")
+        );
 
         // The structural failure the scalar bounds miss: a hue state must mean the same
         // hue at both luma levels, or chroma demodulation cannot be independent of luma.
@@ -408,8 +437,8 @@ mod tests {
         let p = Palette::for_profile(Profile::C1);
         assert_eq!(p.color(false, 0), C4_COLORS[0]); // L0 H0
         assert_eq!(p.color(false, 1), C4_COLORS[1]); // L0 H1
-        assert_eq!(p.color(true, 0), C4_COLORS[2]);  // L1 H0
-        assert_eq!(p.color(true, 1), C4_COLORS[3]);  // L1 H1
+        assert_eq!(p.color(true, 0), C4_COLORS[2]); // L1 H0
+        assert_eq!(p.color(true, 1), C4_COLORS[3]); // L1 H1
 
         let q = Palette::for_profile(Profile::C3);
         for l in 0..2 {
@@ -430,7 +459,10 @@ mod tests {
             for i in 0..p.len() {
                 let is_light = i >= p.hues;
                 assert_eq!(p.lab[i].l > mid, is_light, "{prof:?} colour {i}");
-                assert!((p.lab[i].l - mid).abs() > 15.0, "{prof:?} colour {i} too close to mid");
+                assert!(
+                    (p.lab[i].l - mid).abs() > 15.0,
+                    "{prof:?} colour {i} too close to mid"
+                );
             }
         }
     }

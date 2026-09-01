@@ -20,7 +20,9 @@ pub struct Transform {
 
 impl Transform {
     /// Identity.
-    pub const IDENTITY: Transform = Transform { m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0] };
+    pub const IDENTITY: Transform = Transform {
+        m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+    };
 
     /// Fit from four module→pixel correspondences.
     ///
@@ -40,7 +42,9 @@ impl Transform {
             b[r1] = y;
         }
         let h = solve(&mut a, &mut b, 8)?;
-        Some(Transform { m: [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]] })
+        Some(Transform {
+            m: [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]],
+        })
     }
 
     /// Fit an affine transform from three correspondences.
@@ -60,7 +64,9 @@ impl Transform {
             b[r1] = dst[i].1 as f64;
         }
         let h = solve(&mut a, &mut b, 6)?;
-        Some(Transform { m: [h[0], h[1], h[2], h[3], h[4], h[5], 0.0, 0.0] })
+        Some(Transform {
+            m: [h[0], h[1], h[2], h[3], h[4], h[5], 0.0, 0.0],
+        })
     }
 
     /// Map a module-space point to pixel space.
@@ -124,13 +130,14 @@ mod tests {
         let dst = [(0.0, 0.0), (100.0, 0.0), (20.0, 100.0), (80.0, 100.0)];
         let t = Transform::from_quad(src, dst).unwrap();
         for (s, d) in src.iter().zip(dst.iter()) {
-            assert!(close(t.apply(s.0, s.1), *d, 1e-3), "{s:?} -> {:?} want {d:?}", t.apply(s.0, s.1));
+            assert!(
+                close(t.apply(s.0, s.1), *d, 1e-3),
+                "{s:?} -> {:?} want {d:?}",
+                t.apply(s.0, s.1)
+            );
         }
-        let affine = Transform::from_triangle(
-            [src[0], src[1], src[2]],
-            [dst[0], dst[1], dst[2]],
-        )
-        .unwrap();
+        let affine =
+            Transform::from_triangle([src[0], src[1], src[2]], [dst[0], dst[1], dst[2]]).unwrap();
         // The affine fit must miss the fourth point badly.
         assert!(!close(affine.apply(src[3].0, src[3].1), dst[3], 5.0));
     }
@@ -168,6 +175,9 @@ mod tests {
         let src = [(0.0, 0.0), (20.0, 0.0), (0.0, 20.0), (20.0, 20.0)];
         let dst = [(0.0, 0.0), (200.0, 0.0), (40.0, 200.0), (160.0, 200.0)];
         let t = Transform::from_quad(src, dst).unwrap();
-        assert!(t.local_pitch(10, 1) > t.local_pitch(10, 18), "near edge should be coarser");
+        assert!(
+            t.local_pitch(10, 1) > t.local_pitch(10, 18),
+            "near edge should be coarser"
+        );
     }
 }

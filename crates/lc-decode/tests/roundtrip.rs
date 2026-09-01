@@ -7,17 +7,31 @@ use lc_render::{RenderOptions, render_rgb};
 
 fn roundtrip(data: &[u8], enc: &EncodeOptions, module_px: u32) -> Result<Packet, String> {
     let sym = lc_encode::encode_bytes(data, enc).map_err(|e| format!("encode: {e}"))?;
-    let raster = render_rgb(&sym, &RenderOptions { module_px, ..RenderOptions::screen() });
+    let raster = render_rgb(
+        &sym,
+        &RenderOptions {
+            module_px,
+            ..RenderOptions::screen()
+        },
+    );
     let decoder = Decoder::new();
     decoder
         .decode_rgb(&raster.data, raster.width, raster.height, raster.width * 3)
         .map(|out| out.packet)
-        .map_err(|e| format!("decode v{} {:?}: {e}", sym.format.version.get(), enc.profile))
+        .map_err(|e| {
+            format!(
+                "decode v{} {:?}: {e}",
+                sym.format.version.get(),
+                enc.profile
+            )
+        })
 }
 
 #[test]
 fn clean_capture_roundtrips_every_profile() {
-    let data: Vec<u8> = (0..80u8).map(|i| i.wrapping_mul(37).wrapping_add(11)).collect();
+    let data: Vec<u8> = (0..80u8)
+        .map(|i| i.wrapping_mul(37).wrapping_add(11))
+        .collect();
     for profile in Profile::ALL {
         let opts = EncodeOptions {
             profile,
@@ -81,7 +95,10 @@ fn reference_border_roundtrips() {
         compression: Some(Compression::None),
         ..Default::default()
     };
-    assert!(matches!(roundtrip(&data, &opts, 10), Ok(Packet::Unsigned { .. })));
+    assert!(matches!(
+        roundtrip(&data, &opts, 10),
+        Ok(Packet::Unsigned { .. })
+    ));
 }
 
 #[test]
@@ -106,7 +123,10 @@ fn every_ecc_level_roundtrips() {
     let data = vec![7u8; 40];
     for level in 0..4u8 {
         let opts = EncodeOptions {
-            ecc: EccLevel { luma: level, chroma: level },
+            ecc: EccLevel {
+                luma: level,
+                chroma: level,
+            },
             compression: Some(Compression::None),
             ..Default::default()
         };
@@ -146,7 +166,10 @@ fn monochrome_capture_decodes_the_m_profile() {
 #[test]
 fn monochrome_capture_of_a_colour_symbol_yields_a_partial() {
     let data = vec![0x33u8; 120];
-    let opts = EncodeOptions { compression: Some(Compression::None), ..Default::default() };
+    let opts = EncodeOptions {
+        compression: Some(Compression::None),
+        ..Default::default()
+    };
     let sym = lc_encode::encode_bytes(&data, &opts).unwrap();
     let raster = render_rgb(&sym, &RenderOptions::screen());
     let gray: Vec<u8> = raster
@@ -157,7 +180,9 @@ fn monochrome_capture_of_a_colour_symbol_yields_a_partial() {
 
     let strict = Decoder::new();
     assert!(
-        strict.decode_gray(&gray, raster.width, raster.height, raster.width).is_err(),
+        strict
+            .decode_gray(&gray, raster.width, raster.height, raster.width)
+            .is_err(),
         "a partial must not be returned unless the caller opts in"
     );
 
@@ -165,7 +190,9 @@ fn monochrome_capture_of_a_colour_symbol_yields_a_partial() {
         allow_partial: true,
         ..Default::default()
     });
-    let out = lenient.decode_gray(&gray, raster.width, raster.height, raster.width).unwrap();
+    let out = lenient
+        .decode_gray(&gray, raster.width, raster.height, raster.width)
+        .unwrap();
     match out.packet {
         Packet::Partial { prefix } => {
             assert!(!prefix.is_empty());
@@ -195,9 +222,21 @@ fn diagnostics_describe_a_clean_capture() {
     assert!(d.format.reference_border);
     assert!(d.chroma_recovered);
     assert!(d.format_margin > 0.0);
-    assert!(d.alignment_found, "v{} should have an alignment marker", sym.format.version.get());
-    assert!(d.estimated_snr_db > 10.0, "clean render SNR {}", d.estimated_snr_db);
-    assert!(d.illum_residual_rms < 0.05, "residual {}", d.illum_residual_rms);
+    assert!(
+        d.alignment_found,
+        "v{} should have an alignment marker",
+        sym.format.version.get()
+    );
+    assert!(
+        d.estimated_snr_db > 10.0,
+        "clean render SNR {}",
+        d.estimated_snr_db
+    );
+    assert!(
+        d.illum_residual_rms < 0.05,
+        "residual {}",
+        d.illum_residual_rms
+    );
     assert_eq!(d.frames_combined, 1);
 }
 
@@ -205,7 +244,9 @@ fn diagnostics_describe_a_clean_capture() {
 fn no_symbol_is_reported_not_guessed() {
     let blank = vec![255u8; 200 * 200 * 3];
     assert!(Decoder::new().decode_rgb(&blank, 200, 200, 600).is_err());
-    let noise: Vec<u8> = (0..200 * 200 * 3).map(|i| (i * 2654435761u64 as usize >> 5) as u8).collect();
+    let noise: Vec<u8> = (0..200 * 200 * 3)
+        .map(|i| (i * 2654435761u64 as usize >> 5) as u8)
+        .collect();
     assert!(Decoder::new().decode_rgb(&noise, 200, 200, 600).is_err());
 }
 
@@ -231,9 +272,11 @@ fn degenerate_payloads_roundtrip_across_versions_and_profiles() {
                 continue;
             }
             let n = cap.body_bytes - 8;
-            for (label, data) in
-                [("zeros", vec![0x00u8; n]), ("ones", vec![0xFFu8; n]), ("0x5A", vec![0x5Au8; n])]
-            {
+            for (label, data) in [
+                ("zeros", vec![0x00u8; n]),
+                ("ones", vec![0xFFu8; n]),
+                ("0x5A", vec![0x5Au8; n]),
+            ] {
                 let opts = EncodeOptions {
                     version: Some(version),
                     profile,

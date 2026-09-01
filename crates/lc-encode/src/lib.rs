@@ -72,17 +72,28 @@ impl Default for EncodeOptions {
 impl EncodeOptions {
     /// Screen defaults: `C1`, reference border on (§6.4 costs pixels nobody was using).
     pub fn screen() -> EncodeOptions {
-        EncodeOptions { profile: Profile::C1, reference_border: true, ..Default::default() }
+        EncodeOptions {
+            profile: Profile::C1,
+            reference_border: true,
+            ..Default::default()
+        }
     }
 
     /// Print defaults: `C2`, no reference border (§5, §13.3).
     pub fn print() -> EncodeOptions {
-        EncodeOptions { profile: Profile::C2, reference_border: false, ..Default::default() }
+        EncodeOptions {
+            profile: Profile::C2,
+            reference_border: false,
+            ..Default::default()
+        }
     }
 
     /// Monochrome fallback for worst-case media.
     pub fn monochrome() -> EncodeOptions {
-        EncodeOptions { profile: Profile::M, ..Default::default() }
+        EncodeOptions {
+            profile: Profile::M,
+            ..Default::default()
+        }
     }
 }
 
@@ -91,7 +102,11 @@ pub fn encode(data: &[u8], ctype: ContentType, opts: &EncodeOptions) -> Result<S
     let frame = match opts.compression {
         None => Frame::compressed(ctype, data)?,
         Some(Compression::None) => Frame::new(ctype, data.to_vec())?,
-        Some(c) => Frame { ctype, cflag: c, body: lc_core::frame::compress(c, data)? },
+        Some(c) => Frame {
+            ctype,
+            cflag: c,
+            body: lc_core::frame::compress(c, data)?,
+        },
     };
     encode_frame(&frame, opts)
 }
@@ -148,19 +163,26 @@ fn encode_bits(bits: &BitVec, layout: &Layout, opts: &EncodeOptions) -> Result<S
     let chroma_code = if cap.chroma_bits == 0 {
         None
     } else {
-        Some(Code::new(CHROMA_RATE_INDEX[opts.ecc.chroma as usize & 3], cap.chroma_bits)?)
+        Some(Code::new(
+            CHROMA_RATE_INDEX[opts.ecc.chroma as usize & 3],
+            cap.chroma_bits,
+        )?)
     };
 
     let k_luma = luma_code.info_bits();
     let k_chroma = chroma_code.as_ref().map_or(0, Code::info_bits);
     let available = k_luma + k_chroma;
     if bits.len() > available {
-        return Err(LcError::Capacity { needed: bits.len(), available });
+        return Err(LcError::Capacity {
+            needed: bits.len(),
+            available,
+        });
     }
 
     // §8.1: luma-first. The luma layer holds a complete prefix of the packet, so a
     // decoder that recovers no chroma at all still recovers a prefix (§12.5).
-    let take = |from: usize, n: usize| -> Vec<bool> { (0..n).map(|i| bits.get(from + i)).collect() };
+    let take =
+        |from: usize, n: usize| -> Vec<bool> { (0..n).map(|i| bits.get(from + i)).collect() };
     let luma_info = take(0, k_luma);
     let chroma_info = take(k_luma, k_chroma);
 
@@ -179,7 +201,8 @@ fn encode_bits(bits: &BitVec, layout: &Layout, opts: &EncodeOptions) -> Result<S
         mask: m,
         reference_border: opts.reference_border,
     };
-    let render = |m: u8| -> Symbol { modulate::modulate(layout, make_format(m), &luma_cw, &chroma_cw) };
+    let render =
+        |m: u8| -> Symbol { modulate::modulate(layout, make_format(m), &luma_cw, &chroma_cw) };
 
     let chosen = match opts.mask {
         Some(m) => m & 7,
@@ -219,7 +242,10 @@ mod tests {
             all.push(b);
         }
         if cap.chroma_bits > 0 {
-            let cc = Code::new(CHROMA_RATE_INDEX[sym.format.ecc.chroma as usize], cap.chroma_bits)?;
+            let cc = Code::new(
+                CHROMA_RATE_INDEX[sym.format.ecc.chroma as usize],
+                cap.chroma_bits,
+            )?;
             let llr: Vec<f32> = Interleaver::new(cap.chroma_bits)
                 .deinterleave(&chroma_cw)
                 .iter()
@@ -259,7 +285,10 @@ mod tests {
     fn auto_version_selects_the_smallest_that_fits() {
         for n in [0usize, 1, 20, 100, 500, 2000] {
             let data = alloc::vec![0xA5u8; n];
-            let opts = EncodeOptions { compression: Some(Compression::None), ..Default::default() };
+            let opts = EncodeOptions {
+                compression: Some(Compression::None),
+                ..Default::default()
+            };
             let sym = encode_bytes(&data, &opts).unwrap();
             let v = sym.format.version;
             assert!(capacity(v, Profile::C1, EccLevel::DEFAULT).body_bytes >= n);
@@ -282,15 +311,26 @@ mod tests {
     #[test]
     fn a_small_json_object_fits_a_tiny_symbol() {
         // §6.1's worked example.
-        let sym = encode_json(r#"{"name":"Fred","loc":"45.00,55.0"}"#, &EncodeOptions::default()).unwrap();
-        assert!(sym.format.version.get() <= 2, "needed v{}", sym.format.version.get());
+        let sym = encode_json(
+            r#"{"name":"Fred","loc":"45.00,55.0"}"#,
+            &EncodeOptions::default(),
+        )
+        .unwrap();
+        assert!(
+            sym.format.version.get() <= 2,
+            "needed v{}",
+            sym.format.version.get()
+        );
     }
 
     #[test]
     fn the_luma_prefix_is_recoverable_without_chroma() {
         // §8.1 / §12.5: chroma total loss must still leave a packet prefix.
         let data: Vec<u8> = (0..200u8).collect();
-        let opts = EncodeOptions { compression: Some(Compression::None), ..Default::default() };
+        let opts = EncodeOptions {
+            compression: Some(Compression::None),
+            ..Default::default()
+        };
         let sym = encode_bytes(&data, &opts).unwrap();
         let layout = sym.layout();
         let cap = layout.capacity();
@@ -304,11 +344,17 @@ mod tests {
         let bits = code.decode(&llr, 50).unwrap().bits;
 
         // The recovered luma bits must be a prefix of the framed packet.
-        let full = Frame::new(ContentType::Opaque, data.clone()).unwrap().to_bits().unwrap();
+        let full = Frame::new(ContentType::Opaque, data.clone())
+            .unwrap()
+            .to_bits()
+            .unwrap();
         for (i, b) in bits.iter().take(full.len()).enumerate() {
             assert_eq!(*b, full.get(i), "luma prefix diverges at bit {i}");
         }
-        assert!(bits.len() * 8 > full.len(), "luma layer should hold a meaningful prefix");
+        assert!(
+            bits.len() * 8 > full.len(),
+            "luma layer should hold a meaningful prefix"
+        );
     }
 
     #[test]
@@ -332,27 +378,39 @@ mod tests {
     fn the_chosen_mask_beats_a_forced_bad_one_on_flat_data() {
         // All-zero payload is the pathological case masking exists for.
         let data = alloc::vec![0u8; 300];
-        let auto = encode_bytes(&data, &EncodeOptions {
-            compression: Some(Compression::None),
-            ..Default::default()
-        })
+        let auto = encode_bytes(
+            &data,
+            &EncodeOptions {
+                compression: Some(Compression::None),
+                ..Default::default()
+            },
+        )
         .unwrap();
         let auto_score = mask::penalty(&auto.luma_grid());
         for m in 0..8u8 {
-            let forced = encode_bytes(&data, &EncodeOptions {
-                mask: Some(m),
-                compression: Some(Compression::None),
-                ..Default::default()
-            })
+            let forced = encode_bytes(
+                &data,
+                &EncodeOptions {
+                    mask: Some(m),
+                    compression: Some(Compression::None),
+                    ..Default::default()
+                },
+            )
             .unwrap();
-            assert!(auto_score <= mask::penalty(&forced.luma_grid()), "mask {m} beat the search");
+            assert!(
+                auto_score <= mask::penalty(&forced.luma_grid()),
+                "mask {m} beat the search"
+            );
         }
     }
 
     #[test]
     fn oversized_payloads_are_rejected() {
         let data = alloc::vec![0u8; 50_000];
-        assert!(matches!(encode_bytes(&data, &EncodeOptions::default()), Err(LcError::TooLarge(_))));
+        assert!(matches!(
+            encode_bytes(&data, &EncodeOptions::default()),
+            Err(LcError::TooLarge(_))
+        ));
 
         // Forcing too small a version is a capacity error, not a silent truncation.
         let opts = EncodeOptions {
@@ -372,7 +430,10 @@ mod tests {
         let mut prev = 0u8;
         for level in 0..4u8 {
             let opts = EncodeOptions {
-                ecc: EccLevel { luma: level, chroma: level },
+                ecc: EccLevel {
+                    luma: level,
+                    chroma: level,
+                },
                 compression: Some(Compression::None),
                 ..Default::default()
             };
@@ -380,15 +441,20 @@ mod tests {
             assert!(v >= prev, "level {level} gave v{v} after v{prev}");
             prev = v;
         }
-        assert!(prev > encode_bytes(&data, &EncodeOptions {
-            ecc: EccLevel { luma: 0, chroma: 0 },
-            compression: Some(Compression::None),
-            ..Default::default()
-        })
-        .unwrap()
-        .format
-        .version
-        .get());
+        assert!(
+            prev > encode_bytes(
+                &data,
+                &EncodeOptions {
+                    ecc: EccLevel { luma: 0, chroma: 0 },
+                    compression: Some(Compression::None),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .format
+            .version
+            .get()
+        );
     }
 
     #[test]
@@ -399,10 +465,13 @@ mod tests {
         assert_ne!(frame.cflag, Compression::None);
         assert_eq!(frame.payload().unwrap(), data);
         // And it bought a much smaller symbol.
-        let raw = encode_bytes(&data, &EncodeOptions {
-            compression: Some(Compression::None),
-            ..Default::default()
-        })
+        let raw = encode_bytes(
+            &data,
+            &EncodeOptions {
+                compression: Some(Compression::None),
+                ..Default::default()
+            },
+        )
         .unwrap();
         assert!(sym.format.version < raw.format.version);
     }

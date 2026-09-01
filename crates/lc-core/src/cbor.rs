@@ -62,7 +62,11 @@ impl Value {
 
     /// Build from a signed integer.
     pub fn from_i64(v: i64) -> Value {
-        if v >= 0 { Value::Uint(v as u64) } else { Value::Nint((-1 - v) as u64) }
+        if v >= 0 {
+            Value::Uint(v as u64)
+        } else {
+            Value::Nint((-1 - v) as u64)
+        }
     }
 
     /// Byte-string contents, if this is one.
@@ -100,7 +104,10 @@ impl Value {
     /// Look up an integer-keyed map entry — the shape every CWT claim and COSE header
     /// label takes.
     pub fn get_int_key(&self, key: i64) -> Option<&Value> {
-        self.as_map()?.iter().find(|(k, _)| k.as_i64() == Some(key)).map(|(_, v)| v)
+        self.as_map()?
+            .iter()
+            .find(|(k, _)| k.as_i64() == Some(key))
+            .map(|(_, v)| v)
     }
 
     /// Encode to canonical CBOR bytes.
@@ -268,7 +275,11 @@ impl<'a> Decoder<'a> {
             2 => Value::Bytes(self.blob(info)?.to_vec()),
             3 => {
                 let raw = self.blob(info)?;
-                Value::Text(core::str::from_utf8(raw).map_err(|_| LcError::BadCbor)?.into())
+                Value::Text(
+                    core::str::from_utf8(raw)
+                        .map_err(|_| LcError::BadCbor)?
+                        .into(),
+                )
             }
             4 => {
                 let n = self.arg(info)?;
@@ -324,7 +335,11 @@ impl<'a> Decoder<'a> {
     /// Reject an element count larger than the remaining input could possibly encode,
     /// so `with_capacity` is never handed an attacker-chosen number.
     fn check_room(&self, count: u64) -> Result<(), LcError> {
-        if count > (self.b.len() - self.pos) as u64 { Err(LcError::BadCbor) } else { Ok(()) }
+        if count > (self.b.len() - self.pos) as u64 {
+            Err(LcError::BadCbor)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -370,16 +385,26 @@ mod tests {
             (&[0x60], Value::Text(String::new())),
             (&[0x61, 0x61], Value::Text("a".into())),
             (&[0x80], Value::Array(vec![])),
-            (&[0x83, 0x01, 0x02, 0x03], Value::Array(vec![Value::Uint(1), Value::Uint(2), Value::Uint(3)])),
+            (
+                &[0x83, 0x01, 0x02, 0x03],
+                Value::Array(vec![Value::Uint(1), Value::Uint(2), Value::Uint(3)]),
+            ),
             (&[0xA0], Value::Map(vec![])),
             (&[0xF4], Value::Bool(false)),
             (&[0xF5], Value::Bool(true)),
             (&[0xF6], Value::Null),
             (&[0xF7], Value::Undefined),
-            (&[0xC1, 0x1A, 0x51, 0x4B, 0x67, 0xB0], Value::Tag(1, Box::new(Value::Uint(1_363_896_240)))),
+            (
+                &[0xC1, 0x1A, 0x51, 0x4B, 0x67, 0xB0],
+                Value::Tag(1, Box::new(Value::Uint(1_363_896_240))),
+            ),
         ];
         for (bytes, want) in cases {
-            assert_eq!(&Value::from_slice(bytes).unwrap(), want, "decoding {bytes:02x?}");
+            assert_eq!(
+                &Value::from_slice(bytes).unwrap(),
+                want,
+                "decoding {bytes:02x?}"
+            );
             assert_eq!(&want.to_vec(), bytes, "encoding {want:?}");
         }
     }
@@ -429,7 +454,9 @@ mod tests {
 
     #[test]
     fn deep_nesting_is_bounded() {
-        let deep: Vec<u8> = core::iter::repeat_n(0x81u8, MAX_DEPTH + 5).chain([0x00]).collect();
+        let deep: Vec<u8> = core::iter::repeat_n(0x81u8, MAX_DEPTH + 5)
+            .chain([0x00])
+            .collect();
         assert!(Value::from_slice(&deep).is_err());
         let ok: Vec<u8> = core::iter::repeat_n(0x81u8, 8).chain([0x00]).collect();
         assert!(Value::from_slice(&ok).is_ok());
@@ -440,7 +467,9 @@ mod tests {
         // "array of 2^32 items" with no items following.
         assert!(Value::from_slice(&[0x9A, 0xFF, 0xFF, 0xFF, 0xFF]).is_err());
         // "byte string of 2^64-1 bytes".
-        assert!(Value::from_slice(&[0x5B, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]).is_err());
+        assert!(
+            Value::from_slice(&[0x5B, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]).is_err()
+        );
     }
 
     #[test]
@@ -450,8 +479,14 @@ mod tests {
 
     #[test]
     fn half_floats_decode() {
-        assert_eq!(Value::from_slice(&[0xF9, 0x3C, 0x00]).unwrap(), Value::Float(1.0));
-        assert_eq!(Value::from_slice(&[0xF9, 0xC0, 0x00]).unwrap(), Value::Float(-2.0));
+        assert_eq!(
+            Value::from_slice(&[0xF9, 0x3C, 0x00]).unwrap(),
+            Value::Float(1.0)
+        );
+        assert_eq!(
+            Value::from_slice(&[0xF9, 0xC0, 0x00]).unwrap(),
+            Value::Float(-2.0)
+        );
     }
 
     #[test]
@@ -469,7 +504,10 @@ mod tests {
             (Value::from_i64(-262145), Value::Bytes(vec![7])),
         ]);
         assert_eq!(m.get_int_key(4), Some(&Value::Uint(99)));
-        assert_eq!(m.get_int_key(-262145).and_then(|v| v.as_bytes()), Some(&[7u8][..]));
+        assert_eq!(
+            m.get_int_key(-262145).and_then(|v| v.as_bytes()),
+            Some(&[7u8][..])
+        );
         assert_eq!(m.get_int_key(1), None);
     }
 
@@ -477,7 +515,10 @@ mod tests {
     fn truncated_input_is_an_error_not_a_panic() {
         let full = Value::Map(vec![(Value::Uint(1), Value::Text("hello".into()))]).to_vec();
         for n in 0..full.len() {
-            assert!(Value::from_slice(&full[..n]).is_err(), "prefix of {n} accepted");
+            assert!(
+                Value::from_slice(&full[..n]).is_err(),
+                "prefix of {n} accepted"
+            );
         }
     }
 }

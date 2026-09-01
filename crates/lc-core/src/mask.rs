@@ -86,9 +86,17 @@ pub fn penalty(luma: &ModuleGrid<bool>) -> u32 {
     for line in 0..side {
         for horizontal in [true, false] {
             let mut run = 1u32;
-            let mut prev = if horizontal { *luma.at(0, line) } else { *luma.at(line, 0) };
+            let mut prev = if horizontal {
+                *luma.at(0, line)
+            } else {
+                *luma.at(line, 0)
+            };
             for i in 1..side {
-                let v = if horizontal { *luma.at(i, line) } else { *luma.at(line, i) };
+                let v = if horizontal {
+                    *luma.at(i, line)
+                } else {
+                    *luma.at(line, i)
+                };
                 if v == prev {
                     run += 1;
                 } else {
@@ -120,13 +128,23 @@ pub fn penalty(luma: &ModuleGrid<bool>) -> u32 {
     const QUIET: [bool; 4] = [true, true, true, true];
     for line in 0..side {
         for horizontal in [true, false] {
-            let get = |i: u16| if horizontal { *luma.at(i, line) } else { *luma.at(line, i) };
+            let get = |i: u16| {
+                if horizontal {
+                    *luma.at(i, line)
+                } else {
+                    *luma.at(line, i)
+                }
+            };
             for start in 0..side {
                 let matches = |offset: i32, pat: &[bool]| {
                     pat.iter().enumerate().all(|(j, &want)| {
                         let i = start as i32 + offset + j as i32;
                         // Outside the symbol counts as quiet zone, which is light.
-                        let v = if i < 0 || i >= side as i32 { true } else { get(i as u16) };
+                        let v = if i < 0 || i >= side as i32 {
+                            true
+                        } else {
+                            get(i as u16)
+                        };
                         v == want
                     })
                 };
@@ -196,7 +214,10 @@ mod tests {
                 .filter(|&(x, y)| luma_mask(id, x, y))
                 .count();
             let frac = set as f32 / (48.0 * 48.0);
-            assert!((0.3..0.7).contains(&frac), "mask {id} sets {frac} of modules");
+            assert!(
+                (0.3..0.7).contains(&frac),
+                "mask {id} sets {frac} of modules"
+            );
         }
     }
 
@@ -247,14 +268,20 @@ mod tests {
                 checker.set(x, y, (x + y) % 2 == 0);
             }
         }
-        assert!(penalty(&flat) > penalty(&checker), "flat grid must score worse");
+        assert!(
+            penalty(&flat) > penalty(&checker),
+            "flat grid must score worse"
+        );
     }
 
     #[test]
     fn penalty_detects_a_finder_like_run() {
         let mut g = ModuleGrid::new(21u16, true);
         // dark, light, dark×3, light, dark preceded by four light modules.
-        for (i, &dark) in [true, false, true, true, true, false, true].iter().enumerate() {
+        for (i, &dark) in [true, false, true, true, true, false, true]
+            .iter()
+            .enumerate()
+        {
             g.set(5 + i as u16, 10, !dark);
         }
         assert!(penalty(&g) >= N3, "finder-like run not penalised");

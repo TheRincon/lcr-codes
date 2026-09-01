@@ -111,7 +111,9 @@ impl DecodedPacket {
         if ctype != ContentType::Cbor {
             return None;
         }
-        lc_core::cbor::Value::from_slice(body).ok().map(|v| lc_core::json::to_json(&v))
+        lc_core::cbor::Value::from_slice(body)
+            .ok()
+            .map(|v| lc_core::json::to_json(&v))
     }
 }
 
@@ -146,7 +148,10 @@ fn convert(out: lc_decode::DecodeOutput) -> Decoded {
     let d = out.diagnostics;
     let packet = match out.packet {
         Packet::Unsigned { body, ctype } => DecodedPacket::Unsigned { ctype, body },
-        Packet::Verified { body, .. } => DecodedPacket::Verified { ctype: ContentType::Cbor, body },
+        Packet::Verified { body, .. } => DecodedPacket::Verified {
+            ctype: ContentType::Cbor,
+            body,
+        },
         Packet::Unverified { .. } => DecodedPacket::Unverified,
         Packet::Partial { prefix } => DecodedPacket::Partial { prefix },
         // `Packet` is `#[non_exhaustive]`. A variant added upstream must not silently
@@ -196,7 +201,10 @@ pub struct Accumulator {
 
 impl Accumulator {
     pub fn new() -> Accumulator {
-        Accumulator { inner: FrameAccumulator::new(), decoder: Decoder::new() }
+        Accumulator {
+            inner: FrameAccumulator::new(),
+            decoder: Decoder::new(),
+        }
     }
 
     /// Add a frame.
@@ -307,7 +315,10 @@ mod enc {
     }
 
     pub(super) fn opts(module_px: u32) -> lc_render::RenderOptions {
-        lc_render::RenderOptions { module_px, ..lc_render::RenderOptions::screen() }
+        lc_render::RenderOptions {
+            module_px,
+            ..lc_render::RenderOptions::screen()
+        }
     }
 
     pub(super) fn render(sym: &lc_core::Symbol, module_px: u32) -> Rendered {
@@ -326,30 +337,35 @@ mod enc {
 #[cfg(feature = "encode")]
 pub fn encode_json(json: &str, o: &EncodeOptions, module_px: u32) -> Result<Rendered, WasmError> {
     let px = enc::pitch(module_px)?;
-    Ok(enc::render(&lc_encode::encode_json(json, &enc::options(o)?)?, px))
+    Ok(enc::render(
+        &lc_encode::encode_json(json, &enc::options(o)?)?,
+        px,
+    ))
 }
 
 /// Encode UTF-8 text.
 #[cfg(feature = "encode")]
 pub fn encode_text(text: &str, o: &EncodeOptions, module_px: u32) -> Result<Rendered, WasmError> {
     let px = enc::pitch(module_px)?;
-    Ok(enc::render(&lc_encode::encode_text(text, &enc::options(o)?)?, px))
+    Ok(enc::render(
+        &lc_encode::encode_text(text, &enc::options(o)?)?,
+        px,
+    ))
 }
 
 /// Encode opaque bytes.
 #[cfg(feature = "encode")]
 pub fn encode_bytes(data: &[u8], o: &EncodeOptions, module_px: u32) -> Result<Rendered, WasmError> {
     let px = enc::pitch(module_px)?;
-    Ok(enc::render(&lc_encode::encode_bytes(data, &enc::options(o)?)?, px))
+    Ok(enc::render(
+        &lc_encode::encode_bytes(data, &enc::options(o)?)?,
+        px,
+    ))
 }
 
 /// Encode JSON and render to SVG rather than pixels.
 #[cfg(feature = "encode")]
-pub fn encode_json_svg(
-    json: &str,
-    o: &EncodeOptions,
-    module_px: u32,
-) -> Result<String, WasmError> {
+pub fn encode_json_svg(json: &str, o: &EncodeOptions, module_px: u32) -> Result<String, WasmError> {
     let px = enc::pitch(module_px)?;
     let sym = lc_encode::encode_json(json, &enc::options(o)?)?;
     Ok(lc_render::render_svg(&sym, &enc::opts(px)))

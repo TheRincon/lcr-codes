@@ -37,7 +37,11 @@ impl Srgb8 {
 
     /// Parse `#RRGGBB` or `RRGGBB`.
     pub const fn from_hex(hex: u32) -> Srgb8 {
-        Srgb8 { r: (hex >> 16) as u8, g: (hex >> 8) as u8, b: hex as u8 }
+        Srgb8 {
+            r: (hex >> 16) as u8,
+            g: (hex >> 8) as u8,
+            b: hex as u8,
+        }
     }
 
     /// Pack to `0xRRGGBB`.
@@ -133,13 +137,21 @@ impl Lab {
 /// sRGB transfer function, encoded → linear.
 #[inline]
 pub fn srgb_to_linear_f(v: f32) -> f32 {
-    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 /// sRGB transfer function, linear → encoded.
 #[inline]
 pub fn linear_to_srgb_f(v: f32) -> f32 {
-    if v <= 0.003_130_8 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
+    if v <= 0.003_130_8 {
+        12.92 * v
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    }
 }
 
 /// Decode an 8-bit sRGB triple to linear light.
@@ -154,7 +166,11 @@ pub fn srgb8_to_linear(c: Srgb8) -> Linear {
 /// Encode linear light to an 8-bit sRGB triple, clamping out-of-gamut values.
 pub fn linear_to_srgb8(c: Linear) -> Srgb8 {
     let q = |v: f32| (linear_to_srgb_f(v.clamp(0.0, 1.0)) * 255.0).round() as u8;
-    Srgb8 { r: q(c.r), g: q(c.g), b: q(c.b) }
+    Srgb8 {
+        r: q(c.r),
+        g: q(c.g),
+        b: q(c.b),
+    }
 }
 
 /// Linear sRGB → CIEXYZ (D65), sRGB primaries.
@@ -179,13 +195,21 @@ pub fn xyz_to_linear(xyz: [f32; 3]) -> Linear {
 #[inline]
 fn lab_f(t: f32) -> f32 {
     const DELTA3: f32 = 216.0 / 24389.0;
-    if t > DELTA3 { t.cbrt() } else { t * (841.0 / 108.0) + 4.0 / 29.0 }
+    if t > DELTA3 {
+        t.cbrt()
+    } else {
+        t * (841.0 / 108.0) + 4.0 / 29.0
+    }
 }
 
 #[inline]
 fn lab_f_inv(t: f32) -> f32 {
     const DELTA: f32 = 6.0 / 29.0;
-    if t > DELTA { t * t * t } else { 3.0 * DELTA * DELTA * (t - 4.0 / 29.0) }
+    if t > DELTA {
+        t * t * t
+    } else {
+        3.0 * DELTA * DELTA * (t - 4.0 / 29.0)
+    }
 }
 
 /// CIEXYZ (D65) → CIELAB.
@@ -193,7 +217,11 @@ pub fn xyz_to_lab(xyz: [f32; 3]) -> Lab {
     let fx = lab_f(xyz[0] / D65[0]);
     let fy = lab_f(xyz[1] / D65[1]);
     let fz = lab_f(xyz[2] / D65[2]);
-    Lab { l: 116.0 * fy - 16.0, a: 500.0 * (fx - fy), b: 200.0 * (fy - fz) }
+    Lab {
+        l: 116.0 * fy - 16.0,
+        a: 500.0 * (fx - fy),
+        b: 200.0 * (fy - fz),
+    }
 }
 
 /// CIELAB → CIEXYZ (D65).
@@ -201,7 +229,11 @@ pub fn lab_to_xyz(lab: Lab) -> [f32; 3] {
     let fy = (lab.l + 16.0) / 116.0;
     let fx = fy + lab.a / 500.0;
     let fz = fy - lab.b / 200.0;
-    [lab_f_inv(fx) * D65[0], lab_f_inv(fy) * D65[1], lab_f_inv(fz) * D65[2]]
+    [
+        lab_f_inv(fx) * D65[0],
+        lab_f_inv(fy) * D65[1],
+        lab_f_inv(fz) * D65[2],
+    ]
 }
 
 /// Linear sRGB → CIELAB.
@@ -304,8 +336,7 @@ pub fn delta_e00(a: Lab, b: Lab) -> f32 {
     let sc = 1.0 + 0.045 * cbarp;
     let sh = 1.0 + 0.015 * cbarp * t;
     let rt = -(2.0 * dtheta).to_radians().sin() * rc;
-    ((dlp / sl).powi(2) + (dcp / sc).powi(2) + (dhp / sh).powi(2)
-        + rt * (dcp / sc) * (dhp / sh))
+    ((dlp / sl).powi(2) + (dcp / sc).powi(2) + (dhp / sh).powi(2) + rt * (dcp / sc) * (dhp / sh))
         .max(0.0)
         .sqrt()
 }
@@ -363,7 +394,11 @@ mod tests {
         // Sharma et al. CIEDE2000 test data, pair 1.
         let a = Lab::new(50.0000, 2.6772, -79.7751);
         let b = Lab::new(50.0000, 0.0000, -82.7485);
-        assert!((delta_e00(a, b) - 2.0425).abs() < 0.002, "{}", delta_e00(a, b));
+        assert!(
+            (delta_e00(a, b) - 2.0425).abs() < 0.002,
+            "{}",
+            delta_e00(a, b)
+        );
     }
 
     #[test]

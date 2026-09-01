@@ -126,7 +126,10 @@ mod tests {
 
     #[test]
     fn unverified_exposes_no_body() {
-        let p = Packet::Unverified { reason: VerifyFailure::BadSignature, kid: [1, 2, 3, 4] };
+        let p = Packet::Unverified {
+            reason: VerifyFailure::BadSignature,
+            kid: [1, 2, 3, 4],
+        };
         assert_eq!(p.body(), None);
         assert!(!p.is_attested());
         assert_eq!(p.kid(), Some([1, 2, 3, 4]));
@@ -134,21 +137,34 @@ mod tests {
 
     #[test]
     fn partial_exposes_no_body_either() {
-        let p = Packet::Partial { prefix: vec![1, 2, 3] };
+        let p = Packet::Partial {
+            prefix: vec![1, 2, 3],
+        };
         assert_eq!(p.body(), None);
         assert!(!p.is_attested());
     }
 
     #[test]
     fn unsigned_is_not_attested() {
-        let p = Packet::Unsigned { body: vec![7], ctype: ContentType::Cbor };
+        let p = Packet::Unsigned {
+            body: vec![7],
+            ctype: ContentType::Cbor,
+        };
         assert_eq!(p.body(), Some(&[7u8][..]));
-        assert!(!p.is_attested(), "unsigned content must never read as attested");
+        assert!(
+            !p.is_attested(),
+            "unsigned content must never read as attested"
+        );
     }
 
     #[test]
     fn only_verified_is_attested() {
-        let p = Packet::Verified { body: vec![9], schema: Some(1), exp: 99, kid: [0; 4] };
+        let p = Packet::Verified {
+            body: vec![9],
+            schema: Some(1),
+            exp: 99,
+            kid: [0; 4],
+        };
         assert!(p.is_attested());
         assert_eq!(p.body(), Some(&[9u8][..]));
     }

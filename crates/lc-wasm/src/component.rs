@@ -25,11 +25,11 @@ wit_bindgen::generate!({
 use crate::{DecodedPacket, WasmError};
 // The shared `types` interface generates once, outside the per-export modules, because
 // both `decoder` and `encoder` `use` it.
+use exports::lc::code::decoder::{Guest as DecoderGuest, GuestAccumulator};
 use lc::code::types::{
     ContentType as WitContentType, DecodeResult, Diagnostics as WitDiagnostics, Image,
     Packet as WitPacket, Payload, PixelFormat as WitFormat, Profile as WitProfile,
 };
-use exports::lc::code::decoder::{Guest as DecoderGuest, GuestAccumulator};
 
 struct Component;
 
@@ -67,12 +67,14 @@ fn ctype_out(c: lc_core::ContentType) -> WitContentType {
 
 fn decoded_out(d: crate::Decoded) -> DecodeResult {
     let packet = match d.packet {
-        DecodedPacket::Unsigned { ctype, body } => {
-            WitPacket::Unsigned(Payload { ctype: ctype_out(ctype), body })
-        }
-        DecodedPacket::Verified { ctype, body } => {
-            WitPacket::Verified(Payload { ctype: ctype_out(ctype), body })
-        }
+        DecodedPacket::Unsigned { ctype, body } => WitPacket::Unsigned(Payload {
+            ctype: ctype_out(ctype),
+            body,
+        }),
+        DecodedPacket::Verified { ctype, body } => WitPacket::Verified(Payload {
+            ctype: ctype_out(ctype),
+            body,
+        }),
         DecodedPacket::Unverified => WitPacket::Unverified,
         DecodedPacket::Partial { prefix } => WitPacket::Partial(prefix),
     };
@@ -105,9 +107,15 @@ impl DecoderGuest for Component {
     type Accumulator = Acc;
 
     fn decode(img: Image) -> Result<DecodeResult, String> {
-        crate::decode(&img.pixels, img.width, img.height, img.stride, format(img.format))
-            .map(decoded_out)
-            .map_err(err)
+        crate::decode(
+            &img.pixels,
+            img.width,
+            img.height,
+            img.stride,
+            format(img.format),
+        )
+        .map(decoded_out)
+        .map_err(err)
     }
 }
 
@@ -123,7 +131,13 @@ impl GuestAccumulator for Acc {
     fn push(&self, img: Image) -> Result<(), String> {
         self.0
             .borrow_mut()
-            .push(&img.pixels, img.width, img.height, img.stride, format(img.format))
+            .push(
+                &img.pixels,
+                img.width,
+                img.height,
+                img.stride,
+                format(img.format),
+            )
             .map_err(err)
     }
 
@@ -144,9 +158,9 @@ impl GuestAccumulator for Acc {
 
 #[cfg(feature = "encode")]
 mod encoder_impl {
-    use super::{Component, err};
     use super::exports;
     use super::lc;
+    use super::{Component, err};
     use exports::lc::code::encoder::{Guest as EncoderGuest, Options, Rendered as WitRendered};
     use lc::code::types::{Compression as WitCompression, Profile as WitProfile};
 
@@ -190,21 +204,13 @@ mod encoder_impl {
     }
 
     impl EncoderGuest for Component {
-        fn encode_json(
-            json: String,
-            opts: Options,
-            module_px: u32,
-        ) -> Result<WitRendered, String> {
+        fn encode_json(json: String, opts: Options, module_px: u32) -> Result<WitRendered, String> {
             crate::encode_json(&json, &options_in(opts), module_px)
                 .map(rendered_out)
                 .map_err(err)
         }
 
-        fn encode_text(
-            text: String,
-            opts: Options,
-            module_px: u32,
-        ) -> Result<WitRendered, String> {
+        fn encode_text(text: String, opts: Options, module_px: u32) -> Result<WitRendered, String> {
             crate::encode_text(&text, &options_in(opts), module_px)
                 .map(rendered_out)
                 .map_err(err)
@@ -220,11 +226,7 @@ mod encoder_impl {
                 .map_err(err)
         }
 
-        fn encode_json_svg(
-            json: String,
-            opts: Options,
-            module_px: u32,
-        ) -> Result<String, String> {
+        fn encode_json_svg(json: String, opts: Options, module_px: u32) -> Result<String, String> {
             crate::encode_json_svg(&json, &options_in(opts), module_px).map_err(err)
         }
     }

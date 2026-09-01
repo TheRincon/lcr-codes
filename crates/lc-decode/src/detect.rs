@@ -222,7 +222,9 @@ pub fn find_finders(bin: &Binary) -> Vec<Finder> {
             bin.width,
             |x| bin.dark(x, row),
             |cx, module| {
-                let Some(cy) = confirm_vertical(bin, cx as u32, row, module) else { return };
+                let Some(cy) = confirm_vertical(bin, cx as u32, row, module) else {
+                    return;
+                };
                 let Some(cx) = confirm_horizontal(bin, cx as u32, cy as u32, module) else {
                     return;
                 };
@@ -240,8 +242,12 @@ pub fn find_finders(bin: &Binary) -> Vec<Finder> {
             bin.height,
             |y| bin.dark(col, y),
             |cy, module| {
-                let Some(cx) = confirm_horizontal(bin, col, cy as u32, module) else { return };
-                let Some(cy) = confirm_vertical(bin, cx as u32, cy as u32, module) else { return };
+                let Some(cx) = confirm_horizontal(bin, col, cy as u32, module) else {
+                    return;
+                };
+                let Some(cy) = confirm_vertical(bin, cx as u32, cy as u32, module) else {
+                    return;
+                };
                 merge(&mut found, cx, cy, module);
             },
         );
@@ -263,7 +269,12 @@ fn merge(found: &mut Vec<Finder>, x: f32, y: f32, module: f32) {
             return;
         }
     }
-    found.push(Finder { x, y, module, confirmations: 1 });
+    found.push(Finder {
+        x,
+        y,
+        module,
+        confirmations: 1,
+    });
 }
 
 /// Order three finders as top-left, top-right, bottom-left.
@@ -283,7 +294,11 @@ pub fn order_finders(a: Finder, b: Finder, c: Finder) -> [Finder; 3] {
         (b, c, a)
     };
     let cross = (p.x - corner.x) * (q.y - corner.y) - (p.y - corner.y) * (q.x - corner.x);
-    if cross > 0.0 { [corner, p, q] } else { [corner, q, p] }
+    if cross > 0.0 {
+        [corner, p, q]
+    } else {
+        [corner, q, p]
+    }
 }
 
 /// Version implied by the distance between the top-left and top-right finders.
@@ -425,11 +440,7 @@ fn confirm_alignment_vertical(bin: &Binary, cx: u32, cy: u32, module: f32) -> Op
 /// search is coarse-to-fine over sub-module offsets, and returns `None` unless at least
 /// 23 of the 25 modules agree — a glare blob over the marker should lose it, not
 /// hallucinate it somewhere else.
-pub fn match_alignment(
-    bin: &Binary,
-    t: &Transform,
-    version: Version,
-) -> Option<(f32, f32)> {
+pub fn match_alignment(bin: &Binary, t: &Transform, version: Version) -> Option<(f32, f32)> {
     if version.get() < 2 {
         return None;
     }
@@ -444,7 +455,13 @@ pub fn match_alignment(
     let module_is_dark = |mx: f32, my: f32| -> bool {
         let mut dark = 0i32;
         let mut seen = 0i32;
-        for (ox, oy) in [(0.0, 0.0), (-0.25, 0.0), (0.25, 0.0), (0.0, -0.25), (0.0, 0.25)] {
+        for (ox, oy) in [
+            (0.0, 0.0),
+            (-0.25, 0.0),
+            (0.25, 0.0),
+            (0.0, -0.25),
+            (0.0, 0.25),
+        ] {
             let (px, py) = t.apply(mx + ox, my + oy);
             if px < 0.0 || py < 0.0 || px >= bin.width as f32 || py >= bin.height as f32 {
                 continue;
@@ -593,12 +610,17 @@ pub fn detect(bin: &Binary) -> Option<Detection> {
             for k in (j + 1)..n {
                 let (a, b, c) = (candidates[i], candidates[j], candidates[k]);
                 let mean = (a.module + b.module + c.module) / 3.0;
-                let spread = [a, b, c].iter().map(|f| (f.module - mean).abs()).fold(0.0, f32::max);
+                let spread = [a, b, c]
+                    .iter()
+                    .map(|f| (f.module - mean).abs())
+                    .fold(0.0, f32::max);
                 if spread > mean * 0.5 {
                     continue;
                 }
                 let ordered = order_finders(a, b, c);
-                let Some(score) = right_angle_score(&ordered) else { continue };
+                let Some(score) = right_angle_score(&ordered) else {
+                    continue;
+                };
                 if best.is_none_or(|(s, _)| score < s) {
                     best = Some((score, ordered));
                 }
@@ -616,7 +638,12 @@ pub fn detect(bin: &Binary) -> Option<Detection> {
     // One refinement pass: the affine seed is several modules off at the far corner under
     // strong perspective, which is exactly where the marker lives.
     let (transform, alignment) = refine_alignment(bin, &finders, version, transform, module);
-    Some(Detection { finders, alignment, version, transform })
+    Some(Detection {
+        finders,
+        alignment,
+        version,
+        transform,
+    })
 }
 
 /// How far the finder triangle is from a right isosceles one. Lower is better.
@@ -680,7 +707,12 @@ mod tests {
 
     #[test]
     fn ordering_puts_the_right_angle_first() {
-        let f = |x: f32, y: f32| Finder { x, y, module: 4.0, confirmations: 3 };
+        let f = |x: f32, y: f32| Finder {
+            x,
+            y,
+            module: 4.0,
+            confirmations: 3,
+        };
         // Unrotated.
         let [tl, tr, bl] = order_finders(f(100.0, 10.0), f(10.0, 100.0), f(10.0, 10.0));
         assert_eq!((tl.x, tl.y), (10.0, 10.0));
@@ -690,7 +722,12 @@ mod tests {
 
     #[test]
     fn ordering_survives_rotation() {
-        let f = |x: f32, y: f32| Finder { x, y, module: 4.0, confirmations: 3 };
+        let f = |x: f32, y: f32| Finder {
+            x,
+            y,
+            module: 4.0,
+            confirmations: 3,
+        };
         for turn in 0..4 {
             // Rotate the ideal layout by 90° `turn` times about the origin (y down).
             let rot = |x: f32, y: f32| {
@@ -706,7 +743,10 @@ mod tests {
             let tr = rot(90.0, 0.0);
             let bl = rot(0.0, 90.0);
             let got = order_finders(f(tr.0, tr.1), f(bl.0, bl.1), f(tl.0, tl.1));
-            assert!((got[0].x - tl.0).abs() < 1e-3 && (got[0].y - tl.1).abs() < 1e-3, "turn {turn}");
+            assert!(
+                (got[0].x - tl.0).abs() < 1e-3 && (got[0].y - tl.1).abs() < 1e-3,
+                "turn {turn}"
+            );
             assert!((got[1].x - tr.0).abs() < 1e-3, "turn {turn} TR");
             assert!((got[2].x - bl.0).abs() < 1e-3, "turn {turn} BL");
         }
@@ -717,7 +757,12 @@ mod tests {
         for v in Version::all() {
             let side = v.side() as f32;
             let module = 6.0f32;
-            let f = |x: f32, y: f32| Finder { x, y, module, confirmations: 5 };
+            let f = |x: f32, y: f32| Finder {
+                x,
+                y,
+                module,
+                confirmations: 5,
+            };
             let d = (side - 7.0) * module;
             let finders = [f(0.0, 0.0), f(d, 0.0), f(0.0, d)];
             assert_eq!(estimate_version(&finders), Some(v), "v{}", v.get());
@@ -726,7 +771,12 @@ mod tests {
 
     #[test]
     fn right_angle_score_rejects_implausible_triangles() {
-        let f = |x: f32, y: f32| Finder { x, y, module: 4.0, confirmations: 3 };
+        let f = |x: f32, y: f32| Finder {
+            x,
+            y,
+            module: 4.0,
+            confirmations: 3,
+        };
         // Nearly collinear.
         assert!(right_angle_score(&[f(0.0, 0.0), f(100.0, 1.0), f(200.0, 2.0)]).is_none());
         // Wildly unequal sides.

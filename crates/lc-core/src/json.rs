@@ -24,7 +24,10 @@ use alloc::vec::Vec;
 
 /// Parse JSON text into a CBOR value.
 pub fn parse(input: &str) -> Result<Value, LcError> {
-    let mut p = Parser { b: input.as_bytes(), pos: 0 };
+    let mut p = Parser {
+        b: input.as_bytes(),
+        pos: 0,
+    };
     p.ws();
     let v = p.value(0)?;
     p.ws();
@@ -279,7 +282,10 @@ impl Parser<'_> {
     }
 
     fn hex4(&mut self) -> Result<u32, LcError> {
-        let raw = self.b.get(self.pos..self.pos + 4).ok_or(LcError::BadJson(self.pos))?;
+        let raw = self
+            .b
+            .get(self.pos..self.pos + 4)
+            .ok_or(LcError::BadJson(self.pos))?;
         let mut v = 0u32;
         for &d in raw {
             v = v * 16 + (d as char).to_digit(16).ok_or(LcError::BadJson(self.pos))?;
@@ -347,13 +353,16 @@ impl Parser<'_> {
         if int_end == start || (int_end == start + 1 && self.b[start] == b'-') {
             return self.err();
         }
-        let text = core::str::from_utf8(&self.b[start..self.pos]).map_err(|_| LcError::BadJson(start))?;
+        let text =
+            core::str::from_utf8(&self.b[start..self.pos]).map_err(|_| LcError::BadJson(start))?;
         if !is_float {
             if let Ok(i) = text.parse::<i64>() {
                 return Ok(Value::from_i64(i));
             }
         }
-        text.parse::<f64>().map(Value::Float).map_err(|_| LcError::BadJson(start))
+        text.parse::<f64>()
+            .map(Value::Float)
+            .map_err(|_| LcError::BadJson(start))
     }
 }
 
@@ -370,7 +379,12 @@ mod tests {
         let src = r#"{"name":"Fred","loc":"45.00,55.0"}"#;
         assert_eq!(src.len(), 34);
         let cbor = parse(src).unwrap().to_vec();
-        assert!(cbor.len() < src.len(), "CBOR {} vs JSON {}", cbor.len(), src.len());
+        assert!(
+            cbor.len() < src.len(),
+            "CBOR {} vs JSON {}",
+            cbor.len(),
+            src.len()
+        );
         assert_eq!(cbor.len(), 26);
     }
 
@@ -408,17 +422,43 @@ mod tests {
         assert_eq!(parse(r#""a\nb""#).unwrap(), Value::Text("a\nb".into()));
         assert_eq!(parse(r#""é""#).unwrap(), Value::Text("é".into()));
         assert_eq!(parse(r#""😀""#).unwrap(), Value::Text("😀".into()));
-        assert_eq!(parse("\"héllo 😀\"").unwrap(), Value::Text("héllo 😀".into()));
-        assert_eq!(to_json(&Value::Text("a\"b\\c\nd".into())), r#""a\"b\\c\nd""#);
+        assert_eq!(
+            parse("\"héllo 😀\"").unwrap(),
+            Value::Text("héllo 😀".into())
+        );
+        assert_eq!(
+            to_json(&Value::Text("a\"b\\c\nd".into())),
+            r#""a\"b\\c\nd""#
+        );
     }
 
     #[test]
     fn malformed_input_is_rejected_with_an_offset() {
         for bad in [
-            "", "{", "[", "{\"a\"}", "{\"a\":}", "[1,]", "{,}", "tru", "01", "-", "1.",
-            "\"unterminated", "{\"a\":1}}", "[1 2]", "{'a':1}", "1e", "1e+", ".5", "+1",
+            "",
+            "{",
+            "[",
+            "{\"a\"}",
+            "{\"a\":}",
+            "[1,]",
+            "{,}",
+            "tru",
+            "01",
+            "-",
+            "1.",
+            "\"unterminated",
+            "{\"a\":1}}",
+            "[1 2]",
+            "{'a':1}",
+            "1e",
+            "1e+",
+            ".5",
+            "+1",
         ] {
-            assert!(matches!(parse(bad), Err(LcError::BadJson(_))), "accepted {bad:?}");
+            assert!(
+                matches!(parse(bad), Err(LcError::BadJson(_))),
+                "accepted {bad:?}"
+            );
         }
     }
 
@@ -431,7 +471,13 @@ mod tests {
     #[test]
     fn whitespace_is_tolerated_everywhere() {
         let v = parse(" {\n \"a\" : [ 1 , 2 ] \t} ").unwrap();
-        assert_eq!(v, Value::Map(vec![(Value::Text("a".into()), Value::Array(vec![Value::Uint(1), Value::Uint(2)]))]));
+        assert_eq!(
+            v,
+            Value::Map(vec![(
+                Value::Text("a".into()),
+                Value::Array(vec![Value::Uint(1), Value::Uint(2)])
+            )])
+        );
     }
 
     #[test]

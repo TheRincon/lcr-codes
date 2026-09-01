@@ -48,8 +48,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use lc_core::color::Srgb8;
 use lc_core::border;
+use lc_core::color::Srgb8;
 use lc_core::palette::{BORDER_WHITE, Palette};
 use lc_core::{Profile, Symbol};
 
@@ -76,12 +76,18 @@ impl Default for RenderOptions {
 impl RenderOptions {
     /// §13.1-conforming screen defaults: 10 device pixels per module, white quiet zone.
     pub fn screen() -> RenderOptions {
-        RenderOptions { module_px: 10, quiet_color: BORDER_WHITE }
+        RenderOptions {
+            module_px: 10,
+            quiet_color: BORDER_WHITE,
+        }
     }
 
     /// Print defaults. 8 px/module at 600 dpi is ≈ 0.34 mm, near §13.3's floor.
     pub fn print() -> RenderOptions {
-        RenderOptions { module_px: 8, quiet_color: BORDER_WHITE }
+        RenderOptions {
+            module_px: 8,
+            quiet_color: BORDER_WHITE,
+        }
     }
 
     /// Set the module pitch, clamped to the §13.1 floor of 8 device pixels.
@@ -108,7 +114,11 @@ impl Canvas {
         let border = symbol.format.reference_border;
         Canvas {
             side: symbol.side(),
-            margin: if border { QUIET + BORDER + QUIET } else { QUIET },
+            margin: if border {
+                QUIET + BORDER + QUIET
+            } else {
+                QUIET
+            },
             border,
         }
     }
@@ -128,14 +138,19 @@ impl Canvas {
     /// How far outside the symbol a canvas cell sits, in modules. `0` is inside.
     #[inline]
     fn shell(&self, cx: u16, cy: u16) -> u16 {
-        border::shell(cx as i32 - self.margin as i32, cy as i32 - self.margin as i32, self.side)
-            as u16
+        border::shell(
+            cx as i32 - self.margin as i32,
+            cy as i32 - self.margin as i32,
+            self.side,
+        ) as u16
     }
 }
 
 /// The §6.4 border cycle: the palette in index order, then white, then black.
 pub fn border_cycle(palette: &Palette) -> Vec<Srgb8> {
-    (0..border::cycle_len(palette.len())).map(|i| border::cycle_color(palette, i)).collect()
+    (0..border::cycle_len(palette.len()))
+        .map(|i| border::cycle_color(palette, i))
+        .collect()
 }
 
 /// Colour of a border cell in *canvas* coordinates, or `None` if it is not on the border.
@@ -223,7 +238,11 @@ pub fn render_rgb(symbol: &Symbol, opts: &RenderOptions) -> Raster {
             data[off..off + row.len()].copy_from_slice(&row);
         }
     }
-    Raster { width: side_px, height: side_px, data }
+    Raster {
+        width: side_px,
+        height: side_px,
+        data,
+    }
 }
 
 /// Render a symbol as a standalone SVG document.
@@ -493,7 +512,11 @@ mod tests {
         let svg = render_svg(&sym, &RenderOptions::screen());
         let rects = svg.matches("<rect").count();
         let cells = Canvas::of(&sym).modules() as usize;
-        assert!(rects < cells * cells / 2, "{rects} rects for {} cells", cells * cells);
+        assert!(
+            rects < cells * cells / 2,
+            "{rects} rects for {} cells",
+            cells * cells
+        );
     }
 
     #[cfg(feature = "png")]
@@ -511,13 +534,22 @@ mod tests {
         let start = png.windows(4).position(|w| w == b"IDAT").unwrap() + 4;
         let len = u32::from_be_bytes(png[start - 8..start - 4].try_into().unwrap()) as usize;
         let raw = miniz_oxide::inflate::decompress_to_vec_zlib(&png[start..start + len]).unwrap();
-        assert_eq!(raw.len(), raster.height as usize * (1 + raster.width as usize * 3));
+        assert_eq!(
+            raw.len(),
+            raster.height as usize * (1 + raster.width as usize * 3)
+        );
     }
 
     #[test]
     fn rgba_conversion_is_opaque() {
         let sym = sample(Profile::C1, false);
-        let r = render_rgb(&sym, &RenderOptions { module_px: 8, ..Default::default() });
+        let r = render_rgb(
+            &sym,
+            &RenderOptions {
+                module_px: 8,
+                ..Default::default()
+            },
+        );
         let rgba = r.to_rgba();
         assert_eq!(rgba.len(), r.data.len() / 3 * 4);
         assert!(rgba.chunks_exact(4).all(|p| p[3] == 0xFF));

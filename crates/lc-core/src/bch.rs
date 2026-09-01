@@ -109,7 +109,11 @@ pub fn decode(received: u32) -> Result<(u16, u32), LcError> {
             }
         }
     }
-    if best.1 > 3 { Err(LcError::FormatUndecodable) } else { Ok(best) }
+    if best.1 > 3 {
+        Err(LcError::FormatUndecodable)
+    } else {
+        Ok(best)
+    }
 }
 
 /// Soft-decision maximum-likelihood decode.
@@ -143,7 +147,11 @@ pub fn decode_soft(llrs: &[f32; CODE_BITS as usize]) -> (u16, f32) {
             let pos = (CODE_BITS - 1 - bit) as usize;
             // The bit has just been flipped, so `word` already holds its new value:
             // it contributed −L before if it is now 1, and +L before if it is now 0.
-            corr += if word >> bit & 1 == 1 { -2.0 * l[pos] } else { 2.0 * l[pos] };
+            corr += if word >> bit & 1 == 1 {
+                -2.0 * l[pos]
+            } else {
+                2.0 * l[pos]
+            };
             delta &= delta - 1;
         }
         if corr > best.1 {

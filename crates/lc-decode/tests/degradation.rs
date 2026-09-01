@@ -60,8 +60,8 @@
 #![allow(dead_code)]
 
 use lc_core::{Compression, Packet, Profile};
-use lc_decode::{Decoder, FrameAccumulator};
 use lc_decode::image::{ImageView, PixelFormat};
+use lc_decode::{Decoder, FrameAccumulator};
 use lc_encode::EncodeOptions;
 use lc_render::{Raster, RenderOptions, render_rgb};
 
@@ -72,7 +72,9 @@ include!("support/ops.rs");
 // ---------------------------------------------------------------- fixtures
 
 fn payload() -> Vec<u8> {
-    (0..96u8).map(|i| i.wrapping_mul(101).wrapping_add(29)).collect()
+    (0..96u8)
+        .map(|i| i.wrapping_mul(101).wrapping_add(29))
+        .collect()
 }
 
 fn encode(profile: Profile) -> lc_core::Symbol {
@@ -89,11 +91,19 @@ fn encode(profile: Profile) -> lc_core::Symbol {
 /// 10–12, and the degradations below are meant to test the decoder, not to test what
 /// happens when a conforming display app is ignored.
 fn render(sym: &lc_core::Symbol) -> Raster {
-    render_rgb(sym, &RenderOptions { module_px: 12, ..RenderOptions::screen() })
+    render_rgb(
+        sym,
+        &RenderOptions {
+            module_px: 12,
+            ..RenderOptions::screen()
+        },
+    )
 }
 
 fn try_decode(r: &Raster) -> Result<Packet, lc_decode::DecodeError> {
-    Decoder::new().decode_rgb(&r.data, r.width, r.height, r.width * 3).map(|o| o.packet)
+    Decoder::new()
+        .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+        .map(|o| o.packet)
 }
 
 /// Decode and assert the payload came back intact.
@@ -139,10 +149,16 @@ fn survives_perspective() {
     let tilts = [0.0f32, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7];
 
     for rot in rotations {
-        assert_decodes(&perspective(&base, 0.0, rot), &format!("head-on, rot {rot}"));
+        assert_decodes(
+            &perspective(&base, 0.0, rot),
+            &format!("head-on, rot {rot}"),
+        );
     }
     for tilt in [0.1f32, 0.2, 0.3] {
-        assert_decodes(&perspective(&base, tilt, 0.0), &format!("on-axis, tilt {tilt}"));
+        assert_decodes(
+            &perspective(&base, tilt, 0.0),
+            &format!("on-axis, tilt {tilt}"),
+        );
     }
 
     // Whole grid. Measured 28/40 when this was written, against 27/40 before the D6
@@ -153,7 +169,9 @@ fn survives_perspective() {
         .flat_map(|&t| rotations.map(move |r| (t, r)))
         .filter(|&(tilt, rot)| {
             let r = perspective(&base, tilt, rot);
-            Decoder::new().decode_rgb(&r.data, r.width, r.height, r.width * 3).is_ok()
+            Decoder::new()
+                .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+                .is_ok()
         })
         .count();
     let total = tilts.len() * rotations.len();
@@ -190,11 +208,16 @@ fn survives_night_shift() {
 #[test]
 fn survives_a_specular_blob() {
     let base = render(&encode(Profile::C1));
-    for (cx, cy, radius, strength) in
-        [(0.5f32, 0.5f32, 0.25f32, 0.5f32), (0.75, 0.3, 0.30, 0.5), (0.3, 0.7, 0.20, 0.6)]
-    {
+    for (cx, cy, radius, strength) in [
+        (0.5f32, 0.5f32, 0.25f32, 0.5f32),
+        (0.75, 0.3, 0.30, 0.5),
+        (0.3, 0.7, 0.20, 0.6),
+    ] {
         let damaged = specular(&base, cx, cy, radius, strength);
-        assert_decodes(&damaged, &format!("specular at ({cx},{cy}) r={radius} s={strength}"));
+        assert_decodes(
+            &damaged,
+            &format!("specular at ({cx},{cy}) r={radius} s={strength}"),
+        );
     }
 }
 
@@ -242,21 +265,32 @@ fn multi_frame_beats_single_frame() {
     // Noise well past the single-frame limit of σ ≈ 0.06.
     let sigma = 0.10;
     let single = noise(&base, sigma, 1);
-    assert!(try_decode(&single).is_err(), "single frame should fail at σ={sigma}");
+    assert!(
+        try_decode(&single).is_err(),
+        "single frame should fail at σ={sigma}"
+    );
 
     let mut acc = FrameAccumulator::new();
     let mut pushed = 0;
     for seed in 1..=12u64 {
         let frame = noise(&base, sigma, seed * 7919);
-        let view = ImageView::new(&frame.data, frame.width, frame.height, frame.width * 3, PixelFormat::Rgb8)
-            .unwrap();
+        let view = ImageView::new(
+            &frame.data,
+            frame.width,
+            frame.height,
+            frame.width * 3,
+            PixelFormat::Rgb8,
+        )
+        .unwrap();
         if acc.push(&view).is_ok() {
             pushed += 1;
         }
     }
     assert!(pushed >= 8, "only {pushed} of 12 frames located the symbol");
 
-    let out = acc.try_decode(&Decoder::new()).expect("accumulated frames should decode");
+    let out = acc
+        .try_decode(&Decoder::new())
+        .expect("accumulated frames should decode");
     match out.packet {
         Packet::Unsigned { body, .. } => assert_eq!(body, payload()),
         other => panic!("{other:?}"),
@@ -295,7 +329,11 @@ fn extreme_degradation_fails_closed() {
         match try_decode(&r) {
             Err(_) => {}
             Ok(Packet::Unsigned { body, .. }) => {
-                assert_eq!(body, payload(), "decoder returned a WRONG payload as success")
+                assert_eq!(
+                    body,
+                    payload(),
+                    "decoder returned a WRONG payload as success"
+                )
             }
             Ok(other) => panic!("unexpected {other:?}"),
         }

@@ -61,7 +61,11 @@ pub fn capacity_for(layout: &Layout, ecc: EccLevel) -> SymbolCapacity {
     };
 
     let total = luma_info_bits + chroma_info_bits;
-    SymbolCapacity { luma_info_bits, chroma_info_bits, body_bytes: body_bytes_for(total) }
+    SymbolCapacity {
+        luma_info_bits,
+        chroma_info_bits,
+        body_bytes: body_bytes_for(total),
+    }
 }
 
 /// Largest body that fits in `info_bits`, accounting for the §9.1 frame that has to go
@@ -100,9 +104,13 @@ mod tests {
     fn capacity_grows_monotonically_with_version() {
         for profile in Profile::ALL {
             for level in 0..4u8 {
-                let ecc = EccLevel { luma: level, chroma: level };
-                let caps: Vec<usize> =
-                    Version::all().map(|v| capacity(v, profile, ecc).body_bytes).collect();
+                let ecc = EccLevel {
+                    luma: level,
+                    chroma: level,
+                };
+                let caps: Vec<usize> = Version::all()
+                    .map(|v| capacity(v, profile, ecc).body_bytes)
+                    .collect();
                 for w in caps.windows(2) {
                     assert!(w[1] >= w[0], "{profile:?} level {level}: {caps:?}");
                 }
@@ -116,7 +124,15 @@ mod tests {
             for v in Version::all() {
                 let mut prev = usize::MAX;
                 for level in 0..4u8 {
-                    let c = capacity(v, profile, EccLevel { luma: level, chroma: level }).info_bits();
+                    let c = capacity(
+                        v,
+                        profile,
+                        EccLevel {
+                            luma: level,
+                            chroma: level,
+                        },
+                    )
+                    .info_bits();
                     assert!(c <= prev, "v{} {profile:?} level {level}", v.get());
                     prev = c;
                 }
@@ -145,20 +161,30 @@ mod tests {
             let m = capacity(v, Profile::M, ecc).info_bits() as f32;
             let c1 = capacity(v, Profile::C1, ecc).info_bits() as f32;
             let ratio = c1 / m;
-            assert!((1.5..=2.0).contains(&ratio), "v{} density ratio {ratio}", v.get());
+            assert!(
+                (1.5..=2.0).contains(&ratio),
+                "v{} density ratio {ratio}",
+                v.get()
+            );
         }
     }
 
     #[test]
     fn v1_carries_a_useful_payload() {
         let c = capacity(Version::new(1).unwrap(), Profile::C1, EccLevel::DEFAULT);
-        assert!(c.body_bytes >= 12, "v1 C1 holds only {} bytes", c.body_bytes);
+        assert!(
+            c.body_bytes >= 12,
+            "v1 C1 holds only {} bytes",
+            c.body_bytes
+        );
     }
 
     #[test]
     fn the_spec_example_object_fits_where_promised() {
         // §6.1: `{"name":"Fred","loc":"45.00,55.0"}` is ~28 bytes as CBOR and "fits at v2".
-        let cbor = crate::json::parse(r#"{"name":"Fred","loc":"45.00,55.0"}"#).unwrap().to_vec();
+        let cbor = crate::json::parse(r#"{"name":"Fred","loc":"45.00,55.0"}"#)
+            .unwrap()
+            .to_vec();
         let v = smallest_version(cbor.len(), Profile::C1, EccLevel::DEFAULT).unwrap();
         assert!(v.get() <= 2, "needed v{} for {} bytes", v.get(), cbor.len());
     }
@@ -168,7 +194,11 @@ mod tests {
     #[test]
     fn a_minimal_signed_packet_needs_about_v5() {
         let v = smallest_version(107, Profile::C1, EccLevel::DEFAULT).unwrap();
-        assert!((4..=6).contains(&v.get()), "signed floor landed at v{}", v.get());
+        assert!(
+            (4..=6).contains(&v.get()),
+            "signed floor landed at v{}",
+            v.get()
+        );
     }
 
     #[test]

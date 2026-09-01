@@ -120,7 +120,11 @@ mod tests {
         let img = ImageView::packed(&data, 20, 20, PixelFormat::Rgb8).unwrap();
         // One 2×2 cell over the whole image: three light modules and one dark.
         let c = sample_chroma_cell(&img, &t, 0, 0, 2);
-        assert!(c.luminance() > 0.3 && c.luminance() < 0.95, "{:?}", c.luminance());
+        assert!(
+            c.luminance() > 0.3 && c.luminance() < 0.95,
+            "{:?}",
+            c.luminance()
+        );
     }
 
     #[test]

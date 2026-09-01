@@ -64,7 +64,11 @@ pub fn modulate(
             let (cx, cy) = layout.chroma_cells[cell as usize];
             let mut symbol = 0usize;
             for b in 0..bpc {
-                symbol = (symbol << 1) | chroma_cw.get(cell as usize * bpc + b).copied().unwrap_or(false) as usize;
+                symbol = (symbol << 1)
+                    | chroma_cw
+                        .get(cell as usize * bpc + b)
+                        .copied()
+                        .unwrap_or(false) as usize;
             }
             mask::chroma_mask_apply(chroma_symbol_to_hue(symbol, hues), cx, cy, hues)
         };
@@ -173,7 +177,9 @@ mod tests {
         let mut s = seed | 1;
         (0..n)
             .map(|_| {
-                s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 s >> 62 & 1 == 1
             })
             .collect()
@@ -204,9 +210,17 @@ mod tests {
             let f = fmt(6, p, 3);
             let layout = Layout::new(f.version, p);
             let cap = layout.capacity();
-            let sym = modulate(&layout, f, &pseudo(cap.luma_bits, 7), &pseudo(cap.chroma_bits, 9));
+            let sym = modulate(
+                &layout,
+                f,
+                &pseudo(cap.luma_bits, 7),
+                &pseudo(cap.chroma_bits, 9),
+            );
             let n = p.colors() as u8;
-            assert!(sym.modules.cells().iter().all(|&i| i < n), "{p:?} out-of-range index");
+            assert!(
+                sym.modules.cells().iter().all(|&i| i < n),
+                "{p:?} out-of-range index"
+            );
         }
     }
 
@@ -216,7 +230,12 @@ mod tests {
             let f = fmt(9, p, 0);
             let layout = Layout::new(f.version, p);
             let cap = layout.capacity();
-            let sym = modulate(&layout, f, &pseudo(cap.luma_bits, 1), &pseudo(cap.chroma_bits, 2));
+            let sym = modulate(
+                &layout,
+                f,
+                &pseudo(cap.luma_bits, 1),
+                &pseudo(cap.chroma_bits, 2),
+            );
             let hues = p.hues();
             for y in 0..layout.side {
                 for x in 0..layout.side {
@@ -278,9 +297,11 @@ mod tests {
                     for s in 0..hues {
                         // Render symbol `s` in this cell, then hand the demodulator a
                         // confident likelihood for the hue that was actually drawn.
-                        let h = mask::chroma_mask_apply(chroma_symbol_to_hue(s, hues), cx, cy, hues);
-                        let ll: Vec<f32> =
-                            (0..hues).map(|i| if i == h { 0.0 } else { -12.0 }).collect();
+                        let h =
+                            mask::chroma_mask_apply(chroma_symbol_to_hue(s, hues), cx, cy, hues);
+                        let ll: Vec<f32> = (0..hues)
+                            .map(|i| if i == h { 0.0 } else { -12.0 })
+                            .collect();
                         let mut out = Vec::new();
                         chroma_bit_llrs(&ll, cx, cy, hues, &mut out);
                         assert_eq!(out.len(), bits);

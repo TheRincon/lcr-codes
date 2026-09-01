@@ -59,7 +59,7 @@ use lc_core::ecc::ldpc::{CHROMA_RATE_INDEX, Code, LUMA_RATE_INDEX, MAX_ITERATION
 use lc_core::interleave::Interleaver;
 use lc_core::layout::Layout;
 use lc_core::palette::Palette;
-use lc_core::{ContentType, FormatInfo, Frame, LcError, Packet, Profile, Version, VerifyFailure};
+use lc_core::{ContentType, FormatInfo, Frame, LcError, Packet, Profile, VerifyFailure, Version};
 use transform::Transform;
 
 pub use error::DecodeError;
@@ -84,7 +84,10 @@ pub struct NoKeys;
 
 impl PacketVerifier for NoKeys {
     fn verify(&self, _cose_sign1: &[u8]) -> Packet {
-        Packet::Unverified { reason: VerifyFailure::NoKeysConfigured, kid: [0; 4] }
+        Packet::Unverified {
+            reason: VerifyFailure::NoKeysConfigured,
+            kid: [0; 4],
+        }
     }
 }
 
@@ -159,14 +162,20 @@ pub struct Decoder<V = NoKeys> {
 impl Decoder<NoKeys> {
     /// A decoder that decodes but will not verify signatures.
     pub fn new() -> Decoder<NoKeys> {
-        Decoder { verifier: NoKeys, options: DecodeOptions::default() }
+        Decoder {
+            verifier: NoKeys,
+            options: DecodeOptions::default(),
+        }
     }
 }
 
 impl<V: PacketVerifier> Decoder<V> {
     /// Opt in to signature verification by supplying something that can do it (§10).
     pub fn with_verifier<W: PacketVerifier>(self, verifier: W) -> Decoder<W> {
-        Decoder { verifier, options: self.options }
+        Decoder {
+            verifier,
+            options: self.options,
+        }
     }
 
     /// Replace the tuning options.
@@ -280,9 +289,15 @@ impl<V: PacketVerifier> Decoder<V> {
                 let packet = if frame.ctype == ContentType::CoseSign1 {
                     self.verifier.verify(&body)
                 } else {
-                    Packet::Unsigned { body, ctype: frame.ctype }
+                    Packet::Unsigned {
+                        body,
+                        ctype: frame.ctype,
+                    }
                 };
-                Ok(DecodeOutput { packet, diagnostics })
+                Ok(DecodeOutput {
+                    packet,
+                    diagnostics,
+                })
             }
             Err(e) => {
                 // §12.5: on chroma failure the luma layer still yields a prefix. For an
@@ -350,14 +365,16 @@ fn prepare(img: &ImageView) -> Result<Prepared, DecodeError> {
     let detection = detect::detect(&binary).ok_or(LcError::NotFound)?;
 
     // §12.2.
-    let (format, format_margin, transform, alignment_found) = read_format(img, &binary, &detection)?;
+    let (format, format_margin, transform, alignment_found) =
+        read_format(img, &binary, &detection)?;
 
     let layout = Layout::new(format.version, format.profile);
     let palette = Palette::for_profile(format.profile);
     let with_chroma = img.format.has_chroma() && format.profile.chroma_bits_per_cell() > 0;
 
     // §12.3.
-    let refs = demod::collect_references(img, &transform, &layout, &palette, format.reference_border);
+    let refs =
+        demod::collect_references(img, &transform, &layout, &palette, format.reference_border);
     let illum = if with_chroma {
         IlluminationModel::fit(&refs, layout.side, format.version.get())
     } else {
@@ -402,7 +419,9 @@ fn read_format(
     let mut best: Option<(FormatInfo, f32, Transform, bool)> = None;
 
     for delta in [0i32, -1, 1, -2, 2, -3, 3] {
-        let Ok(version) = Version::new((estimate + delta).clamp(1, 32) as u8) else { continue };
+        let Ok(version) = Version::new((estimate + delta).clamp(1, 32) as u8) else {
+            continue;
+        };
         if version.get() as i32 != estimate + delta {
             continue;
         }
@@ -432,7 +451,9 @@ fn read_format(
         let copies = demod::format_llrs(img, &transform, &probe, &identity, &stats);
         for llrs in &copies {
             let (bits, margin) = bch::decode_soft(llrs);
-            let Ok(info) = FormatInfo::from_bits(bits) else { continue };
+            let Ok(info) = FormatInfo::from_bits(bits) else {
+                continue;
+            };
             if info.version != version {
                 continue;
             }
@@ -472,7 +493,13 @@ impl Default for FrameAccumulator {
 impl FrameAccumulator {
     /// An empty accumulator.
     pub fn new() -> FrameAccumulator {
-        FrameAccumulator { prepared: None, luma: Vec::new(), chroma: Vec::new(), stats: None, frames: 0 }
+        FrameAccumulator {
+            prepared: None,
+            luma: Vec::new(),
+            chroma: Vec::new(),
+            stats: None,
+            frames: 0,
+        }
     }
 
     /// Frames accumulated so far.

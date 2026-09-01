@@ -109,7 +109,12 @@ pub struct IlluminationModel {
 /// The gain clamp keeps a surface extrapolated well outside the reference hull — a corner
 /// of a symbol whose references all sit inland — from dividing by ~0 and handing the LDPC
 /// decoder an infinite LLR it would then trust completely.
-fn deshade(gain: &[Vec<f64>; 3], flare: &[Vec<f64>; 3], basis: &[f64], observed: Linear) -> [f64; 3] {
+fn deshade(
+    gain: &[Vec<f64>; 3],
+    flare: &[Vec<f64>; 3],
+    basis: &[f64],
+    observed: Linear,
+) -> [f64; 3] {
     let obs = [observed.r as f64, observed.g as f64, observed.b as f64];
     core::array::from_fn(|c| {
         let mut g = 0.0;
@@ -118,7 +123,11 @@ fn deshade(gain: &[Vec<f64>; 3], flare: &[Vec<f64>; 3], basis: &[f64], observed:
             g += gain[c][k] * bk;
             f += flare[c][k] * bk;
         }
-        let g = if g.abs() < 0.05 { 0.05f64.copysign(if g == 0.0 { 1.0 } else { g }) } else { g };
+        let g = if g.abs() < 0.05 {
+            0.05f64.copysign(if g == 0.0 { 1.0 } else { g })
+        } else {
+            g
+        };
         (obs[c] - f) / g
     })
 }
@@ -141,7 +150,11 @@ impl IlluminationModel {
     /// anyway.
     pub fn identity(side: u16) -> IlluminationModel {
         IlluminationModel {
-            affine: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            affine: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
             gain: [unit_gain(4), unit_gain(4), unit_gain(4)],
             flare: [vec![0.0; 4], vec![0.0; 4], vec![0.0; 4]],
             terms: 4,
@@ -154,7 +167,11 @@ impl IlluminationModel {
 
     /// Fit the model from known-colour references.
     pub fn fit(refs: &[Reference], side: u16, version: u8) -> IlluminationModel {
-        let terms = if version >= BIQUADRATIC_FROM_VERSION { 9 } else { 4 };
+        let terms = if version >= BIQUADRATIC_FROM_VERSION {
+            9
+        } else {
+            4
+        };
         let mut model = IlluminationModel::identity(side);
         model.terms = terms;
         model.gain = [unit_gain(terms), unit_gain(terms), unit_gain(terms)];
@@ -169,7 +186,9 @@ impl IlluminationModel {
         let mut active: Vec<bool> = vec![true; refs.len()];
         // Two passes: fit, reject, refit. A third pass buys nothing measurable.
         for pass in 0..2 {
-            let Some(fitted) = model.fit_once(refs, &active, terms) else { return model };
+            let Some(fitted) = model.fit_once(refs, &active, terms) else {
+                return model;
+            };
             model.affine = fitted.0;
             model.gain = fitted.1;
             model.flare = fitted.2;
@@ -185,8 +204,12 @@ impl IlluminationModel {
                 })
                 .collect();
 
-            let kept: Vec<f32> =
-                residuals.iter().zip(&active).filter(|(_, a)| **a).map(|(r, _)| *r).collect();
+            let kept: Vec<f32> = residuals
+                .iter()
+                .zip(&active)
+                .filter(|(_, a)| **a)
+                .map(|(r, _)| *r)
+                .collect();
             model.residual_rms =
                 (kept.iter().map(|r| r * r).sum::<f32>() / kept.len().max(1) as f32).sqrt();
 
@@ -214,8 +237,12 @@ impl IlluminationModel {
         active: &[bool],
         terms: usize,
     ) -> Option<([[f64; 4]; 3], [Vec<f64>; 3], [Vec<f64>; 3])> {
-        let live: Vec<&Reference> =
-            refs.iter().zip(active).filter(|(_, a)| **a).map(|(r, _)| r).collect();
+        let live: Vec<&Reference> = refs
+            .iter()
+            .zip(active)
+            .filter(|(_, a)| **a)
+            .map(|(r, _)| r)
+            .collect();
         if live.len() < 8 {
             return None;
         }
@@ -280,7 +307,17 @@ impl IlluminationModel {
         if terms == 4 {
             vec![1.0, u, v, u * v]
         } else {
-            vec![1.0, u, v, u * v, u * u, v * v, u * u * v, u * v * v, u * u * v * v]
+            vec![
+                1.0,
+                u,
+                v,
+                u * v,
+                u * u,
+                v * v,
+                u * u * v,
+                u * v * v,
+                u * u * v * v,
+            ]
         }
     }
 
@@ -311,7 +348,12 @@ mod tests {
             for j in 0..8u16 {
                 let (x, y) = (i as f32 * side as f32 / 8.0, j as f32 * side as f32 / 8.0);
                 let nominal = palette.linear[((i + j) % 4) as usize];
-                out.push(Reference { x, y, observed: f(x, y, nominal), nominal });
+                out.push(Reference {
+                    x,
+                    y,
+                    observed: f(x, y, nominal),
+                    nominal,
+                });
             }
         }
         out
@@ -321,7 +363,10 @@ mod tests {
         refs.iter()
             .map(|r| {
                 let c = model.correct(r.x, r.y, r.observed);
-                (c.r - r.nominal.r).abs().max((c.g - r.nominal.g).abs()).max((c.b - r.nominal.b).abs())
+                (c.r - r.nominal.r)
+                    .abs()
+                    .max((c.g - r.nominal.g).abs())
+                    .max((c.b - r.nominal.b).abs())
             })
             .fold(0.0, f32::max)
     }
@@ -339,7 +384,11 @@ mod tests {
         // A warm display mode: blue attenuated, red boosted.
         let set = refs(29, |_, _, c| Linear::new(c.r * 1.15, c.g * 0.98, c.b * 0.6));
         let m = IlluminationModel::fit(&set, 29, 5);
-        assert!(max_error(&m, &set) < 0.01, "residual {}", max_error(&m, &set));
+        assert!(
+            max_error(&m, &set) < 0.01,
+            "residual {}",
+            max_error(&m, &set)
+        );
     }
 
     /// The case that an additive-only residual surface cannot fix; see the module docs.
@@ -350,7 +399,11 @@ mod tests {
             Linear::new(c.r * s, c.g * s, c.b * s)
         });
         let m = IlluminationModel::fit(&set, 29, 5);
-        assert!(max_error(&m, &set) < 0.02, "residual {}", max_error(&m, &set));
+        assert!(
+            max_error(&m, &set) < 0.02,
+            "residual {}",
+            max_error(&m, &set)
+        );
     }
 
     /// Shading and veiling flare together — multiplicative and additive at once, which
@@ -363,7 +416,11 @@ mod tests {
             Linear::new(c.r * s + flare, c.g * s + flare, c.b * s + flare)
         });
         let m = IlluminationModel::fit(&set, 97, 20);
-        assert!(max_error(&m, &set) < 0.02, "residual {}", max_error(&m, &set));
+        assert!(
+            max_error(&m, &set) < 0.02,
+            "residual {}",
+            max_error(&m, &set)
+        );
     }
 
     #[test]
@@ -395,9 +452,17 @@ mod tests {
         let m = IlluminationModel::fit(&set, 29, 5);
         assert!(m.rejected >= 1, "no reference was rejected");
 
-        let clean: Vec<Reference> =
-            set.iter().enumerate().filter(|(i, _)| *i != victim).map(|(_, r)| *r).collect();
-        assert!(max_error(&m, &clean) < 0.02, "outlier dragged the fit: {}", max_error(&m, &clean));
+        let clean: Vec<Reference> = set
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != victim)
+            .map(|(_, r)| *r)
+            .collect();
+        assert!(
+            max_error(&m, &clean) < 0.02,
+            "outlier dragged the fit: {}",
+            max_error(&m, &clean)
+        );
     }
 
     #[test]

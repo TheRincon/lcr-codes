@@ -89,9 +89,11 @@ impl Code {
     /// practice means a layer of a handful of bits at a high-redundancy rate.
     pub fn new(rate: usize, n_tx: usize) -> Result<Code, LcError> {
         let rate = rate.min(RATES.len() - 1);
-        for family in
-            [tables::BY_RATE_LARGE[rate], tables::BY_RATE_SMALL[rate], tables::BY_RATE_TINY[rate]]
-        {
+        for family in [
+            tables::BY_RATE_LARGE[rate],
+            tables::BY_RATE_SMALL[rate],
+            tables::BY_RATE_TINY[rate],
+        ] {
             let z = n_tx.div_ceil(family.n_b).max(1);
             // The parity part alone must leave room for at least one information bit.
             if z * family.m_b >= n_tx {
@@ -116,7 +118,10 @@ impl Code {
             code.build_graph();
             return Ok(code);
         }
-        Err(LcError::Capacity { needed: 1, available: n_tx })
+        Err(LcError::Capacity {
+            needed: 1,
+            available: n_tx,
+        })
     }
 
     /// Information bits carried.
@@ -210,7 +215,10 @@ impl Code {
     /// interleaver scatters them afterwards.
     pub fn encode(&self, info: &[bool]) -> Result<Vec<bool>, LcError> {
         if info.len() != self.k {
-            return Err(LcError::Capacity { needed: info.len(), available: self.k });
+            return Err(LcError::Capacity {
+                needed: info.len(),
+                available: self.k,
+            });
         }
         let z = self.z;
         let (kb, mb) = (self.base.k_b, self.base.m_b);
@@ -250,7 +258,11 @@ impl Code {
         // Rows 1..m−2, forward substitution.
         for i in 1..mb - 1 {
             for t in 0..z {
-                let extra = if i == mb / 2 { p[0][(t + 1) % z] } else { false };
+                let extra = if i == mb / 2 {
+                    p[0][(t + 1) % z]
+                } else {
+                    false
+                };
                 p[i + 1][t] = syn[i][t] ^ p[i][t] ^ extra;
             }
         }
@@ -290,7 +302,10 @@ impl Code {
     /// flag, is the authoritative accept.
     pub fn decode(&self, rx: &[f32], max_iterations: u16) -> Result<DecodeResult, LcError> {
         if rx.len() != self.n_tx {
-            return Err(LcError::Capacity { needed: rx.len(), available: self.n_tx });
+            return Err(LcError::Capacity {
+                needed: rx.len(),
+                available: self.n_tx,
+            });
         }
         let ch = self.channel_llrs(rx);
         let n_edges = self.check_vars.len();
@@ -300,7 +315,9 @@ impl Code {
 
         // Initialise variable-to-check with the channel value.
         for v in 0..ch.len() {
-            for &e in &self.var_edges[self.var_offsets[v] as usize..self.var_offsets[v + 1] as usize] {
+            for &e in
+                &self.var_edges[self.var_offsets[v] as usize..self.var_offsets[v + 1] as usize]
+            {
                 v2c[e as usize] = ch[v];
             }
         }
@@ -312,7 +329,10 @@ impl Code {
 
             // Check nodes: normalised min-sum.
             for c in 0..self.check_offsets.len() - 1 {
-                let (lo, hi) = (self.check_offsets[c] as usize, self.check_offsets[c + 1] as usize);
+                let (lo, hi) = (
+                    self.check_offsets[c] as usize,
+                    self.check_offsets[c + 1] as usize,
+                );
                 let mut min1 = f32::INFINITY;
                 let mut min2 = f32::INFINITY;
                 let mut argmin = lo;
@@ -340,7 +360,10 @@ impl Code {
 
             // Variable nodes.
             for v in 0..ch.len() {
-                let (lo, hi) = (self.var_offsets[v] as usize, self.var_offsets[v + 1] as usize);
+                let (lo, hi) = (
+                    self.var_offsets[v] as usize,
+                    self.var_offsets[v + 1] as usize,
+                );
                 let mut sum = ch[v];
                 for &e in &self.var_edges[lo..hi] {
                     sum += c2v[e as usize];
@@ -358,12 +381,19 @@ impl Code {
         }
 
         let bits: Vec<bool> = total[..self.k].iter().map(|&l| l < 0.0).collect();
-        Ok(DecodeResult { bits, iterations, converged })
+        Ok(DecodeResult {
+            bits,
+            iterations,
+            converged,
+        })
     }
 
     fn syndrome_ok(&self, total: &[f32]) -> bool {
         for c in 0..self.check_offsets.len() - 1 {
-            let (lo, hi) = (self.check_offsets[c] as usize, self.check_offsets[c + 1] as usize);
+            let (lo, hi) = (
+                self.check_offsets[c] as usize,
+                self.check_offsets[c + 1] as usize,
+            );
             let mut parity = false;
             for &v in &self.check_vars[lo..hi] {
                 parity ^= total[v as usize] < 0.0;
@@ -428,7 +458,10 @@ mod tests {
                     Ok(c) => {
                         assert!(c.info_bits() > 0, "n={n} rate={rate}");
                         assert_eq!(c.coded_bits(), n);
-                        assert!(c.effective_rate() <= RATES[rate] + 1e-3, "n={n} rate={rate}");
+                        assert!(
+                            c.effective_rate() <= RATES[rate] + 1e-3,
+                            "n={n} rate={rate}"
+                        );
                     }
                     Err(e) => panic!("n={n} rate={rate}: {e}"),
                 }
@@ -440,7 +473,11 @@ mod tests {
     fn shortening_only_lowers_the_rate() {
         // A long layer should land essentially on the nominal rate.
         let c = Code::new(1, 19406).unwrap();
-        assert!((c.effective_rate() - 0.75).abs() < 0.01, "{}", c.effective_rate());
+        assert!(
+            (c.effective_rate() - 0.75).abs() < 0.01,
+            "{}",
+            c.effective_rate()
+        );
         // A tiny layer pays for the parity part it cannot shrink.
         let c = Code::new(3, 26).unwrap();
         assert!(c.effective_rate() < 0.55);
@@ -458,9 +495,17 @@ mod tests {
                 assert_eq!(code.len(), n);
                 // Every parity check must be satisfied by the encoded word.
                 let hard: Vec<f32> = c
-                    .channel_llrs(&code.iter().map(|&b| if b { -1.0 } else { 1.0 }).collect::<Vec<_>>())
+                    .channel_llrs(
+                        &code
+                            .iter()
+                            .map(|&b| if b { -1.0 } else { 1.0 })
+                            .collect::<Vec<_>>(),
+                    )
                     .to_vec();
-                assert!(c.syndrome_ok(&hard), "n={n} rate={rate}: encoder emitted a non-codeword");
+                assert!(
+                    c.syndrome_ok(&hard),
+                    "n={n} rate={rate}: encoder emitted a non-codeword"
+                );
             }
         }
     }
@@ -477,7 +522,11 @@ mod tests {
                 let r = c.decode(&llrs, MAX_ITERATIONS).unwrap();
                 assert!(r.converged, "n={n} rate={rate}");
                 assert_eq!(r.bits, info, "n={n} rate={rate}");
-                assert!(r.iterations <= 2, "clean decode took {} iterations", r.iterations);
+                assert!(
+                    r.iterations <= 2,
+                    "clean decode took {} iterations",
+                    r.iterations
+                );
             }
         }
     }
@@ -520,7 +569,10 @@ mod tests {
         let mid = frame_error_rate(1, n, 3.5, 40, 0xBBBB);
         let lo = frame_error_rate(1, n, 1.5, 40, 0xCCCC);
         assert_eq!(hi, 0.0, "clean channel should be error free, got {hi}");
-        assert!(mid <= lo, "waterfall not monotone: {mid} at 3.5 dB vs {lo} at 1.5 dB");
+        assert!(
+            mid <= lo,
+            "waterfall not monotone: {mid} at 3.5 dB vs {lo} at 1.5 dB"
+        );
         assert!(lo > 0.5, "code should fail well below threshold, got {lo}");
     }
 
@@ -529,7 +581,10 @@ mod tests {
         let n = 2014;
         let strong = frame_error_rate(5, n, 2.0, 30, 0xD00D); // rate 0.35
         let weak = frame_error_rate(0, n, 2.0, 30, 0xD00D); // rate 0.85
-        assert!(strong < weak, "rate 0.35 FER {strong} not better than rate 0.85 FER {weak}");
+        assert!(
+            strong < weak,
+            "rate 0.35 FER {strong} not better than rate 0.85 FER {weak}"
+        );
     }
 
     #[test]
@@ -550,7 +605,10 @@ mod tests {
                 .map(|&b| (if b { -1.0 } else { 1.0 }) + sigma * rng.normal())
                 .collect();
             let soft: Vec<f32> = y.iter().map(|v| 2.0 * v / (sigma * sigma)).collect();
-            let hard: Vec<f32> = y.iter().map(|v| if *v > 0.0 { 1.0 } else { -1.0 }).collect();
+            let hard: Vec<f32> = y
+                .iter()
+                .map(|v| if *v > 0.0 { 1.0 } else { -1.0 })
+                .collect();
             if c.decode(&soft, MAX_ITERATIONS).unwrap().bits != info {
                 soft_err += 1;
             }
@@ -558,7 +616,10 @@ mod tests {
                 hard_err += 1;
             }
         }
-        assert!(soft_err < hard_err, "soft {soft_err} not better than hard {hard_err}");
+        assert!(
+            soft_err < hard_err,
+            "soft {soft_err} not better than hard {hard_err}"
+        );
     }
 
     #[test]

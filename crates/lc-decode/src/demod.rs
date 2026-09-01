@@ -169,12 +169,19 @@ pub fn collect_references(
 ) -> Vec<crate::illum::Reference> {
     let mut out = Vec::new();
     let mut push = |x: f32, y: f32, observed: Linear, nominal: Linear| {
-        out.push(crate::illum::Reference { x, y, observed, nominal });
+        out.push(crate::illum::Reference {
+            x,
+            y,
+            observed,
+            nominal,
+        });
     };
 
     for y in 0..layout.side {
         for x in 0..layout.side {
-            let Some(nominal) = layout.known_color(x, y, palette) else { continue };
+            let Some(nominal) = layout.known_color(x, y, palette) else {
+                continue;
+            };
             // Finder cores are large uniform blocks; sampling every module of them would
             // swamp the fit with a handful of positions. Take the whole separator and
             // timing patterns, but thin the finder interiors.
@@ -192,7 +199,9 @@ pub fn collect_references(
 
     if reference_border {
         for (bx, by) in border::cells(layout.side) {
-            let Some(nominal) = border::cell_color(bx, by, layout.side, palette) else { continue };
+            let Some(nominal) = border::cell_color(bx, by, layout.side, palette) else {
+                continue;
+            };
             push(
                 bx as f32 + 0.5,
                 by as f32 + 0.5,
@@ -298,7 +307,11 @@ pub fn demodulate(
     for &(x, y) in &layout.payload {
         let raw = sample_module(img, t, x as i32, y as i32);
         let lab = color::linear_to_lab(illum.correct(x as f32 + 0.5, y as f32 + 0.5, raw));
-        let weight = if with_chroma { stats.reliability(lab, palette) } else { 1.0 };
+        let weight = if with_chroma {
+            stats.reliability(lab, palette)
+        } else {
+            1.0
+        };
         luma.push(stats.luma_llr(lab.l) * weight);
     }
 
@@ -317,11 +330,18 @@ pub fn demodulate(
             let weight = stats.reliability(lab, palette);
             stats.hue_log_likelihoods(lab, palette, &mut hue_ll);
             chroma_bit_llrs(&hue_ll, cx, cy, palette.hues, &mut bits);
-            chroma.extend(bits.iter().map(|v| (v * weight).clamp(-LLR_CLAMP, LLR_CLAMP)));
+            chroma.extend(
+                bits.iter()
+                    .map(|v| (v * weight).clamp(-LLR_CLAMP, LLR_CLAMP)),
+            );
         }
     }
 
-    Demodulation { luma, chroma, stats: *stats }
+    Demodulation {
+        luma,
+        chroma,
+        stats: *stats,
+    }
 }
 
 /// Remove the §8.5 luma mask from a demodulated layer.
@@ -390,7 +410,13 @@ mod tests {
     }
 
     fn stats() -> ChannelStats {
-        ChannelStats { l0: 32.0, l1: 78.0, sigma_l: 4.0, sigma_ab: 5.0, samples: 100 }
+        ChannelStats {
+            l0: 32.0,
+            l1: 78.0,
+            sigma_l: 4.0,
+            sigma_ab: 5.0,
+            samples: 100,
+        }
     }
 
     #[test]
@@ -419,15 +445,27 @@ mod tests {
 
     #[test]
     fn noisier_captures_produce_less_confident_llrs() {
-        let clean = ChannelStats { sigma_l: 2.0, ..stats() };
-        let noisy = ChannelStats { sigma_l: 12.0, ..stats() };
+        let clean = ChannelStats {
+            sigma_l: 2.0,
+            ..stats()
+        };
+        let noisy = ChannelStats {
+            sigma_l: 12.0,
+            ..stats()
+        };
         assert!(clean.luma_llr(32.0).abs() > noisy.luma_llr(32.0).abs());
     }
 
     #[test]
     fn snr_tracks_separation_over_noise() {
-        let a = ChannelStats { sigma_l: 4.0, ..stats() };
-        let b = ChannelStats { sigma_l: 16.0, ..stats() };
+        let a = ChannelStats {
+            sigma_l: 4.0,
+            ..stats()
+        };
+        let b = ChannelStats {
+            sigma_l: 16.0,
+            ..stats()
+        };
         assert!(a.snr_db() > b.snr_db());
         // 46 L* of separation against σ=4 is 23/4 ≈ 15 dB.
         assert!((a.snr_db() - 15.2).abs() < 0.5, "{}", a.snr_db());
@@ -468,7 +506,9 @@ mod tests {
     #[test]
     fn unmasking_is_a_sign_flip_and_an_involution() {
         let layout = Layout::new(lc_core::Version::new(3).unwrap(), Profile::C1);
-        let original: Vec<f32> = (0..layout.payload.len()).map(|i| (i % 7) as f32 - 3.0).collect();
+        let original: Vec<f32> = (0..layout.payload.len())
+            .map(|i| (i % 7) as f32 - 3.0)
+            .collect();
         let mut llrs = original.clone();
         unmask_luma(&mut llrs, &layout, 5);
         assert_ne!(llrs, original);
@@ -502,9 +542,23 @@ mod tests {
         refs.push(at(20, lc_core::palette::BORDER_WHITE));
         refs.push(at(21, lc_core::palette::BORDER_BLACK));
         let with_border = measure(&refs, &identity, &p);
-        assert!((with_border.l0 - clean.l0).abs() < 0.5, "{} vs {}", with_border.l0, clean.l0);
-        assert!((with_border.l1 - clean.l1).abs() < 0.5, "{} vs {}", with_border.l1, clean.l1);
-        assert!(with_border.snr_db() > 20.0, "SNR collapsed to {}", with_border.snr_db());
+        assert!(
+            (with_border.l0 - clean.l0).abs() < 0.5,
+            "{} vs {}",
+            with_border.l0,
+            clean.l0
+        );
+        assert!(
+            (with_border.l1 - clean.l1).abs() < 0.5,
+            "{} vs {}",
+            with_border.l1,
+            clean.l1
+        );
+        assert!(
+            with_border.snr_db() > 20.0,
+            "SNR collapsed to {}",
+            with_border.snr_db()
+        );
     }
 
     /// A glare patch over part of the symbol must not move the luma centroids.
@@ -520,15 +574,28 @@ mod tests {
             nominal: p.linear[nominal_idx],
         };
         // Thirty clean references, then ten blown to white — a third of the symbol.
-        let mut refs: Vec<Reference> =
-            (0..30).map(|i| make(i, p.linear[i % 4], i % 4)).collect();
+        let mut refs: Vec<Reference> = (0..30).map(|i| make(i, p.linear[i % 4], i % 4)).collect();
         let clean = measure(&refs, &identity, &p);
         for i in 0..10 {
-            refs.push(make(30 + i, lc_core::color::Linear::new(1.0, 1.0, 1.0), i % 2));
+            refs.push(make(
+                30 + i,
+                lc_core::color::Linear::new(1.0, 1.0, 1.0),
+                i % 2,
+            ));
         }
         let glared = measure(&refs, &identity, &p);
-        assert!((glared.l0 - clean.l0).abs() < 1.0, "{} vs {}", glared.l0, clean.l0);
-        assert!((glared.l1 - clean.l1).abs() < 1.0, "{} vs {}", glared.l1, clean.l1);
+        assert!(
+            (glared.l0 - clean.l0).abs() < 1.0,
+            "{} vs {}",
+            glared.l0,
+            clean.l0
+        );
+        assert!(
+            (glared.l1 - clean.l1).abs() < 1.0,
+            "{} vs {}",
+            glared.l1,
+            clean.l1
+        );
     }
 
     #[test]
@@ -555,8 +622,16 @@ mod tests {
     fn reliability_scales_with_measured_noise() {
         let p = palette();
         let off = Lab::new(p.lab[0].l + 12.0, p.lab[0].a, p.lab[0].b);
-        let clean = ChannelStats { sigma_l: 2.0, sigma_ab: 2.0, ..stats() };
-        let noisy = ChannelStats { sigma_l: 10.0, sigma_ab: 10.0, ..stats() };
+        let clean = ChannelStats {
+            sigma_l: 2.0,
+            sigma_ab: 2.0,
+            ..stats()
+        };
+        let noisy = ChannelStats {
+            sigma_l: 10.0,
+            sigma_ab: 10.0,
+            ..stats()
+        };
         // The same deviation is damning on a clean capture and unremarkable on a noisy one.
         assert!(clean.reliability(off, &p) < noisy.reliability(off, &p));
     }

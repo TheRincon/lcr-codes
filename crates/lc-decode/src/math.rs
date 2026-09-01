@@ -91,7 +91,11 @@ pub fn median(values: &mut [f32]) -> f32 {
     }
     values.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
     let n = values.len();
-    if n % 2 == 1 { values[n / 2] } else { 0.5 * (values[n / 2 - 1] + values[n / 2]) }
+    if n % 2 == 1 {
+        values[n / 2]
+    } else {
+        0.5 * (values[n / 2 - 1] + values[n / 2])
+    }
 }
 
 /// Median absolute deviation, scaled to estimate a Gaussian standard deviation.
@@ -185,6 +189,9 @@ mod tests {
         let (sd_c, sd_d) = (stddev(&clean), stddev(&dirty));
 
         assert!(mad_d / mad_c < 1.5, "MAD moved {mad_c} -> {mad_d}");
-        assert!(sd_d / sd_c > 100.0, "stddev should blow up: {sd_c} -> {sd_d}");
+        assert!(
+            sd_d / sd_c > 100.0,
+            "stddev should blow up: {sd_c} -> {sd_d}"
+        );
     }
 }

@@ -65,7 +65,10 @@ pub struct Interleaver {
 impl Interleaver {
     /// Build the interleaver for a layer of `n` bits.
     pub fn new(n: usize) -> Interleaver {
-        Interleaver { n, a: multiplier(n) }
+        Interleaver {
+            n,
+            a: multiplier(n),
+        }
     }
 
     /// Layer length.
@@ -83,7 +86,11 @@ impl Interleaver {
     /// Transmitted position of codeword bit `j`.
     #[inline]
     pub const fn position(&self, j: usize) -> usize {
-        if self.n == 0 { 0 } else { (self.a * j) % self.n }
+        if self.n == 0 {
+            0
+        } else {
+            (self.a * j) % self.n
+        }
     }
 
     /// Scatter a codeword into transmission order.
@@ -146,8 +153,14 @@ mod tests {
         let idx: Vec<usize> = burst.into_iter().collect();
         // No two damaged codeword bits adjacent, and they span most of the codeword.
         let min_gap = idx.windows(2).map(|w| w[1] - w[0]).min().unwrap();
-        assert!(min_gap >= 3, "burst left adjacent codeword bits, min gap {min_gap}");
-        assert!(idx.last().unwrap() - idx[0] > n * 9 / 10, "burst did not spread");
+        assert!(
+            min_gap >= 3,
+            "burst left adjacent codeword bits, min gap {min_gap}"
+        );
+        assert!(
+            idx.last().unwrap() - idx[0] > n * 9 / 10,
+            "burst did not spread"
+        );
     }
 
     /// Three-distance property: consecutive damaged indices take few distinct gaps, and
@@ -160,7 +173,10 @@ mod tests {
         idx.sort_unstable();
         let gaps: alloc::collections::BTreeSet<usize> =
             idx.windows(2).map(|w| w[1] - w[0]).collect();
-        assert!(gaps.len() <= 3, "expected at most three distinct gaps, got {gaps:?}");
+        assert!(
+            gaps.len() <= 3,
+            "expected at most three distinct gaps, got {gaps:?}"
+        );
     }
 
     #[test]

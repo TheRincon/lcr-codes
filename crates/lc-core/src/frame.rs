@@ -134,7 +134,11 @@ impl Frame {
         if body.len() > EXTENDED_MAX {
             return Err(LcError::TooLarge(body.len()));
         }
-        Ok(Frame { ctype, cflag: Compression::None, body })
+        Ok(Frame {
+            ctype,
+            cflag: Compression::None,
+            body,
+        })
     }
 
     /// True when this frame will use the compact format.
@@ -145,7 +149,11 @@ impl Frame {
 
     /// Total framed size in bits, including header and CRC.
     pub fn encoded_bits(&self) -> usize {
-        if self.is_compact() { 15 + self.body.len() * 8 + 16 } else { 21 + self.body.len() * 8 + 32 }
+        if self.is_compact() {
+            15 + self.body.len() * 8 + 16
+        } else {
+            21 + self.body.len() * 8 + 32
+        }
     }
 
     /// Framing overhead in bits for a body of `n` bytes — §9.1's 3.9 / 6.6 byte figures.
@@ -229,9 +237,15 @@ impl Frame {
     pub fn compressed(ctype: ContentType, data: &[u8]) -> Result<Frame, LcError> {
         let mut best = Frame::new(ctype, data.to_vec())?;
         for cflag in [Compression::Deflate, Compression::Brotli] {
-            let Ok(candidate) = compress(cflag, data) else { continue };
+            let Ok(candidate) = compress(cflag, data) else {
+                continue;
+            };
             if candidate.len() < best.body.len() {
-                best = Frame { ctype, cflag, body: candidate };
+                best = Frame {
+                    ctype,
+                    cflag,
+                    body: candidate,
+                };
             }
         }
         Ok(best)
@@ -296,7 +310,11 @@ pub fn compress(cflag: Compression, data: &[u8]) -> Result<Vec<u8>, LcError> {
             brotli::BrotliCompress(
                 &mut input,
                 &mut out,
-                &brotli::enc::BrotliEncoderParams { quality: 11, lgwin: 22, ..Default::default() },
+                &brotli::enc::BrotliEncoderParams {
+                    quality: 11,
+                    lgwin: 22,
+                    ..Default::default()
+                },
             )
             .map_err(|_| LcError::CompressionFailed)?;
             Ok(out)
@@ -312,15 +330,18 @@ pub fn decompress(cflag: Compression, data: &[u8]) -> Result<Vec<u8>, LcError> {
     match cflag {
         Compression::None => Ok(data.to_vec()),
         #[cfg(feature = "deflate")]
-        Compression::Deflate => miniz_oxide::inflate::decompress_to_vec_with_limit(data, EXTENDED_MAX * 4)
-            .map_err(|_| LcError::CompressionFailed),
+        Compression::Deflate => {
+            miniz_oxide::inflate::decompress_to_vec_with_limit(data, EXTENDED_MAX * 4)
+                .map_err(|_| LcError::CompressionFailed)
+        }
         #[cfg(not(feature = "deflate"))]
         Compression::Deflate => Err(LcError::UnsupportedCompression(cflag.to_u8())),
         #[cfg(feature = "brotli")]
         Compression::Brotli => {
             let mut out = Vec::new();
             let mut input = data;
-            brotli::BrotliDecompress(&mut input, &mut out).map_err(|_| LcError::CompressionFailed)?;
+            brotli::BrotliDecompress(&mut input, &mut out)
+                .map_err(|_| LcError::CompressionFailed)?;
             Ok(out)
         }
         #[cfg(not(feature = "brotli"))]
@@ -350,7 +371,11 @@ mod tests {
     #[test]
     fn ten_byte_payload_costs_28_percent_not_40() {
         let frac = |bits: usize| bits as f32 / (bits + 80) as f32;
-        assert!((frac(Frame::overhead_bits(10)) - 0.28).abs() < 0.005, "{}", frac(31));
+        assert!(
+            (frac(Frame::overhead_bits(10)) - 0.28).abs() < 0.005,
+            "{}",
+            frac(31)
+        );
         assert!((frac(53) - 0.40).abs() < 0.005, "{}", frac(53));
     }
 
@@ -370,8 +395,16 @@ mod tests {
 
     #[test]
     fn the_compact_frame_is_used_whenever_it_fits() {
-        assert!(Frame::new(ContentType::Opaque, vec![0; 255]).unwrap().is_compact());
-        assert!(!Frame::new(ContentType::Opaque, vec![0; 256]).unwrap().is_compact());
+        assert!(
+            Frame::new(ContentType::Opaque, vec![0; 255])
+                .unwrap()
+                .is_compact()
+        );
+        assert!(
+            !Frame::new(ContentType::Opaque, vec![0; 256])
+                .unwrap()
+                .is_compact()
+        );
     }
 
     #[test]
@@ -399,7 +432,10 @@ mod tests {
     #[test]
     fn reserved_content_types_are_rejected() {
         for v in 6..=15u8 {
-            assert!(matches!(ContentType::from_u8(v), Err(LcError::BadContentType(_))));
+            assert!(matches!(
+                ContentType::from_u8(v),
+                Err(LcError::BadContentType(_))
+            ));
         }
         for c in [
             ContentType::Opaque,
@@ -439,7 +475,10 @@ mod tests {
     fn multipart_rejects_truncation() {
         let body = multipart_encode(&[(ContentType::Cbor, vec![1, 2, 3])]).unwrap();
         for n in 0..body.len() {
-            assert!(multipart_decode(&body[..n]).is_err(), "truncation to {n} accepted");
+            assert!(
+                multipart_decode(&body[..n]).is_err(),
+                "truncation to {n} accepted"
+            );
         }
     }
 
@@ -454,9 +493,15 @@ mod tests {
         assert_eq!(f.payload().unwrap(), big);
 
         // Short and incompressible: §9.3 warns this is the common case at LC Code sizes.
-        let small: Vec<u8> = (0..20u8).map(|i| i.wrapping_mul(97).wrapping_add(13)).collect();
+        let small: Vec<u8> = (0..20u8)
+            .map(|i| i.wrapping_mul(97).wrapping_add(13))
+            .collect();
         let f = Frame::compressed(ContentType::Opaque, &small).unwrap();
-        assert_eq!(f.cflag, Compression::None, "compressor expanded a short payload");
+        assert_eq!(
+            f.cflag,
+            Compression::None,
+            "compressor expanded a short payload"
+        );
         assert_eq!(f.payload().unwrap(), small);
     }
 

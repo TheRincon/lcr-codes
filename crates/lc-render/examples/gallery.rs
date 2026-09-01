@@ -13,7 +13,11 @@ use lc_render::{RenderOptions, render_png, render_rgb, render_svg};
 
 /// Payloads spanning the §11 candidate schema families, at the sizes they occur at.
 const PAYLOADS: &[(&str, &str, &str)] = &[
-    ("contact", r#"{"name":"Fred","loc":"45.00,55.0"}"#, "The §6.1 worked example."),
+    (
+        "contact",
+        r#"{"name":"Fred","loc":"45.00,55.0"}"#,
+        "The §6.1 worked example.",
+    ),
     (
         "location-fix",
         r#"{"lat":51.4779,"lon":-0.0015,"acc":8,"t":1756512000}"#,
@@ -76,14 +80,25 @@ fn main() {
         (Profile::C3, "c3"),
     ] {
         let what = match profile {
-            Profile::M => "Monochrome fallback (§4.6). Luma layer only — this is what a \
-                           mono sensor or an unrecoverable chroma layer leaves you.",
+            Profile::M => {
+                "Monochrome fallback (§4.6). Luma layer only — this is what a \
+                           mono sensor or an unrecoverable chroma layer leaves you."
+            }
             Profile::C1 => "Screen default: 4 colours, co-sited chroma, 2.00 bits/module.",
-            Profile::C2 => "Print default: 4 colours, 2×2 chroma cells, more robust and \
-                            less dense.",
+            Profile::C2 => {
+                "Print default: 4 colours, 2×2 chroma cells, more robust and \
+                            less dense."
+            }
             Profile::C3 => "8 colours, 2×2 cells. Optional (§5) and wants a good capture.",
         };
-        rows.push(write_one(&dir, &format!("profile-{label}"), json, what, profile, true));
+        rows.push(write_one(
+            &dir,
+            &format!("profile-{label}"),
+            json,
+            what,
+            profile,
+            true,
+        ));
     }
 
     // The §6.4 border is optional, signalled by format bit 14. Two payloads without it,
@@ -105,21 +120,21 @@ fn main() {
     println!("\n{} symbols in {dir}/", rows.len());
 }
 
-fn write_one(
-    dir: &str,
-    name: &str,
-    json: &str,
-    what: &str,
-    profile: Profile,
-    border: bool,
-) -> Row {
-    let opts = EncodeOptions { profile, reference_border: border, ..Default::default() };
+fn write_one(dir: &str, name: &str, json: &str, what: &str, profile: Profile, border: bool) -> Row {
+    let opts = EncodeOptions {
+        profile,
+        reference_border: border,
+        ..Default::default()
+    };
     let sym = lc_encode::encode_json(json, &opts).expect("encode");
     let cbor = lc_core::json::parse(json).unwrap().to_vec();
 
     // §13.1 prefers 10–12 device pixels per module; 12 keeps the PNGs legible when a
     // reader zooms in on one.
-    let render_opts = RenderOptions { module_px: 12, ..RenderOptions::screen() };
+    let render_opts = RenderOptions {
+        module_px: 12,
+        ..RenderOptions::screen()
+    };
 
     // Nothing goes in the gallery that will not decode.
     let raster = render_rgb(&sym, &render_opts);

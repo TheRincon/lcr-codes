@@ -553,14 +553,29 @@ static R035_TINY_INFO: [Column; 3] = [
 // Index order in every table below matches `crate::ecc::ldpc::RATES`.
 
 /// Base graphs by rate index, large family (`n_b = 60`).
-pub static BY_RATE_LARGE: [&BaseGraph; 6] = [&R085_LARGE, &R075_LARGE, &R065_LARGE, &R055_LARGE, &R045_LARGE, &R035_LARGE];
+pub static BY_RATE_LARGE: [&BaseGraph; 6] = [
+    &R085_LARGE,
+    &R075_LARGE,
+    &R065_LARGE,
+    &R055_LARGE,
+    &R045_LARGE,
+    &R035_LARGE,
+];
 
 /// Base graphs by rate index, small family (`n_b = 20`).
-pub static BY_RATE_SMALL: [&BaseGraph; 6] = [&R085_SMALL, &R075_SMALL, &R065_SMALL, &R055_SMALL, &R045_SMALL, &R035_SMALL];
+pub static BY_RATE_SMALL: [&BaseGraph; 6] = [
+    &R085_SMALL,
+    &R075_SMALL,
+    &R065_SMALL,
+    &R055_SMALL,
+    &R045_SMALL,
+    &R035_SMALL,
+];
 
 /// Base graphs by rate index, tiny family (`n_b = 10`).
-pub static BY_RATE_TINY: [&BaseGraph; 6] = [&R085_TINY, &R075_TINY, &R065_TINY, &R055_TINY, &R045_TINY, &R035_TINY];
-
+pub static BY_RATE_TINY: [&BaseGraph; 6] = [
+    &R085_TINY, &R075_TINY, &R065_TINY, &R055_TINY, &R045_TINY, &R035_TINY,
+];
 
 // Construction report, for the record:
 // * `R085_LARGE` residual four-cycles — Z=2:307, Z=8:41, Z=32:0, Z=128:0, Z=324:0

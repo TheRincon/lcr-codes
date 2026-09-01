@@ -99,13 +99,15 @@ mod tests {
                 (0..4u8).flat_map(move |luma| {
                     (0..4u8).flat_map(move |chroma| {
                         (0..8u8).flat_map(move |mask| {
-                            [false, true].into_iter().map(move |reference_border| FormatInfo {
-                                version,
-                                profile,
-                                ecc: EccLevel { luma, chroma },
-                                mask,
-                                reference_border,
-                            })
+                            [false, true]
+                                .into_iter()
+                                .map(move |reference_border| FormatInfo {
+                                    version,
+                                    profile,
+                                    ecc: EccLevel { luma, chroma },
+                                    mask,
+                                    reference_border,
+                                })
                         })
                     })
                 })
@@ -158,7 +160,10 @@ mod tests {
             reference_border: false,
         };
         // A glare blob over one finder takes its whole format copy with it.
-        assert_eq!(FormatInfo::from_copies(0x2AAA_AAAA, f.to_codeword()).unwrap(), f);
+        assert_eq!(
+            FormatInfo::from_copies(0x2AAA_AAAA, f.to_codeword()).unwrap(),
+            f
+        );
     }
 
     #[test]

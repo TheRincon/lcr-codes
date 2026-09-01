@@ -81,7 +81,13 @@ impl<'a> ImageView<'a> {
         if (stride as usize) < min_stride || data.len() < need {
             return Err(DecodeError::ShortBuffer);
         }
-        Ok(ImageView { data, width, height, stride, format })
+        Ok(ImageView {
+            data,
+            width,
+            height,
+            stride,
+            format,
+        })
     }
 
     /// Wrap a tightly-packed buffer.
@@ -91,7 +97,13 @@ impl<'a> ImageView<'a> {
         height: u32,
         format: PixelFormat,
     ) -> Result<ImageView<'a>, DecodeError> {
-        ImageView::new(data, width, height, width * format.channels() as u32, format)
+        ImageView::new(
+            data,
+            width,
+            height,
+            width * format.channels() as u32,
+            format,
+        )
     }
 
     #[inline]
@@ -129,12 +141,20 @@ impl<'a> ImageView<'a> {
                 srgb_to_linear_f(px.b as f32 / 255.0),
             )
         };
-        let (a, b, c, d) =
-            (lin(self.rgb(x0, y0)), lin(self.rgb(x1, y0)), lin(self.rgb(x0, y1)), lin(self.rgb(x1, y1)));
+        let (a, b, c, d) = (
+            lin(self.rgb(x0, y0)),
+            lin(self.rgb(x1, y0)),
+            lin(self.rgb(x0, y1)),
+            lin(self.rgb(x1, y1)),
+        );
         let mix = |p: f32, q: f32, r: f32, s: f32| {
             (p * (1.0 - fx) + q * fx) * (1.0 - fy) + (r * (1.0 - fx) + s * fx) * fy
         };
-        Linear::new(mix(a.r, b.r, c.r, d.r), mix(a.g, b.g, c.g, d.g), mix(a.b, b.b, c.b, d.b))
+        Linear::new(
+            mix(a.r, b.r, c.r, d.r),
+            mix(a.g, b.g, c.g, d.g),
+            mix(a.b, b.b, c.b, d.b),
+        )
     }
 
     /// Gamma-encoded luma, `0..=255`. Used only for detection.
@@ -404,7 +424,11 @@ pub fn binarize(gray: &[u8], width: u32, height: u32) -> Binary {
             }
         }
     }
-    Binary { width, height, bits }
+    Binary {
+        width,
+        height,
+        bits,
+    }
 }
 
 #[cfg(test)]
@@ -415,7 +439,11 @@ mod tests {
         let mut v = vec![0u8; (w * h) as usize];
         for y in 0..h {
             for x in 0..w {
-                v[(y * w + x) as usize] = if (x / cell + y / cell) % 2 == 0 { 20 } else { 230 };
+                v[(y * w + x) as usize] = if (x / cell + y / cell) % 2 == 0 {
+                    20
+                } else {
+                    230
+                };
             }
         }
         v
@@ -508,7 +536,10 @@ mod tests {
     fn a_uniform_image_does_not_hallucinate_structure() {
         let g = vec![200u8; 64 * 64];
         let b = binarize(&g, 64, 64);
-        let dark = (0..64u32).flat_map(|y| (0..64u32).map(move |x| (x, y))).filter(|&(x, y)| b.dark(x, y)).count();
+        let dark = (0..64u32)
+            .flat_map(|y| (0..64u32).map(move |x| (x, y)))
+            .filter(|&(x, y)| b.dark(x, y))
+            .count();
         assert_eq!(dark, 0, "{dark} dark pixels in a flat light image");
     }
 
@@ -520,7 +551,11 @@ mod tests {
         for k in 0..400u32 {
             let x = (k * 7919) % w;
             let y = (k * 104729) % h;
-            g[(y * w + x) as usize] = if g[(y * w + x) as usize] > 128 { 10 } else { 245 };
+            g[(y * w + x) as usize] = if g[(y * w + x) as usize] > 128 {
+                10
+            } else {
+                245
+            };
         }
         let noisy = binarize(&g, w, h);
         let clean = noisy.denoised();
@@ -532,7 +567,12 @@ mod tests {
                 .filter(|&(x, y)| b.dark(x, y) != truth(x, y))
                 .count()
         };
-        assert!(count(&clean) < count(&noisy) / 4, "{} -> {}", count(&noisy), count(&clean));
+        assert!(
+            count(&clean) < count(&noisy) / 4,
+            "{} -> {}",
+            count(&noisy),
+            count(&clean)
+        );
 
         // A run through the middle of a cell must be unbroken after denoising.
         let row = cell / 2;
