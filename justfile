@@ -30,7 +30,7 @@ _default:
 # ---------------------------------------------------------------- check
 
 # Everything CI should run.
-ci: fmt-check test wasm-size
+ci: fmt-check test test-debug wasm-size
 
 # Depends on `component` because `lc-wasm/tests/component.rs` loads the built artifact
 # from dist/ and runs it under wasmtime. Without that ordering the component tests would
@@ -39,6 +39,19 @@ ci: fmt-check test wasm-size
 # The whole test suite, including the component under wasmtime.
 test: component
     cargo test --workspace --release
+
+# Exercise `debug_assert!`, which the release suite above compiles out.
+#
+# This is not redundant with `test`. Release builds strip every `debug_assert!`, so a
+# release-only suite cannot see them — and one of them was failing unnoticed: the §4.2
+# reachability check in `lc-core/src/palette.rs` had been red since the palettes were
+# pinned, because `just test` is the only command anyone runs and it passes `--release`.
+#
+# `--lib` rather than the whole suite: the assertions sit in crate internals that the
+# unit tests reach directly, while the integration suites are dominated by the §15
+# degradation sweep — ~5 minutes unoptimised, for no additional assertion coverage.
+test-debug:
+    cargo test --workspace --lib
 
 # Just the native tests, skipping the component build. Faster inner loop.
 test-fast:
@@ -171,6 +184,14 @@ ldpc:
 # Recompute the §6.1 capacity table from the real layout (open decision #8).
 capacity:
     cargo run --release -p xtask -- capacity
+
+# Search for the §4 palette constants against the sRGB gamut (open decisions #1 and #2).
+#
+# Reports the best configuration per profile, what the §4.2 luma gap costs in chroma, and
+# what each hue orientation is worth — the last so D1's green-against-magenta choice can
+# be priced against the alternatives rather than assumed.
+palette:
+    cargo run --release -p xtask -- palette
 
 # ---------------------------------------------------------------- git
 

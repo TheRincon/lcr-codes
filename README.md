@@ -8,7 +8,7 @@ point.
 Reference implementation of [`lc-code-spec-v0.4.md`](lc-code-spec-v0.4.md), in Rust,
 shipped as a **WebAssembly component**.
 
-**262 tests, zero warnings.** `just test`
+**263 tests, zero warnings.** `just test`
 
 ---
 
@@ -16,10 +16,16 @@ shipped as a **WebAssembly component**.
 
 <img src="examples/event-admission.png" width="240" alt="An LC Code symbol">
 
-Three finder bullseyes and an alignment marker do the geometry — rendered in black and
-white only, so detection works before any colour processing exists. The colour carries the
-payload: a luma layer at full module pitch and a chroma layer at equal or coarser pitch,
-with independent code rates. The outer ring is the optional §6.4 reference border, a
+Three finder bullseyes and an alignment marker do the geometry — rendered at the two luma
+levels of a single hue state, so detection works before any colour processing exists. On
+a colour profile that means one hue's dark/light pair rather than black and white: a
+four-colour palette has no neutral pair to use, and borrowing black and white would put
+the fixed patterns outside the palette, giving the detector luma centroids that do not
+match the payload's. What detection actually needs is the 1:1:3:1:1 run ratio in luma,
+which holds regardless of hue.
+
+The colour carries the payload: a luma layer at full module pitch and a chroma layer at
+equal or coarser pitch, with independent code rates. The outer ring is the optional §6.4 reference border, a
 calibration target for the illumination fit.
 
 [`examples/`](examples/) has a symbol for each of seven representative payloads, plus one
@@ -124,7 +130,7 @@ the compressed figure would report headroom that does not exist.
 
 | Crate | State | Tests | What it is |
 |---|---|---|---|
-| `lc-core` | ✅ | 138 | Geometry, palette, ECC, container, masking, modulation |
+| `lc-core` | ✅ | 139 | Geometry, palette, ECC, container, masking, modulation |
 | `lc-decode` | ✅ | 79 | §12 pipeline: detect, illuminate, demodulate, decode |
 | `lc-encode` | ✅ | 11 | §8 pipeline; auto version, auto compression, mask search |
 | `lc-render` | ✅ | 12 | SVG, RGB raster, PNG, ANSI terminal preview |

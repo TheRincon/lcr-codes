@@ -439,7 +439,7 @@ mod tests {
         let mut v = vec![0u8; (w * h) as usize];
         for y in 0..h {
             for x in 0..w {
-                v[(y * w + x) as usize] = if (x / cell + y / cell) % 2 == 0 {
+                v[(y * w + x) as usize] = if (x / cell + y / cell).is_multiple_of(2) {
                     20
                 } else {
                     230
@@ -560,7 +560,7 @@ mod tests {
         let noisy = binarize(&g, w, h);
         let clean = noisy.denoised();
 
-        let truth = |x: u32, y: u32| (x / cell + y / cell) % 2 == 0;
+        let truth = |x: u32, y: u32| (x / cell + y / cell).is_multiple_of(2);
         let count = |b: &Binary| {
             (1..h - 1)
                 .flat_map(|y| (1..w - 1).map(move |x| (x, y)))
@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn out_of_range_binary_reads_are_light() {
-        let b = binarize(&vec![0u8; 16], 4, 4);
+        let b = binarize(&[0u8; 16], 4, 4);
         assert!(!b.dark(100, 100));
     }
 }

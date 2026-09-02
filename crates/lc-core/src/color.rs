@@ -87,7 +87,7 @@ impl Linear {
 
     /// True when every component already lies in `0.0..=1.0` (within `1e-4`).
     pub fn in_gamut(self) -> bool {
-        let ok = |v: f32| v >= -1e-4 && v <= 1.0 + 1e-4;
+        let ok = |v: f32| (-1e-4..=1.0 + 1e-4).contains(&v);
         ok(self.r) && ok(self.g) && ok(self.b)
     }
 
@@ -178,7 +178,7 @@ pub fn linear_to_xyz(c: Linear) -> [f32; 3] {
     [
         0.412_456_4 * c.r + 0.357_576_1 * c.g + 0.180_437_5 * c.b,
         0.212_672_9 * c.r + 0.715_152_2 * c.g + 0.072_175_0 * c.b,
-        0.019_333_9 * c.r + 0.119_192_0 * c.g + 0.950_304_1 * c.b,
+        0.019_333_9 * c.r + 0.119_192 * c.g + 0.950_304_1 * c.b,
     ]
 }
 
@@ -187,7 +187,7 @@ pub fn xyz_to_linear(xyz: [f32; 3]) -> Linear {
     let [x, y, z] = xyz;
     Linear {
         r: 3.240_454_2 * x - 1.537_138_5 * y - 0.498_531_4 * z,
-        g: -0.969_266_0 * x + 1.876_010_8 * y + 0.041_556_0 * z,
+        g: -0.969_266 * x + 1.876_010_8 * y + 0.041_556_0 * z,
         b: 0.055_643_4 * x - 0.204_025_9 * y + 1.057_225_2 * z,
     }
 }

@@ -253,7 +253,7 @@ pub fn find_finders(bin: &Binary) -> Vec<Finder> {
         );
     }
     found.retain(|f| f.confirmations >= 2);
-    found.sort_by(|a, b| b.confirmations.cmp(&a.confirmations));
+    found.sort_by_key(|f| core::cmp::Reverse(f.confirmations));
     found
 }
 

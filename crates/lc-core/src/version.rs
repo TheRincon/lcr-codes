@@ -55,7 +55,7 @@ impl Version {
 
     /// The smallest version whose `side` is at least `side`, if one exists.
     pub fn from_side(side: u16) -> Option<Version> {
-        if side < 21 || side > 145 || (side - 21) % 4 != 0 {
+        if !(21..=145).contains(&side) || !(side - 21).is_multiple_of(4) {
             return None;
         }
         Some(Version(((side - 21) / 4 + 1) as u8))

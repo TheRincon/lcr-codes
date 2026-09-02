@@ -81,7 +81,7 @@ pub fn body_bytes_for(info_bits: usize) -> usize {
         return compact;
     }
     let extended = info_bits.saturating_sub(Frame::overhead_bits(COMPACT_MAX + 1)) / 8;
-    extended.max(COMPACT_MAX).min(crate::frame::EXTENDED_MAX)
+    extended.clamp(COMPACT_MAX, crate::frame::EXTENDED_MAX)
 }
 
 /// The smallest version that can carry a `body_len`-byte body.

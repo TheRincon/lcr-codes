@@ -152,7 +152,9 @@ fn monochrome_capture_decodes_the_m_profile() {
     let raster = render_rgb(&sym, &RenderOptions::screen());
     let gray: Vec<u8> = raster
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| ((54 * p[0] as u32 + 183 * p[1] as u32 + 19 * p[2] as u32) >> 8) as u8)
         .collect();
     let out = Decoder::new()
@@ -174,7 +176,9 @@ fn monochrome_capture_of_a_colour_symbol_yields_a_partial() {
     let raster = render_rgb(&sym, &RenderOptions::screen());
     let gray: Vec<u8> = raster
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| ((54 * p[0] as u32 + 183 * p[1] as u32 + 19 * p[2] as u32) >> 8) as u8)
         .collect();
 
@@ -245,7 +249,7 @@ fn no_symbol_is_reported_not_guessed() {
     let blank = vec![255u8; 200 * 200 * 3];
     assert!(Decoder::new().decode_rgb(&blank, 200, 200, 600).is_err());
     let noise: Vec<u8> = (0..200 * 200 * 3)
-        .map(|i| (i * 2654435761u64 as usize >> 5) as u8)
+        .map(|i| ((i * 2654435761u64 as usize) >> 5) as u8)
         .collect();
     assert!(Decoder::new().decode_rgb(&noise, 200, 200, 600).is_err());
 }

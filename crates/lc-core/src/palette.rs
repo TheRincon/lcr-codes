@@ -43,9 +43,25 @@
 //! * A **single common `C*`** across all colours. Unequal chroma would bias the §12.4
 //!   hue centroid toward whichever level is more saturated; equal chroma makes the
 //!   centroid representative of both.
-//! * `C*` is then the largest value the sRGB gamut permits at every (`L*`, hue) corner.
+//! * `C*` is then a value the sRGB gamut reaches at **every** (`L*`, hue) corner, so no
+//!   colour is gamut-clipped and the common-`C*` property above actually holds.
 //!
-//! The four-colour result — green at 136° against magenta at 316° — has a property worth
+//! ## Pinned: the hue axis is green–magenta at 136°/326°, not 136°/316°
+//!
+//! The third bullet is a real constraint and it was once violated. With the magenta
+//! state at 316°, `C* = 55` is unreachable at `L* = 78` — the gamut stops at 47.9 — so
+//! light magenta was silently clipped and the palette shipped at 55.1/55.0/55.3/**48.1**.
+//! That is precisely the bias the second bullet exists to prevent: §12.4 demodulates
+//! against one hue centroid per state shared across both luma levels, and a clipped
+//! corner pulls the H1 centroid inward relative to H0.
+//!
+//! The magenta state moves to **326°**, where the gamut clears 55 at both levels. `L*`,
+//! `C*` and the green state are unchanged, so the inter-level gap stays at 45.8 and all
+//! four colours now sit at `C* ≈ 55`. `xtask palette` searches for this and reports the
+//! maximum available `C*` along with what the luma gap costs in chroma; at this gap the
+//! ceiling is 55.5, so 55 keeps a little headroom for calibration.
+//!
+//! The four-colour result — green at 136° against magenta at 326° — has a property worth
 //! keeping through recalibration: the discriminating signal is G against R+B, the axis on
 //! which a Bayer sensor has *twice* the photosite density. §1.4 argues chroma is the
 //! low-bandwidth channel; putting the hue axis on green–magenta spends what bandwidth
@@ -55,10 +71,14 @@
 //! spacing cap out at `C* = 32.4` in sRGB, below the `C* ≥ 35` floor. §4.2 only requires
 //! `≥ 300°/k = 75°`, and spending the 60° of slack on the directions where sRGB is
 //! roomiest reaches `C* = 40`. The pinned `C3` hues are consequently **uneven**:
-//! 72°/149°/280°/356°.
+//! 71°/146.5°/280°/355.5°. These moved for the same reason the magenta state did — at
+//! the previous 72°/149°/280°/356°, `C* = 40` was unreachable at `L* = 30, h = 149°`
+//! (the gamut allows 39.4), clipping one corner of the eight.
 //!
 //! [`derive_c4`] and [`derive_c3`] reproduce the constants, and the tests fail if the
-//! two ever drift apart. Recalibrating against measured panels means changing the `L*`,
+//! two ever drift apart — but note that the reachability check inside [`derive`] is a
+//! `debug_assert!`, so it is only exercised by a debug build. `just test-debug` exists
+//! for that reason; a release-only suite cannot see it. Recalibrating against measured panels means changing the `L*`,
 //! `C*` and hue inputs — not the structure.
 
 use crate::color::{self, Lab, Linear, Srgb8};
@@ -84,7 +104,7 @@ pub const SPEC_4_3_COLORS: [Srgb8; 4] = [
 ];
 
 /// Hue angles (degrees in `a*b*`) of the four-colour palette.
-pub const C4_HUES: [f32; 2] = [136.0, 316.0];
+pub const C4_HUES: [f32; 2] = [136.0, 326.0];
 /// `L*` of the dark level in the four-colour palette.
 pub const C4_L0: f32 = 32.0;
 /// `L*` of the light level in the four-colour palette.
@@ -97,19 +117,19 @@ pub const C4_CHROMA: f32 = 55.0;
 /// | Index | Luma | Hue | Name | sRGB | `L*` | `C*` | `h` |
 /// |---|---|---|---|---|---|---|---|
 /// | 0 | L0 | H0 | Deep green   | `#025901` | 32.2 | 55.1 | 136.0° |
-/// | 1 | L0 | H1 | Deep magenta | `#693388` | 32.1 | 54.7 | 316.1° |
+/// | 1 | L0 | H1 | Deep magenta | `#78297C` | 32.2 | 55.0 | 326.0° |
 /// | 2 | L1 | H0 | Light green  | `#8BD377` | 78.1 | 55.3 | 135.9° |
-/// | 3 | L1 | H1 | Light magenta| `#E3ACFF` | 78.0 | 50.9 | 316.1° |
+/// | 3 | L1 | H1 | Light magenta| `#FAA2FB` | 78.0 | 55.1 | 326.1° |
 pub const C4_COLORS: [Srgb8; 4] = [
     Srgb8::from_hex(0x025901),
-    Srgb8::from_hex(0x693388),
+    Srgb8::from_hex(0x78297C),
     Srgb8::from_hex(0x8BD377),
-    Srgb8::from_hex(0xE3ACFF),
+    Srgb8::from_hex(0xFAA2FB),
 ];
 
 /// Hue angles (degrees in `a*b*`) of the eight-colour palette. Uneven by design; see the
 /// module docs.
-pub const C8_HUES: [f32; 4] = [72.0, 149.0, 280.0, 356.0];
+pub const C8_HUES: [f32; 4] = [71.0, 146.5, 280.0, 355.5];
 /// `L*` of the dark level in the eight-colour palette.
 pub const C8_L0: f32 = 30.0;
 /// `L*` of the light level in the eight-colour palette.
@@ -119,14 +139,14 @@ pub const C8_CHROMA: f32 = 40.0;
 
 /// Eight-colour screen palette (§4.4), derived by [`derive_c3`] and pinned here.
 pub const C8_COLORS: [Srgb8; 8] = [
-    Srgb8::from_hex(0x653E04),
-    Srgb8::from_hex(0x005225),
+    Srgb8::from_hex(0x663E05),
+    Srgb8::from_hex(0x065222),
     Srgb8::from_hex(0x0C4784),
-    Srgb8::from_hex(0x7B274C),
-    Srgb8::from_hex(0xE1AC70),
-    Srgb8::from_hex(0x7DC68F),
+    Srgb8::from_hex(0x7B274D),
+    Srgb8::from_hex(0xE2AC71),
+    Srgb8::from_hex(0x81C58C),
     Srgb8::from_hex(0x95B5FE),
-    Srgb8::from_hex(0xF99ABC),
+    Srgb8::from_hex(0xF89ABD),
 ];
 
 /// Colour used for the reference border's white cell (§6.4).
@@ -396,6 +416,37 @@ mod tests {
             "C8_COLORS drifted; expected {}",
             show(&derive_c3())
         );
+    }
+
+    /// No shipped colour may be gamut-clipped.
+    ///
+    /// The same condition as the `debug_assert!` in [`derive`], asserted here so it
+    /// survives a release build. It was a `debug_assert!` alone once, and that is exactly
+    /// how `C4_CHROMA = 55` came to be pinned against a hue where the sRGB gamut stops at
+    /// 47.9: `just test` passes `--release`, which strips the assertion, so the palette
+    /// shipped with light magenta clipped and nothing went red.
+    ///
+    /// Clipping matters beyond tidiness. §12.4 demodulates chroma against one hue
+    /// centroid per state, shared across both luma levels, and a clipped corner drags its
+    /// state's centroid inward — so the two hue states stop being equidistant from the
+    /// neutral axis and the per-bit LLRs pick up a bias that no amount of ECC will see.
+    #[test]
+    fn no_shipped_colour_is_gamut_clipped() {
+        for (name, l0, l1, chroma, hues) in [
+            ("C4", C4_L0, C4_L1, C4_CHROMA, &C4_HUES[..]),
+            ("C8", C8_L0, C8_L1, C8_CHROMA, &C8_HUES[..]),
+        ] {
+            for &l in &[l0, l1] {
+                for &h in hues {
+                    let (_, reached) = color::lch_to_srgb8_gamut_clipped(l, chroma, h);
+                    assert!(
+                        (reached - chroma).abs() < 0.5,
+                        "{name}: C* {chroma} unreachable at L*={l} h={h}; \
+                         the gamut stops at {reached:.2}"
+                    );
+                }
+            }
+        }
     }
 
     /// Locks in *why* the shipped palette departs from the printed spec, so the

@@ -36,7 +36,7 @@ fn render(json: &str, profile: Profile) -> Raster {
 
 fn to_rgba(r: &Raster) -> Vec<u8> {
     let mut out = Vec::with_capacity((r.width * r.height * 4) as usize);
-    for px in r.data.chunks_exact(3) {
+    for px in r.data.as_chunks::<3>().0 {
         out.extend_from_slice(&[px[0], px[1], px[2], 255]);
     }
     out
@@ -44,7 +44,9 @@ fn to_rgba(r: &Raster) -> Vec<u8> {
 
 fn to_gray(r: &Raster) -> Vec<u8> {
     r.data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| ((54 * p[0] as u32 + 183 * p[1] as u32 + 19 * p[2] as u32) >> 8) as u8)
         .collect()
 }

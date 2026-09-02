@@ -38,13 +38,13 @@ to know the luma bit before it can read the hue bit — exactly the layer coupli
 exists to prevent.
 
 Both colour palettes are now *derived* from the §4.2 constraints rather than transcribed:
-iso-luminant hue states shared across levels, a single common `C*`, and `C*` taken as high
-as the sRGB gamut allows at every corner.
+iso-luminant hue states shared across levels, a single common `C*`, and `C*` set to a
+value the sRGB gamut reaches at every corner.
 
 | | L0 | L1 | Hues | `C*` | Gap | Spread | Min hue sep |
 |---|---|---|---|---|---|---|---|
-| C1 / C2 | 32 | 78 | 136°, 316° | 55 | 45.6 | 0.4 | 177.7° |
-| C3 | 30 | 74 | 72°, 149°, 280°, 356° | 40 | 43.9 | 0.3 | 75.6° |
+| C1 / C2 | 32 | 78 | 136°, 326° | 55 | 45.8 | 0.3 | 169.8° |
+| C3 | 30 | 74 | 71°, 146.5°, 280°, 355.5° | 40 | 43.8 | 0.2 | 75.2° |
 
 The four-colour result is **green against magenta**, which has a property worth keeping
 through any recalibration: the discriminating signal is G against R+B, the axis on which a
@@ -54,9 +54,34 @@ channel; this spends what bandwidth there is where the sensor actually has it.
 `SPEC_4_3_COLORS` is retained, unused, with a test asserting it still fails — so the
 deviation cannot be quietly reverted by someone transcribing the spec.
 
+**Corrected 2026-09-02 — the first pinning did not satisfy its own third constraint.**
+`C*` was set to 55 for C4 and 40 for C8 without anything checking those were reachable,
+and neither was: at the original 316° magenta the gamut stops at 47.9 for `L* = 78`, and
+at the original 149° it stops at 39.4 for `L* = 30`. Both palettes therefore shipped with
+one corner silently gamut-clipped — C4 measured 55.1 / 55.0 / 55.3 / **48.1**.
+
+That is the specific failure the "single common `C*`" rule exists to prevent. §12.4
+demodulates against one hue centroid per state shared across both luma levels; a clipped
+corner pulls its state's centroid toward the neutral axis, so the two states stop being
+equidistant from it and the per-bit chroma LLRs acquire a bias the ECC cannot see.
+
+The fix was smaller than the diagnosis. `C* = 55` is not too ambitious — **316° was the
+wrong angle.** Moving the magenta state to 326° clears 55 at both levels with `L*`, `C*`
+and the green state untouched, so the inter-level gap stays at 45.8 and all four colours
+land at `C* ≈ 55`. C8's hues moved for the same reason, to 71°/146.5°/280°/355.5°.
+
+Two guards, because one was not enough. The reachability check inside `derive` was already
+there as a `debug_assert!` and had been failing since the palettes were pinned — invisible
+because `just test` passes `--release`, which strips it. It is now also
+`no_shipped_colour_is_gamut_clipped`, a release-mode test, and `just test-debug` runs the
+unit tests unoptimised so the remaining `debug_assert!`s are exercised at all.
+
 **Needs your call:** these are derived, not measured. §4.3 and §4.4 both want panel
 measurement. The structure is right; the four numbers per palette are placeholders for
-calibration data.
+calibration data. `just palette` is the search that produces them — it reports the best
+configuration per profile, the rate at which luma gap trades against chroma (about 0.85
+of `C*` per unit of gap at k=2), and what each hue orientation is worth, so recalibration
+against measured panels is a matter of re-running it rather than hand-fitting.
 
 ### D2. §4.4's "four hue states ~90° apart" is not achievable in sRGB
 
@@ -65,7 +90,8 @@ calibration data.
 Four iso-luminant hues at exactly 90° spacing, with a 40-unit inter-level gap, cap out at
 `C* = 32.4` — below §4.2's `C* ≥ 35` floor. §4.2 only requires `≥ 300°/k = 75°`, so
 spending the 60° of slack on the directions where sRGB is roomiest reaches `C* = 40`. The
-pinned C3 hues are consequently uneven: 72°/149°/280°/356°.
+pinned C3 hues are consequently uneven: 71°/146.5°/280°/355.5°. (These were
+72°/149°/280°/356° until the gamut-clipping correction recorded in D1.)
 
 ### D3. §12.3's residual surface must be multiplicative, not additive
 
@@ -352,9 +378,12 @@ build-once-run-anywhere property, since you are back to shipping per-platform bi
   `UnsupportedCompression` rather than silently accepted. Needs a real corpus to build
   from; §9.3 is right that hand-writing it is the wrong move.
 - **§4.5 print palette** (open #3) — not started. `C2` currently uses the screen palette.
-- **§8.2 ECC rate table** (open #5) — still the spec's guesses. The §15 harness now exists
-  and reports success rate against degradation magnitude, so this is unblocked; the rates
-  have simply not been re-derived from it yet.
+- **§8.2 ECC rate table** (open #5) — still the spec's guesses, reproduced verbatim by
+  `RATES` and the two index tables. Not yet unblocked: §14.5 step 9 and §15 both want
+  success *rate* against degradation magnitude, and the harness reports a single pass/fail
+  trial per magnitude (only `noise` of its twelve degradations is seeded). Seeding the
+  degradations and averaging over trials comes first — §15 is explicit that "a pass/fail
+  corpus will not tell you whether a change helped".
 - **§6.1 quiet zone = 2** (open #10) — untested against textured backgrounds.
 - **§13.1 device px/module minimum** (open #14) — 8 is now the working floor as the spec
   requires (D6); `RenderOptions` clamps to it and defaults to 10. Moiré onset still not
@@ -387,6 +416,12 @@ pub const C4_HUES: [f32; 2] = …;  pub const C8_HUES: [f32; 4] = …;
 To change a palette: edit the constants, run the tests, and paste the new hex values the
 `palettes_match_their_derivations` failure prints. That test exists precisely so the
 pinned constants and the derivation cannot drift apart.
+
+To choose the constants rather than guess them, run `just palette`. Picking `L*` and hues
+by hand is what produced the gamut-clipped palettes described above: the sRGB boundary is
+not intuitive at high `L*`, and a value that is comfortably reachable at one hue can be
+several units out of reach 10° away. The search emits paste-ready constants, and
+`no_shipped_colour_is_gamut_clipped` fails in release if a hand-edit gets it wrong.
 
 To revert to §4.3 wholesale: point `Palette::for_profile` at `SPEC_4_3_COLORS`, which is
 still in the tree, and delete the two tests that assert §4.2 compliance and hue stability.

@@ -46,8 +46,8 @@ const CASES: &[(&str, &str)] = &[
 
 fn main() {
     println!(
-        "{:<26} {:>5} {:>5} {:>6} {:>7} {:>5} {:>4} {:>5}  {}",
-        "payload", "json", "cbor", "saved", "framed", "cflag", "ver", "side", "round-trip"
+        "{:<26} {:>5} {:>5} {:>6} {:>7} {:>5} {:>4} {:>5}  round-trip",
+        "payload", "json", "cbor", "saved", "framed", "cflag", "ver", "side"
     );
     println!("{}", "-".repeat(88));
 

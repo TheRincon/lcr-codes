@@ -314,11 +314,11 @@ impl Code {
         let mut total = ch.clone();
 
         // Initialise variable-to-check with the channel value.
-        for v in 0..ch.len() {
+        for (v, &llr) in ch.iter().enumerate() {
             for &e in
                 &self.var_edges[self.var_offsets[v] as usize..self.var_offsets[v + 1] as usize]
             {
-                v2c[e as usize] = ch[v];
+                v2c[e as usize] = llr;
             }
         }
 
@@ -337,8 +337,7 @@ impl Code {
                 let mut min2 = f32::INFINITY;
                 let mut argmin = lo;
                 let mut sign = 1f32;
-                for e in lo..hi {
-                    let m = v2c[e];
+                for (i, &m) in v2c[lo..hi].iter().enumerate() {
                     if m < 0.0 {
                         sign = -sign;
                     }
@@ -346,7 +345,7 @@ impl Code {
                     if a < min1 {
                         min2 = min1;
                         min1 = a;
-                        argmin = e;
+                        argmin = lo + i;
                     } else if a < min2 {
                         min2 = a;
                     }
@@ -453,15 +452,12 @@ mod tests {
     #[test]
     fn every_real_layer_length_and_rate_builds() {
         for n in layer_lengths() {
-            for rate in 0..RATES.len() {
+            for (rate, &nominal) in RATES.iter().enumerate() {
                 match Code::new(rate, n) {
                     Ok(c) => {
                         assert!(c.info_bits() > 0, "n={n} rate={rate}");
                         assert_eq!(c.coded_bits(), n);
-                        assert!(
-                            c.effective_rate() <= RATES[rate] + 1e-3,
-                            "n={n} rate={rate}"
-                        );
+                        assert!(c.effective_rate() <= nominal + 1e-3, "n={n} rate={rate}");
                     }
                     Err(e) => panic!("n={n} rate={rate}: {e}"),
                 }

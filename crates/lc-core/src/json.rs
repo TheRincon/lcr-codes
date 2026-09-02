@@ -355,10 +355,8 @@ impl Parser<'_> {
         }
         let text =
             core::str::from_utf8(&self.b[start..self.pos]).map_err(|_| LcError::BadJson(start))?;
-        if !is_float {
-            if let Ok(i) = text.parse::<i64>() {
-                return Ok(Value::from_i64(i));
-            }
+        if !is_float && let Ok(i) = text.parse::<i64>() {
+            return Ok(Value::from_i64(i));
         }
         text.parse::<f64>()
             .map(Value::Float)

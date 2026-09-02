@@ -43,8 +43,8 @@ fn map_linear(r: &Raster, mut f: impl FnMut(f32, f32, [f32; 3]) -> [f32; 3]) -> 
                 srgb_to_linear(r.data[i + 2]),
             ];
             let v = f(x as f32 / r.width as f32, y as f32 / r.height as f32, lin);
-            for c in 0..3 {
-                out.data[i + c] = linear_to_srgb(v[c]);
+            for (c, &val) in v.iter().enumerate() {
+                out.data[i + c] = linear_to_srgb(val);
             }
         }
     }
@@ -106,8 +106,8 @@ fn perspective(r: &Raster, tilt: f32, rotate_deg: f32) -> Raster {
                 [1.0, 1.0, 1.0]
             };
             let i = ((py * size + px) * 3) as usize;
-            for c in 0..3 {
-                out.data[i + c] = linear_to_srgb(lin[c]);
+            for (c, &val) in lin.iter().enumerate() {
+                out.data[i + c] = linear_to_srgb(val);
             }
         }
     }
@@ -155,14 +155,14 @@ fn blur(r: &Raster, radius: u32) -> Raster {
                     let sx = (x as i32 + dx).clamp(0, r.width as i32 - 1) as u32;
                     let sy = (y as i32 + dy).clamp(0, r.height as i32 - 1) as u32;
                     let i = ((sy * r.width + sx) * 3) as usize;
-                    for c in 0..3 {
-                        acc[c] += srgb_to_linear(r.data[i + c]);
+                    for (c, a) in acc.iter_mut().enumerate() {
+                        *a += srgb_to_linear(r.data[i + c]);
                     }
                 }
             }
             let i = ((y * r.width + x) * 3) as usize;
-            for c in 0..3 {
-                out.data[i + c] = linear_to_srgb(acc[c] / (n * n));
+            for (c, &a) in acc.iter().enumerate() {
+                out.data[i + c] = linear_to_srgb(a / (n * n));
             }
         }
     }
@@ -206,8 +206,8 @@ fn chroma_subsample(r: &Raster) -> Raster {
                     let luma = ycbcr(px(x, y))[0];
                     let v = rgb([luma, cb, cr]);
                     let i = ((y * r.width + x) * 3) as usize;
-                    for c in 0..3 {
-                        out.data[i + c] = (v[c].clamp(0.0, 1.0) * 255.0).round() as u8;
+                    for (c, &val) in v.iter().enumerate() {
+                        out.data[i + c] = (val.clamp(0.0, 1.0) * 255.0).round() as u8;
                     }
                 }
             }

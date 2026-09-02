@@ -7,6 +7,11 @@
 //!
 //! `cargo run -p xtask -- capacity` prints the §6.1 capacity table computed from the
 //! real layout, replacing the spec's hand-estimated figures (open decision #8).
+//!
+//! `cargo run -p xtask -- palette` searches for the §4 palette constants against the
+//! sRGB gamut (open decisions #1 and #2). See `palette.rs`.
+
+mod palette;
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -33,7 +38,8 @@ fn main() {
     match arg.as_str() {
         "ldpc" => print!("{}", generate_tables()),
         "capacity" => print!("{}", capacity_table()),
-        other => eprintln!("unknown task {other:?}; expected `ldpc` or `capacity`"),
+        "palette" => print!("{}", palette::report()),
+        other => eprintln!("unknown task {other:?}; expected `ldpc`, `capacity` or `palette`"),
     }
 }
 
@@ -109,7 +115,7 @@ fn peg(n_b: usize, k_b: usize) -> Vec<[u8; DV]> {
     let mut out = Vec::with_capacity(k_b);
     for j in 0..k_b {
         let mut chosen = [0u8; DV];
-        for e in 0..DV {
+        for (e, slot) in chosen.iter_mut().enumerate() {
             let pick = if e == 0 {
                 (0..m_b).min_by_key(|&r| (row_adj[r].len(), r)).unwrap()
             } else {
@@ -144,7 +150,7 @@ fn peg(n_b: usize, k_b: usize) -> Vec<[u8; DV]> {
                     })
                     .expect("dv must not exceed m_b")
             };
-            chosen[e] = pick as u8;
+            *slot = pick as u8;
             row_adj[pick].push(j);
             col_adj[j].push(pick);
         }

@@ -55,7 +55,7 @@ impl BitVec {
     /// Append one bit.
     #[inline]
     pub fn push(&mut self, bit: bool) {
-        if self.len % 8 == 0 {
+        if self.len.is_multiple_of(8) {
             self.bytes.push(0);
         }
         if bit {
@@ -123,7 +123,7 @@ impl BitVec {
             self.bytes.truncate(n.div_ceil(8));
             // Clear the tail of the final partial byte so equality and `as_bytes` are
             // canonical.
-            if n % 8 != 0 {
+            if !n.is_multiple_of(8) {
                 let last = n / 8;
                 self.bytes[last] &= !(0xFFu8 >> (n % 8));
             }

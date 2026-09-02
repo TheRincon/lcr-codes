@@ -207,7 +207,7 @@ impl Raster {
     /// Convert to RGBA8, as a browser canvas expects.
     pub fn to_rgba(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.data.len() / 3 * 4);
-        for px in self.data.chunks_exact(3) {
+        for px in self.data.as_chunks::<3>().0 {
             out.extend_from_slice(px);
             out.push(0xFF);
         }
@@ -552,7 +552,7 @@ mod tests {
         );
         let rgba = r.to_rgba();
         assert_eq!(rgba.len(), r.data.len() / 3 * 4);
-        assert!(rgba.chunks_exact(4).all(|p| p[3] == 0xFF));
+        assert!(rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0xFF));
     }
 
     #[test]

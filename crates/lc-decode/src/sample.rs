@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn chroma_kernel_is_wider_than_the_luma_kernel() {
-        assert!(CHROMA_FRACTION > LUMA_HALF);
+        const { assert!(CHROMA_FRACTION > LUMA_HALF) };
         // For a 2×2 cell the chroma aperture is 1.4 modules across versus 0.5 for luma:
         // ~8× the area, which is where the SNR comes from.
         let luma_area = (2.0 * LUMA_HALF).powi(2);

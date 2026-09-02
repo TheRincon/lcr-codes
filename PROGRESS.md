@@ -4,7 +4,8 @@ Reference implementation of [`lc-code-spec-v0.4.md`](lc-code-spec-v0.4.md).
 
 **State:** encode and decode are both complete and round-trip end to end through a
 rendered image — detection, illumination fit, soft demodulation, LDPC, framing, CRC. The
-§15 degradation harness is built and the operating envelope is measured. `lc-wasm` ships
+§15 degradation harness is built and the operating envelope is mapped — as a pass/fail
+grid, not yet as the success *rate* §15 asks for. `lc-wasm` ships
 both paths as a **WebAssembly component** with a WIT interface (D8), in two builds:
 decode-only and full.
 
@@ -12,45 +13,29 @@ decode-only and full.
 [`docs/decisions.md`](docs/decisions.md) are being carried forward so work can continue,
 not signed off. Both are cheap to unwind — see "Unwinding the provisional decisions" below.
 
-**262 tests, all passing, zero warnings.** `just test`
+**263 tests, all passing, zero warnings.** `just test` (plus `just test-debug`, 217 unit
+tests unoptimised — see below).
 
 ---
 
 ## Picking this up again
 
-*Written 2026-09-01, before a restart. Delete this section once it is stale.*
+*Rewritten 2026-09-02. The previous version of this section was stale: it warned that
+nothing was committed, but the tree is committed and clean.*
 
 ### Nothing is half-finished
 
-This is a clean stopping point. The last piece of work — the C host trial and D9 — is
-complete, tested and documented. No edit is partially applied, no test is skipped, and no
-recipe is left broken. Nothing needs unwinding before continuing.
-
-### ⚠️ Nothing is committed to git
-
-`git init` has been run and `just hooks` has configured `core.hooksPath`, but **zero files
-are tracked** and there are no commits. All work exists only as files on disk. Committing
-is the first thing to do:
-
-```bash
-git add -A && git status        # expect ~13 paths, no target/ or dist/
-git commit -m "LC Code: encode/decode, degradation harness, wasm component"
-```
-
-`.gitignore` already excludes `/target`, `/dist` and `*.wasm`, so build output stays out.
-Note the pre-push hook runs `just ci` — first push will take a few minutes.
+The palette gamut-clipping fix below is complete — constants, docs, guards, regenerated
+gallery. `just test` and `just test-debug` are both green. Nothing needs unwinding.
 
 ### Verifying the world after a restart
 
 ```bash
-just component     # rebuild dist/ — it is gitignored, so it will be missing
-just test          # 262 tests; depends on `component`, so the line above is optional
+just component     # rebuild dist/ — gitignored, so it will be missing
+just test          # 263 tests; depends on `component`
+just test-debug    # 217 unit tests unoptimised, exercising debug_assert!
 just c-host        # the C trial, needs the Go module cache (see below)
 ```
-
-Expect **262 passing, 0 warnings**. If `just test` cannot find `dist/lc-code.wasm`, the
-component build did not run — `just test` depends on it, so that would mean the justfile
-was edited.
 
 ### Things a restart may take with it
 
@@ -59,23 +44,39 @@ was edited.
   component-capable `libwasmtime.a` bundled there (D9). If it is gone:
   `go get github.com/bytecodealliance/wasmtime-go/v34`, or point `WASMTIME_C_API` at an
   unpacked wasmtime-c-api release.
-- **Scratchpad backups** in `/private/tmp/...` — `image.rs.orig`, `border.orig`,
-  `detect.rs.fixed`, `gotest/`. All disposable. They were before/after copies used while
-  fixing D6 and measuring the border width; every one of those changes is landed and
-  covered by tests.
 
-### What I was about to pick up
+### What to pick up next
 
-Nothing was in progress. The next item is **§8.2 ECC rate tuning** — see "What is left"
-below. Briefly, so it can be started cold:
+**§8.2 ECC rate tuning** — still the last thing blocking a v1.0 wire-format freeze.
 
-- The rate table in §8.2 is still the spec's own guesses, labelled `[TBD]` there.
-- The §15 harness that replaces them now exists and reports success rate against
-  degradation magnitude, which is exactly the input §14.5 step 9 calls for.
-- It is **the last thing blocking a v1.0 wire-format freeze**, and it changes
-  `crates/lc-core/src/ecc/`, so it wants doing before anything depends on those rates.
+- The rate table in §8.2 is the spec's own guesses, labelled `[TBD]` there.
+- **It is less unblocked than this file used to claim.** §14.5 step 9 and §15 both want
+  *success rate* against degradation magnitude — §15 says outright that "a pass/fail
+  corpus will not tell you whether a change helped". The harness does not produce one:
+  `examples/envelope.rs` runs a single trial per magnitude and prints `+` or `.`, and of
+  the twelve degradations in `tests/support/ops.rs` only `noise` takes a seed. The other
+  eleven are deterministic, so repeating a cell returns the identical raster and there is
+  nothing to average. Threading a seed through the degradations that have a natural
+  randomisation axis — specular blob position, tilt axis, occlusion placement, sub-pixel
+  sampling phase — and reporting a fraction over N trials is a prerequisite for tuning
+  rates, not a nicety.
+- It changes `crates/lc-core/src/ecc/`, so it wants doing before anything depends on
+  those rates.
 - Start by reading §8.2 and `crates/lc-decode/tests/degradation.rs`, then sweep rates
-  against the harness rather than changing the table by hand.
+  against the harness rather than editing the table by hand.
+
+**Ordering, and a piece of luck.** Chroma-layer SNR is a direct function of the `a*b*`
+distance between the hue centroids, so the palette has to settle before chroma rates are
+measured. It moved on 2026-09-02 (see Fixed) — and nothing was lost, because the rates had
+never been measured at all: `RATES` together with `LUMA_RATE_INDEX`/`CHROMA_RATE_INDEX`
+reproduce §8.2's guessed table exactly. If panel calibration later moves `C*` again, any
+chroma rates measured before it have to be re-measured. Luma rates are independent of all
+this.
+
+For scale, the 2026-09-02 fix moved the centroid separation from 106.6 to 110.1 — about
+3%, or 0.28 dB. That is real but small, and the envelope sweep cannot see it: an A/B over
+the whole sweep moved exactly one cell, in the marginal band, which is indistinguishable
+from luck at one trial per cell. That is the measurement gap above, demonstrated.
 
 Second, smaller: `just ci` runs locally via the pre-push hook but nothing runs it on a
 fork. The scanner sits at **93% of its size budget** measured raw (D8), so that gate wants
@@ -87,7 +88,7 @@ to be automatic rather than trusted to a hook someone can `--no-verify` past.
 
 | Crate | State | Tests | Notes |
 |---|---|---|---|
-| `lc-core` | ✅ Complete | 138 | Geometry, palette, ECC, container, masking, modulation |
+| `lc-core` | ✅ Complete | 139 | Geometry, palette, ECC, container, masking, modulation |
 | `lc-encode` | ✅ Complete | 11 | Full §8 pipeline; auto version, auto compression, mask search |
 | `lc-render` | ✅ Complete | 12 | SVG, RGB raster, PNG, ANSI terminal preview |
 | `lc-decode` | ✅ Complete | 79 | §12 pipeline end to end, plus the §15 harness |
@@ -106,6 +107,8 @@ that must call into the crates (`ldpc`, `capacity`). See the note atop the justf
 
 ```
 just component       # both wasm components into dist/, validated
+just test-debug      # unit tests unoptimised, so debug_assert! is live
+just palette         # search the §4 palette constants against the sRGB gamut
 just wasm-size       # gate the scanner against §14.2's budget
 just gallery         # regenerate examples/
 just payload-sizes   # JSON payloads, end to end
@@ -176,8 +179,13 @@ The component exists and is measured; what is missing is the other side of the b
 
 ### 2. Tune the ECC rates
 
-§8.2's rates are still the spec's guesses, and the harness that replaces them now exists —
-§14.5 step 9. This is the last thing blocking a v1.0 wire-format freeze.
+§8.2's rates are still the spec's guesses — `RATES` plus the two index tables reproduce
+that table verbatim, and nothing has been measured against a channel. This is the last
+thing blocking a v1.0 wire-format freeze.
+
+It needs the harness to report a success *rate* first; see "What to pick up next" above
+for why it does not yet. Tuning against single-trial pass/fail would produce numbers that
+look measured and are not.
 
 ### 3. Signing (§10) — optional, lower priority
 
@@ -203,6 +211,46 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
 ---
 
 ## Fixed
+
+**Both palettes shipped with a gamut-clipped colour, and the assertion that would have
+caught it was compiled out.** D1 derives the palettes on three rules — iso-luminant hue
+states shared across levels, a single common `C*`, and a `C*` the sRGB gamut reaches at
+every corner. The third was never checked against the values pinned for the first two.
+Neither held: at the original 316° magenta the gamut stops at `C* = 47.9` for `L* = 78`,
+against a requested 55, and at the original 149° it stops at 39.4 for `L* = 30` against a
+requested 40. C4 therefore shipped as 55.1 / 55.0 / 55.3 / **48.1**.
+
+That is the exact failure the common-`C*` rule exists to prevent. §12.4 demodulates chroma
+against one hue centroid per state shared across both luma levels; a clipped corner pulls
+its state's centroid toward the neutral axis, so the states stop being equidistant from it
+and the per-bit chroma LLRs carry a bias no ECC can see.
+
+`derive` did check this, as a `debug_assert!` — and it had been failing since the palettes
+were pinned. `just test` passes `--release`, which strips `debug_assert!`, and that is the
+only command anyone runs, so a red assertion sat invisible behind a green suite.
+
+The fix turned out to be one number. `C* = 55` is not too ambitious; **316° is the wrong
+angle.** At 326° the gamut clears 55 at both levels with `L*`, `C*` and the green state
+untouched — the inter-level gap stays at 45.8 and all four colours land at `C* ≈ 55`. C8's
+hues moved the same way, to 71°/146.5°/280°/355.5°.
+
+Three things came out of it:
+
+- `xtask palette` (`just palette`) — the search D1 and the module docs already cited as
+  the source of these numbers, which did not exist. It maximises common achievable `C*`
+  over hue angles and `L*` levels subject to §4.2, and reports two trade-offs §4.2 leaves
+  open: what luma gap costs in chroma (~0.85 of `C*` per unit of gap at k=2), and what
+  each hue orientation is worth, so D1's green-against-magenta choice can be priced
+  rather than assumed. Green sits at 136° across the entire trade curve, which is a point
+  in that choice's favour.
+- `no_shipped_colour_is_gamut_clipped` — the same check as a **release** test, confirmed
+  red against the old 316°.
+- `just test-debug` — `cargo test --workspace --lib` unoptimised, so the remaining
+  `debug_assert!`s are exercised at all. Wired into `just ci`. `--lib` because the
+  assertions live in crate internals the unit tests reach directly, while the integration
+  suites are dominated by the §15 sweep — ~5 minutes unoptimised for no extra coverage.
+
+A full unoptimised run confirmed this was the only `debug_assert!` failing.
 
 **Degenerate payloads broke detection at v14 and above.** LDPC is linear and systematic, so
 an all-zero body encodes to an all-zero codeword and the rendered luma layer is just the
@@ -250,7 +298,7 @@ individually and the rest as an aggregate, per §15. Guarded by
 
 ## Notes on the build
 
-- **Edition 2024** throughout, `rust-version = 1.85`.
+- **Edition 2024** throughout, `rust-version = 1.94`.
 - `lc-core`, `lc-decode`, `lc-verify` are `no_std + alloc`; `lc-encode`, `lc-render`,
   `lc-cli` are `std`. This is the §14.1 split, and it is what keeps the scanner bundle
   from accidentally acquiring the encoder.
