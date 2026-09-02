@@ -26,6 +26,16 @@ impl Rng {
     }
 }
 
+/// Sub-samples per axis when resampling a geometric warp. 4 means 16 taps per pixel.
+///
+/// Not an optimisation knob — at 1 the tilt sweep is **not monotone**: 0.10 decodes, 0.15
+/// and 0.20 fail, 0.25 and 0.30 decode again. A mild tilt scales the image by a ratio very
+/// near 1, and point-sampling a 12 px module grid at a near-unity ratio beats against it,
+/// producing exactly the moiré §15 asks for a separate sweep of. Averaging over the output
+/// pixel's own footprint is what a sensor does, and it removes the interference without
+/// removing the impairment being studied.
+const SUPERSAMPLE: u32 = 4;
+
 fn srgb_to_linear(v: u8) -> f32 {
     lc_core::color::srgb_to_linear_f(v as f32 / 255.0)
 }
@@ -84,6 +94,11 @@ fn bilinear(r: &Raster, x: f32, y: f32) -> [f32; 3] {
 ///   which is a different impairment (§13.1) that would be measured here by accident: an
 ///   early version of this function reported that the decoder failed above 15° of
 ///   rotation, when what it had actually measured was 8.5 px/module.
+/// * Each output pixel is **supersampled**, not point-sampled. See [`SUPERSAMPLE`].
+///
+/// A real lens integrates over each sensor pixel's footprint, and a projective map
+/// compresses the source by a different factor at every row — so one tap per output pixel
+/// is not a cheaper version of this, it is a different and wrong impairment.
 fn perspective(r: &Raster, tilt: f32, rotate_deg: f32) -> Raster {
     let (sin, cos) = rotate_deg.to_radians().sin_cos();
     let (w, h) = (r.width as f32, r.height as f32);
@@ -96,27 +111,48 @@ fn perspective(r: &Raster, tilt: f32, rotate_deg: f32) -> Raster {
     let size = ((w * grow).ceil() as u32).max(r.width);
     let mut out = Raster { width: size, height: size, data: vec![255; (size * size * 3) as usize] };
     let centre = size as f32 / 2.0;
+    let n = SUPERSAMPLE as f32;
 
     for py in 0..size {
         for px in 0..size {
-            // Normalise about the output centre in *source* units, so module pitch is
-            // preserved; then undo the rotation, then undo the projection.
-            let (u, v) = ((px as f32 - centre) / w, (py as f32 - centre) / h);
-            let (u, v) = (u * cos + v * sin, -u * sin + v * cos);
-            let denom = 1.0 - tilt * v;
-            if denom.abs() < 1e-3 {
+            let mut acc = [0f32; 3];
+            let mut taken = 0f32;
+            for sy in 0..SUPERSAMPLE {
+                for sx in 0..SUPERSAMPLE {
+                    // Sample at sub-pixel centres spanning this output pixel's footprint,
+                    // which is the box filter a sensor pixel applies.
+                    let ox = px as f32 + (sx as f32 + 0.5) / n - 0.5;
+                    let oy = py as f32 + (sy as f32 + 0.5) / n - 0.5;
+
+                    // Normalise about the output centre in *source* units, so module pitch
+                    // is preserved; then undo the rotation, then undo the projection.
+                    let (u, v) = ((ox - centre) / w, (oy - centre) / h);
+                    let (u, v) = (u * cos + v * sin, -u * sin + v * cos);
+                    let denom = 1.0 - tilt * v;
+                    if denom.abs() < 1e-3 {
+                        continue;
+                    }
+                    let (su, sv) = (u / denom, v / denom);
+                    let (sx_src, sy_src) = ((su + 0.5) * w, (sv + 0.5) * h);
+                    // Off the symbol is the white surround, and it is averaged in like any
+                    // other sample — which is what antialiases the outer edge.
+                    let lin = if (0.0..w).contains(&sx_src) && (0.0..h).contains(&sy_src) {
+                        bilinear(r, sx_src, sy_src)
+                    } else {
+                        [1.0, 1.0, 1.0]
+                    };
+                    for c in 0..3 {
+                        acc[c] += lin[c];
+                    }
+                    taken += 1.0;
+                }
+            }
+            if taken == 0.0 {
                 continue;
             }
-            let (su, sv) = (u / denom, v / denom);
-            let (sx, sy) = ((su + 0.5) * w, (sv + 0.5) * h);
-            let lin = if (0.0..w).contains(&sx) && (0.0..h).contains(&sy) {
-                bilinear(r, sx, sy)
-            } else {
-                [1.0, 1.0, 1.0]
-            };
             let i = ((py * size + px) * 3) as usize;
-            for (c, &val) in lin.iter().enumerate() {
-                out.data[i + c] = linear_to_srgb(val);
+            for (c, slot) in out.data[i..i + 3].iter_mut().enumerate() {
+                *slot = linear_to_srgb(acc[c] / taken);
             }
         }
     }

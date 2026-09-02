@@ -65,10 +65,12 @@ its stated reason was not.
   actually binds chroma.
 
 Remaining, and smaller than it was: the result is measured on `C1` at one payload size.
-`C2` and `C3` have different chroma-cell geometry, so `just tune` still wants a run per
-profile before a freeze. `just profiles` now covers the *robustness* half of that question
-and produced D11 — the `C3` chroma cell changed from 2×2 to 1×1 as a result, taking it
-from 82 B to 165 B at v4.
+**Done, including the per-profile check.** `just tune C3` and `just profiles` closed the
+gap D11 opened: making chroma 60% of `C3`'s payload meant the rate table had only ever
+been validated where chroma was the *minority* layer. It survives both — narrowing the
+offset costs ~20% of the blur envelope on `C1` and `C3` alike. The measurement also
+sharpened D10: whether chroma is "the noisier channel" turns out to be a property of the
+palette's hue spacing, not of chroma, and it is false for `C1` while true for `C3`.
 
 Second, smaller: `just ci` runs locally via the pre-push hook but nothing runs it on a
 fork. The scanner sits at **93% of its size budget** measured raw (D8), so that gate wants
@@ -102,7 +104,7 @@ just component       # both wasm components into dist/, validated
 just test-debug      # unit tests unoptimised, so debug_assert! is live
 just palette         # search the §4 palette constants against the sRGB gamut
 just envelope 64     # success rate vs degradation magnitude, 64 trials/cell
-just tune            # where each layer fails, for the §8.2 rate split
+just tune C3         # where each layer fails, per profile, for the §8.2 rate split
 just profiles        # C1 / C2 / C3 head to head at one symbol size
 just thresholds      # regenerate docs/ldpc.md (~4 min)
 just wasm-size       # gate the scanner against §14.2's budget
@@ -177,9 +179,9 @@ The component exists and is measured; what is missing is the other side of the b
 
 **Measured, and left unchanged** — see D10. The two-step luma/chroma offset is necessary
 and maximal; §8.2's stated reason for it is wrong and D10 records the correct one. Still
-worth a `just tune` run on `C2` and `C3`, whose chroma-cell geometry differs, before the
-wire format freezes — and note `C3`'s geometry changed in D11, so any earlier `C3` figure
-is void.
+now validated per profile as well — see the D10 addendum. `C2` is the one place the chroma
+rate is nearly free: chroma is 11% of its payload, so its blur envelope does not move when
+the rate does, and that rate could be chosen on capacity grounds alone.
 
 ### 3. Signing (§10) — optional, lower priority
 

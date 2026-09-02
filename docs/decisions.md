@@ -385,6 +385,38 @@ the impairment that actually binds chroma.
 Two steps is also the most the family allows — level 3's chroma already sits on `RATES[5]`,
 the last entry, so the offset cannot be widened without extending the rate list.
 
+**Re-validated across profiles after D11.** The above was measured on `C1`, where chroma
+carries 42% of the payload. D11 then made chroma the *majority* of `C3` — 60% — so the
+table's central claim had only ever been tested where chroma was the minority layer. Two
+things came out of re-running it:
+
+**Whether chroma is "the noisier channel" is a property of the palette, not of chroma.**
+Measured luma-minus-chroma SNR, same scale both profiles:
+
+| | hue axis | clean | under stress | §8.2's premise |
+|---|---|---:|---:|---|
+| `C1` | 2 states, 170° apart, `C* 55` | −7.6 dB | ~0 | **false** |
+| `C3` | 4 states, 75° apart, `C* 40` | −0.9 dB | **+5.5 … +8.3 dB** | **true** |
+
+Negative means chroma is the *better* channel. `C1`'s palette hands chroma more than twice
+the separation luma gets, so chroma wins; `C3` crowds four hues into the same circle at
+lower chroma and loses that advantage entirely, degrading faster than luma under load.
+§8.2's sentence is not wrong in general — it is wrong about `C1` specifically, and right
+about `C3`. It should say so rather than generalising.
+
+**The offset survives on both.** Narrowing it to one step, measured directly:
+
+| | capacity | blur m50 before | after |
+|---|---|---:|---:|
+| `C1` | 116 → 126 B (+8.6%) | 4.71 | 3.79 (−20%) |
+| `C2` | 75 → 77 B (+2.7%) | 5.75 | 5.75 (no change) |
+| `C3` | 165 → 184 B (+11.5%) | 4.94 | 3.94 (−20%) |
+
+Same trade on `C1` and `C3`: roughly a fifth of the blur envelope for a tenth of the
+capacity. `C2` is the outlier and the reason is arithmetic — chroma is 11% of its payload,
+so the chroma rate barely moves it. `C2`'s robustness is essentially luma-determined, and
+its chroma rate could be chosen on capacity grounds alone.
+
 **So the table ships as §8.2 printed it**, now measured rather than guessed. The wording
 that should change is §8.2's "noisier": it is the reason given for a decision that is
 correct for a different reason, and anyone recalibrating the palette from that sentence

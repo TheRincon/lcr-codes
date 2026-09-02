@@ -25,6 +25,8 @@
 
 #![allow(dead_code)]
 
+use lc_core::capacity::capacity;
+use lc_core::version::Version;
 use lc_core::{Compression, EccLevel, Packet, Profile};
 use lc_decode::{DecodeOptions, Decoder};
 use lc_encode::EncodeOptions;
@@ -32,7 +34,11 @@ use lc_render::{Raster, RenderOptions, render_rgb};
 
 include!("../tests/support/ops.rs");
 
-const PAYLOAD_BYTES: usize = 96;
+/// Symbol size held fixed, with the payload sized to whatever the profile and ECC level
+/// can actually carry. Under-filling a layer is not neutral: LDPC shortening drops the
+/// effective rate, so a half-empty layer is better protected than the table says and the
+/// balance being measured is not the one that ships.
+const VERSION: u8 = 4;
 const DEFAULT_TRIALS: usize = 12;
 const STEPS: usize = 11;
 
@@ -75,10 +81,11 @@ enum Outcome {
     Dead,
 }
 
-fn base(payload: &[u8], ecc: EccLevel) -> Raster {
+fn base(payload: &[u8], ecc: EccLevel, profile: Profile) -> Raster {
     let opts = EncodeOptions {
-        profile: Profile::C1,
+        profile,
         ecc,
+        version: Some(Version::new(VERSION).unwrap()),
         reference_border: true,
         compression: Some(Compression::None),
         ..Default::default()
@@ -137,11 +144,20 @@ fn main() {
         .nth(1)
         .and_then(|a| a.parse().ok())
         .unwrap_or(DEFAULT_TRIALS);
+    let profile = match std::env::args().nth(2).as_deref() {
+        Some("C2") | Some("c2") => Profile::C2,
+        Some("C3") | Some("c3") => Profile::C3,
+        _ => Profile::C1,
+    };
+    let v = Version::new(VERSION).unwrap();
 
     println!(
-        "C1, {PAYLOAD_BYTES} B, {trials} trials/cell. m50 = magnitude at 50% success.\n\
-         luma m50 = prefix still recoverable; chroma m50 = full decode. \
-         Δ<0 means chroma fails first.\n"
+        "{profile:?}, v{VERSION} ({}×{}) filled to capacity, {trials} trials/cell.\n\
+         m50 = magnitude at 50% success. luma m50 = prefix still recoverable; \
+         chroma m50 = full decode.\nΔ<0 means chroma fails first — i.e. chroma is the \
+         layer holding the symbol back.\n",
+        v.side(),
+        v.side()
     );
 
     for level in 0..4u8 {
@@ -149,17 +165,21 @@ fn main() {
             luma: level,
             chroma: level,
         };
+        let bytes = capacity(v, profile, ecc).body_bytes;
+        let cap = capacity(v, profile, ecc);
+        let share = 100.0 * cap.chroma_info_bits as f32 / cap.info_bits().max(1) as f32;
         let bases: Vec<(Vec<u8>, Raster)> = (0..trials)
             .map(|t| {
-                let p = trial_payload(PAYLOAD_BYTES, t as u64 * 0x9E37 + 1);
-                let r = base(&p, ecc);
+                let p = trial_payload(bytes, t as u64 * 0x9E37 + 1);
+                let r = base(&p, ecc, profile);
                 (p, r)
             })
             .collect();
 
         let rates = lc_core::ecc::ldpc::RATES;
         println!(
-            "── ECC level {level}  (luma rate {:.2}, chroma rate {:.2})",
+            "── ECC level {level}  luma {:.2} / chroma {:.2}  —  {bytes} B, \
+             chroma carries {share:.0}%",
             rates[lc_core::ecc::ldpc::LUMA_RATE_INDEX[level as usize]],
             rates[lc_core::ecc::ldpc::CHROMA_RATE_INDEX[level as usize]],
         );

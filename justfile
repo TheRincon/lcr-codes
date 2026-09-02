@@ -189,8 +189,12 @@ envelope trials="":
     cargo run -p lc-decode --release --example envelope -- {{trials}}
 
 # Measure where each layer fails, to calibrate the §8.2 rate split (open decision #5).
-tune trials="":
-    cargo run -p lc-decode --release --example tune -- {{trials}}
+#
+# Second argument is the profile — `just tune 12 C3`. Worth running per profile: chroma is
+# 11% of C2's payload and 60% of C3's, so the same rate table lands very differently.
+[doc("Measure where each layer fails, per profile, for the §8.2 rate split.")]
+tune trials="" profile="":
+    cargo run -p lc-decode --release --example tune -- {{trials}} {{profile}}
 
 # One symbol size, each profile loaded to its own capacity — the comparison that says
 # which profile to reach for. This is what established D11.

@@ -5,3 +5,4 @@
 # The component artifacts are built by `just component`, not committed — they are
 # reproducible from source and would otherwise be a 280 KB binary in every diff.
 *.wasm
+.DS_Store
