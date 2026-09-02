@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* Matches the reset the Artifact host injects, so the page renders identically
+     whether it is opened from disk or served as a published artifact. */
+  :root { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Luma and Chroma</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&display=swap">
+<style>
+:root {
+  --paper:      #F7F8F5;
+  --surface:    #FFFFFF;
+  --sunk:       #EEF1EA;
+  --ink:        #12180F;
+  --ink-soft:   #515A4E;
+  --ink-faint:  #7C8578;
+  --rule:       #DBE1D4;
+  --rule-soft:  #E9EDE4;
+
+  /* The symbol's own four colours. These are data, not decoration:
+     brightness carries luma, hue carries chroma. */
+  --luma-dark:    #025901;
+  --luma-light:   #8BD377;
+  --chroma-dark:  #78297C;
+  --chroma-light: #FAA2FB;
+
+  --accent:     #0A5D2A;
+  --accent-dim: #3C7C55;
+  --warn:       #A9501F;
+  --good:       #2C6E3F;
+
+  --shadow: 0 1px 2px rgba(18,24,15,.05), 0 8px 24px -12px rgba(18,24,15,.18);
+
+  --col: 34rem;
+  --wide: 58rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:     #0C100A;
+    --surface:   #151A12;
+    --sunk:      #1B211७;
+    --sunk:      #1B2117;
+    --ink:       #E9EEE4;
+    --ink-soft:  #A3AC9C;
+    --ink-faint: #767F70;
+    --rule:      #2A3225;
+    --rule-soft: #1F261C;
+    --accent:     #7FD0A0;
+    --accent-dim: #5C9E78;
+    --warn:      #E0A070;
+    --good:      #7FD0A0;
+    --shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 30px -14px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:     #0C100A;
+  --surface:   #151A12;
+  --sunk:      #1B2117;
+  --ink:       #E9EEE4;
+  --ink-soft:  #A3AC9C;
+  --ink-faint: #767F70;
+  --rule:      #2A3225;
+  --rule-soft: #1F261C;
+  --accent:     #7FD0A0;
+  --accent-dim: #5C9E78;
+  --warn:      #E0A070;
+  --good:      #7FD0A0;
+  --shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 30px -14px rgba(0,0,0,.7);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+  font-size: 1.125rem;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: var(--wide);
+  margin: 0 auto;
+  padding: 0 1.5rem 6rem;
+}
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  padding: 4.5rem 0 2.75rem;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 3rem;
+}
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  font-size: .7rem;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--accent-dim);
+  margin: 0 0 1.25rem;
+}
+h1 {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-weight: 700;
+  font-size: clamp(2.5rem, 7vw, 4.25rem);
+  line-height: 1.02;
+  letter-spacing: -.03em;
+  text-wrap: balance;
+  margin: 0 0 1.25rem;
+}
+h1 .lu { color: var(--luma-dark); }
+h1 .ch { color: var(--chroma-dark); }
+:root[data-theme="dark"] h1 .lu,
+:root[data-theme="dark"] h1 .ch { color: inherit; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) h1 .lu { color: var(--luma-light); }
+  :root:not([data-theme="light"]) h1 .ch { color: var(--chroma-light); }
+}
+:root[data-theme="dark"] h1 .lu { color: var(--luma-light); }
+:root[data-theme="dark"] h1 .ch { color: var(--chroma-light); }
+
+.standfirst {
+  max-width: var(--col);
+  font-size: 1.28rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin: 0;
+  font-weight: 300;
+}
+
+/* ---------- sections ---------- */
+
+section { margin: 0 0 4.5rem; }
+
+.shead {
+  display: flex;
+  align-items: baseline;
+  gap: .9rem;
+  margin: 0 0 1.5rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--rule);
+}
+.snum {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--accent-dim);
+  letter-spacing: .1em;
+  flex: none;
+}
+h2 {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-weight: 600;
+  font-size: clamp(1.5rem, 3vw, 1.95rem);
+  letter-spacing: -.02em;
+  line-height: 1.15;
+  margin: 0;
+  text-wrap: balance;
+}
+h3 {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 1.1rem;
+  letter-spacing: -.01em;
+  margin: 2.25rem 0 .6rem;
+  text-wrap: balance;
+}
+
+p { max-width: var(--col); margin: 0 0 1.1rem; }
+p.widep { max-width: var(--wide); }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+strong { font-weight: 500; color: var(--ink); }
+em.term {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .88em;
+  background: var(--sunk);
+  padding: .08em .34em;
+  border-radius: 3px;
+}
+
+.lead {
+  font-size: 1.22rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  font-weight: 300;
+  max-width: var(--col);
+  margin-bottom: 1.4rem;
+}
+
+/* ---------- figures ---------- */
+
+figure { margin: 2rem 0; }
+figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 2px;
+  background: var(--sunk);
+}
+figcaption {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-size: .85rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  margin-top: .7rem;
+  max-width: 30rem;
+}
+figcaption b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.trio, .duo {
+  display: grid;
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+.trio { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.duo  { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.trio figure, .duo figure { margin: 0; }
+
+.plate {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.plate img { border-radius: 0; }
+.platelabel {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .66rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: .5rem .7rem;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-soft);
+  display: flex;
+  justify-content: space-between;
+  gap: .5rem;
+  align-items: center;
+}
+.verdict {
+  font-weight: 600;
+  letter-spacing: .06em;
+}
+.verdict.ok   { color: var(--good); }
+.verdict.fail { color: var(--warn); }
+
+/* ---------- palette swatches ---------- */
+
+.pal {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin: 2rem 0 1rem;
+}
+.sw {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.chip { height: 82px; }
+.swmeta {
+  padding: .6rem .75rem .7rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .7rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+.swname {
+  display: block;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -.01em;
+  margin-bottom: .2rem;
+}
+
+/* ---------- data table ---------- */
+
+.tablewrap { overflow-x: auto; margin: 1.75rem 0; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+}
+th, td {
+  padding: .5rem .7rem;
+  text-align: right;
+  border-bottom: 1px solid var(--rule-soft);
+  white-space: nowrap;
+}
+th:first-child, td:first-child {
+  text-align: left;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-size: .82rem;
+}
+thead th {
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-faint);
+  font-weight: 500;
+  font-size: .68rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+tbody tr:last-child td { border-bottom: none; }
+td.hi { color: var(--warn); font-weight: 600; }
+td.lo { color: var(--ink-faint); }
+
+/* ---------- callout ---------- */
+
+.note {
+  border-left: 2px solid var(--accent-dim);
+  padding: .2rem 0 .2rem 1.15rem;
+  margin: 1.9rem 0;
+  max-width: var(--col);
+}
+.note p { margin-bottom: .6rem; }
+.note p:last-child { margin-bottom: 0; }
+.notelabel {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .66rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--accent-dim);
+  display: block;
+  margin-bottom: .4rem;
+}
+
+/* ---------- diagram ---------- */
+
+.diagram {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1.5rem 1.25rem 1.1rem;
+  margin: 2rem 0;
+}
+.diagram svg { display: block; width: 100%; height: auto; }
+
+.eq {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .92rem;
+  background: var(--sunk);
+  border-radius: 4px;
+  padding: .85rem 1rem;
+  margin: 1.4rem 0;
+  max-width: var(--col);
+  overflow-x: auto;
+  color: var(--ink);
+}
+
+.foot {
+  border-top: 1px solid var(--rule);
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  font-size: .92rem;
+  color: var(--ink-soft);
+}
+.foot p { max-width: var(--wide); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">LC Code · how the format works</p>
+  <h1>Reading with <span class="lu">brightness</span> and <span class="ch">colour</span> at the same time</h1>
+  <p class="standfirst">An LC Code carries two independent messages in one picture. One is written in light and dark, the other in green and magenta. Here is what that means, why it is worth doing, and what makes it fail.</p>
+</header>
+
+<section>
+  <div class="shead"><span class="snum">01</span><h2>Start with the grid</h2></div>
+
+  <p class="lead">A barcode is a grid of coloured squares. Each square is a <em class="term">module</em>, and each module is one small piece of the message.</p>
+
+  <p>The three bullseyes are <em class="term">finders</em>. A scanner hunts for those first, because their stripes have a distinctive 1:1:3:1:1 width ratio that almost nothing else in a camera image produces. Once it has found three of them it knows where the symbol is, how big it is, and which way up. The ring around the outside is a calibration border: known colours in known places, so the scanner can work out what the lighting is doing to the picture before it trusts anything else.</p>
+
+  <figure>
+    <img src="img/symbol.png" alt="A square LC Code symbol in green and magenta, with three bullseye finder patterns at its corners and a multicoloured calibration ring around the edge." width="540" height="540">
+    <figcaption><b>A real symbol.</b> 33×33 modules carrying 96 bytes. Every picture on this page was produced by the encoder itself, then damaged by the project's test harness — none of them are mock-ups.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">02</span><h2>Two messages, one picture</h2></div>
+
+  <p class="lead">Here is the whole idea. Look at any module and ask two separate questions about it.</p>
+
+  <p><strong>Is it light or dark?</strong> That is the <strong>luma</strong> layer — luma is just the technical word for brightness. It is one bit per module: dark means 0, light means 1.</p>
+
+  <p><strong>Is it green or magenta?</strong> That is the <strong>chroma</strong> layer — chroma being the technical word for colour-ness, the part of a colour left over once you ignore how bright it is. Also one bit per module.</p>
+
+  <p>The two questions have nothing to do with each other, so each module carries <strong>two bits instead of one</strong>. That is the whole density gain, and everything else in the design exists to keep those two questions genuinely independent.</p>
+
+  <div class="duo">
+    <figure class="plate">
+      <div class="platelabel"><span>Luma layer</span><span>brightness only</span></div>
+      <img src="img/layer-luma.png" alt="The same symbol converted to greyscale, still showing a clear pattern of light and dark squares." width="540" height="540">
+    </figure>
+    <figure class="plate">
+      <div class="platelabel"><span>Chroma layer</span><span>colour only</span></div>
+      <img src="img/layer-chroma.png" alt="The same symbol with every square forced to the same brightness, leaving only a green and magenta pattern." width="540" height="540">
+    </figure>
+  </div>
+  <p class="widep"><figcaption style="max-width:var(--wide)"><b>The same symbol, split.</b> Left: brightness only, exactly what a black-and-white camera records. Right: the brightness flattened to a single value so only the colour survives. Two different patterns, from one image.</figcaption></p>
+
+  <p>Compare the two. They are not the same pattern — that is the point. If they were, the second layer would be telling you something you already knew, and the symbol would be carrying one message drawn twice.</p>
+
+  <h3>The brightness layer stands alone</h3>
+
+  <p>Because the luma layer is a complete message by itself, a scanner that cannot see colour at all still reads something. Point a black-and-white sensor at the symbol, or read it in terrible light where the colours wash out, and you get the first chunk of the data rather than nothing.</p>
+
+  <p>This is why the finders and the calibration border are drawn in only two shades of one colour. The scanner has to locate the symbol <em>before</em> it can possibly know what the lighting is doing to the colours, so nothing in that first step is allowed to depend on colour being right.</p>
+
+  <figure class="plate" style="max-width:26rem">
+    <div class="platelabel"><span>Monochrome profile</span><span>1 bit per module</span></div>
+    <img src="img/symbol-mono.png" alt="The same data encoded as a pure black and white symbol, noticeably larger than the colour version." width="636" height="636">
+  </figure>
+  <figcaption><b>The same 96 bytes with no colour at all.</b> It still works — it just needs a bigger symbol to fit, because each module now carries one bit instead of two.</figcaption>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">03</span><h2>Four colours, chosen not picked</h2></div>
+
+  <p class="lead">Two brightness levels times two hues gives four colours. They look arbitrary. They are not — each one is the answer to a constraint.</p>
+
+  <div class="pal">
+    <div class="sw">
+      <div class="chip" style="background:#025901"></div>
+      <div class="swmeta"><span class="swname">Deep green</span>#025901<br>dark · hue 136°</div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#8BD377"></div>
+      <div class="swmeta"><span class="swname">Light green</span>#8BD377<br>light · hue 136°</div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#78297C"></div>
+      <div class="swmeta"><span class="swname">Deep magenta</span>#78297C<br>dark · hue 326°</div>
+    </div>
+    <div class="sw">
+      <div class="chip" style="background:#FAA2FB"></div>
+      <div class="swmeta"><span class="swname">Light magenta</span>#FAA2FB<br>light · hue 326°</div>
+    </div>
+  </div>
+
+  <p>Read the swatches as a 2×2 table. Down each column, the hue is <em>identical</em> — 136° for both greens, 326° for both magentas. Across each row, the brightness is identical. That grid structure is the thing that keeps the two questions independent.</p>
+
+  <h3>Why the hues must match across brightness levels</h3>
+
+  <p>Suppose the dark hue were a blue and the light hue a yellow. Then to answer "is this green or magenta?" you would first have to answer "is this light or dark?", because the answer would mean different things at each level. The two layers would be tangled, and a mistake about brightness would become a mistake about colour too. Keeping one hue angle per column means the colour question can be answered <strong>without knowing the brightness at all</strong>.</p>
+
+  <div class="note">
+    <span class="notelabel">A bug this caught</span>
+    <p>The magenta was originally specified at hue 316°. At that angle, the light magenta the design asked for <em>does not exist</em> in the range of colours a screen can show — it is outside the gamut, so it was silently flattened to a duller colour than intended. Three of the four swatches were vivid and one was washed out.</p>
+    <p>That asymmetry quietly biases every colour decision the scanner makes, because it compares each sample against a midpoint between the two hues, and the midpoint had been dragged off-centre. Moving the hue to 326° fixed it with no other change: same brightness levels, same vividness target, all four colours now equally saturated.</p>
+  </div>
+
+  <h3>Why green against magenta</h3>
+
+  <p>Camera sensors do not see colour evenly. A typical sensor puts a grid of tiny filters over its pixels — half of them green, a quarter red, a quarter blue. Green gets twice the sampling of anything else, so <strong>green-versus-not-green is the colour distinction a camera measures most accurately</strong>. Magenta is exactly "not green": red and blue together, with the green removed. Putting the hue axis on green against magenta spends the colour budget where the sensor is sharpest.</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 620 190" role="img" aria-label="Diagram of a camera sensor colour filter grid, showing that half the pixels are green, a quarter red and a quarter blue.">
+      <g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+        <text x="0" y="12" opacity=".65">A CAMERA SENSOR'S COLOUR FILTERS</text>
+      </g>
+      <g>
+        <!-- 4x4 bayer grid -->
+        <g>
+          <rect x="0"  y="30" width="34" height="34" fill="#C0392B"/><rect x="34" y="30" width="34" height="34" fill="#4E9A3E"/>
+          <rect x="68" y="30" width="34" height="34" fill="#C0392B"/><rect x="102" y="30" width="34" height="34" fill="#4E9A3E"/>
+          <rect x="0"  y="64" width="34" height="34" fill="#4E9A3E"/><rect x="34" y="64" width="34" height="34" fill="#2E5FA3"/>
+          <rect x="68" y="64" width="34" height="34" fill="#4E9A3E"/><rect x="102" y="64" width="34" height="34" fill="#2E5FA3"/>
+          <rect x="0"  y="98" width="34" height="34" fill="#C0392B"/><rect x="34" y="98" width="34" height="34" fill="#4E9A3E"/>
+          <rect x="68" y="98" width="34" height="34" fill="#C0392B"/><rect x="102" y="98" width="34" height="34" fill="#4E9A3E"/>
+          <rect x="0"  y="132" width="34" height="34" fill="#4E9A3E"/><rect x="34" y="132" width="34" height="34" fill="#2E5FA3"/>
+          <rect x="68" y="132" width="34" height="34" fill="#4E9A3E"/><rect x="102" y="132" width="34" height="34" fill="#2E5FA3"/>
+        </g>
+        <g font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">
+          <rect x="175" y="40" width="14" height="14" fill="#4E9A3E"/>
+          <text x="199" y="52">50% green — sampled twice as densely</text>
+          <rect x="175" y="72" width="14" height="14" fill="#C0392B"/>
+          <text x="199" y="84">25% red</text>
+          <rect x="175" y="104" width="14" height="14" fill="#2E5FA3"/>
+          <text x="199" y="116">25% blue</text>
+          <text x="175" y="152" opacity=".7" font-size="12">Green vs. magenta asks the question this grid answers best.</text>
+        </g>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">04</span><h2>Decibels: how clearly can you tell them apart?</h2></div>
+
+  <p class="lead">Decibels come up constantly here, and the idea underneath is simple: how far apart are the two things you are trying to distinguish, compared with how much the measurement wobbles?</p>
+
+  <p>Imagine measuring the brightness of a module. You expect either "dark" or "light", but noise means you never get exactly either — you get something nearby. Two quantities decide whether you can tell which was intended:</p>
+
+  <p><strong>Separation</strong> is the gap between what "dark" and "light" actually look like. <strong>Noise</strong> is how much any single measurement scatters around where it should be. If the gap is large and the scatter is small, every reading is obvious. If the scatter approaches the gap, readings start landing on the wrong side.</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 620 250" role="img" aria-label="Two bell curves representing dark and light measurements. When they are far apart relative to their width, the two are easy to tell apart; the signal to noise ratio is the ratio of their separation to their spread.">
+      <defs>
+        <linearGradient id="gL" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#025901" stop-opacity=".45"/>
+          <stop offset="100%" stop-color="#025901" stop-opacity=".05"/>
+        </linearGradient>
+        <linearGradient id="gR" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="#8BD377" stop-opacity=".7"/>
+          <stop offset="100%" stop-color="#8BD377" stop-opacity=".08"/>
+        </linearGradient>
+      </defs>
+
+      <!-- baseline -->
+      <line x1="40" y1="185" x2="590" y2="185" stroke="currentColor" stroke-opacity=".3" stroke-width="1"/>
+
+      <!-- dark curve centred 180, light curve centred 430, sigma 52 -->
+      <path d="M40 185 C 110 185, 128 60, 180 60 C 232 60, 250 185, 320 185 Z" fill="url(#gL)" stroke="#025901" stroke-width="1.5"/>
+      <path d="M290 185 C 360 185, 378 60, 430 60 C 482 60, 500 185, 570 185 Z" fill="url(#gR)" stroke="#4E9A3E" stroke-width="1.5"/>
+
+      <!-- centres -->
+      <line x1="180" y1="60" x2="180" y2="185" stroke="currentColor" stroke-opacity=".45" stroke-dasharray="3 3"/>
+      <line x1="430" y1="60" x2="430" y2="185" stroke="currentColor" stroke-opacity=".45" stroke-dasharray="3 3"/>
+
+      <!-- separation arrow -->
+      <line x1="180" y1="212" x2="430" y2="212" stroke="currentColor" stroke-width="1.2"/>
+      <path d="M180 212 l8 -4 v8 z" fill="currentColor"/>
+      <path d="M430 212 l-8 -4 v8 z" fill="currentColor"/>
+
+      <!-- sigma bracket on right curve -->
+      <line x1="430" y1="150" x2="482" y2="150" stroke="currentColor" stroke-opacity=".8" stroke-width="1.2"/>
+      <path d="M482 150 l-7 -3.5 v7 z" fill="currentColor" fill-opacity=".8"/>
+
+      <g font-family="IBM Plex Sans, sans-serif" font-size="13" fill="currentColor">
+        <text x="180" y="46" text-anchor="middle" font-weight="600">dark</text>
+        <text x="430" y="46" text-anchor="middle" font-weight="600">light</text>
+        <text x="305" y="233" text-anchor="middle" font-size="12">separation — the gap you are reading</text>
+        <text x="492" y="154" font-size="12" opacity=".85">noise (σ)</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" opacity=".65">
+        <text x="40" y="18">WHAT ONE MODULE'S BRIGHTNESS MEASUREMENT LOOKS LIKE</text>
+      </g>
+    </svg>
+  </div>
+
+  <p>The signal-to-noise ratio is that comparison, and decibels are a compressed way of writing it so that very good and very bad both fit on one scale:</p>
+
+  <div class="eq">SNR (dB) = 20 · log₁₀( half the separation ÷ noise )</div>
+
+  <p>The rule of thumb worth remembering: <strong>every 6 dB is a doubling</strong>. 6 dB better means the gap is twice as clear relative to the noise. A 20 dB difference is about ten times. And because it is a ratio, "how many dB" is a fair way to compare two completely different measurements — such as a brightness layer and a colour layer.</p>
+
+  <h3>What the two layers actually measure</h3>
+
+  <p>Which brings us to the reason this page exists. Measuring both layers on the same scale, on a clean capture:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Layer</th><th>Separation</th><th>SNR, clean</th><th>SNR, under stress</th></tr></thead>
+      <tbody>
+        <tr><td>Luma (brightness)</td><td>45.8 L*</td><td>29.7 dB</td><td>21.9 dB</td></tr>
+        <tr><td>Chroma (colour)</td><td>110.1 a*b*</td><td class="hi">37.3 dB</td><td>21.8 dB</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The colour layer is <strong>7.6 dB cleaner</strong> than the brightness layer on a good capture — not worse, better. That is not a surprise once you see the separation column: the four colours are placed so that the two hues sit 110 units apart, while the two brightness levels are only 45.8 apart. More than twice the gap, which is almost exactly 7.6 dB worth.</p>
+
+  <p>This contradicted the format's own written assumption, which said colour was the noisier channel and gave it extra error correction on that basis. Under stress the two converge to a dead heat, but colour never becomes the worse channel by this measure.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">05</span><h2>What actually breaks it</h2></div>
+
+  <p class="lead">The interesting failures are not "the picture got a bit worse". Each kind of damage attacks a different part of the design, and the symbol shrugs off some of them almost completely.</p>
+
+  <h3>Shading and glare: barely a scratch</h3>
+
+  <p>A shadow across half the symbol, or a bright reflection on the glass, sounds fatal — but both are <em>smooth</em>. They change slowly across the picture, so the scanner can measure them at the known-colour reference points and subtract the whole gradient before reading anything.</p>
+
+  <div class="duo">
+    <figure class="plate">
+      <div class="platelabel"><span>Shading, 70%</span><span class="verdict ok">decodes</span></div>
+      <img src="img/shading.png" alt="The symbol with a strong brightness gradient across it, dark at one corner." width="540" height="540">
+    </figure>
+    <figure class="plate">
+      <div class="platelabel"><span>Glare blob</span><span class="verdict ok">decodes</span></div>
+      <img src="img/glare.png" alt="The symbol with a bright white reflection washing out one region." width="540" height="540">
+    </figure>
+  </div>
+  <figcaption style="max-width:var(--wide)"><b>Both still read.</b> Shading succeeds 100% of the time across the entire tested range. This is what the calibration ring and the scattered reference modules are for.</figcaption>
+
+  <h3>Blur: the one that hurts colour first</h3>
+
+  <p>Defocus is different, because it is not a gradient — it is neighbouring modules bleeding into each other. And it lands hardest on the colour layer, because colour is already spread out: cameras record colour at lower detail than brightness, and the scanner deliberately reads each colour over a wider area to gather more light. Both of those choices make colour more fragile when the image smears.</p>
+
+  <div class="trio">
+    <figure class="plate">
+      <div class="platelabel"><span>Blur 1px</span><span class="verdict ok">decodes</span></div>
+      <img src="img/blur-1.png" alt="The symbol very slightly softened." width="540" height="540">
+    </figure>
+    <figure class="plate">
+      <div class="platelabel"><span>Blur 4px</span><span class="verdict ok">decodes</span></div>
+      <img src="img/blur-4.png" alt="The symbol noticeably blurred, module edges merging." width="540" height="540">
+    </figure>
+    <figure class="plate">
+      <div class="platelabel"><span>Blur 5px</span><span class="verdict fail">fails</span></div>
+      <img src="img/blur-5.png" alt="The symbol heavily blurred, individual modules no longer distinct." width="540" height="540">
+    </figure>
+  </div>
+  <figcaption style="max-width:var(--wide)"><b>The cliff is sharp.</b> Measured success across 32 attempts: 100% at 3px, 81% at 4px, 3% at 5px. One pixel of extra defocus takes it from usually-fine to essentially never.</figcaption>
+
+  <h3>Noise: graceful</h3>
+
+  <p>Random speckle is what error correction is built for. It degrades smoothly rather than falling off a cliff, because the errors are scattered independently and the code was designed against exactly this.</p>
+
+  <div class="duo">
+    <figure class="plate">
+      <div class="platelabel"><span>Noise σ 0.04</span><span class="verdict ok">decodes</span></div>
+      <img src="img/noise-low.png" alt="The symbol with light random speckle over it." width="540" height="540">
+    </figure>
+    <figure class="plate">
+      <div class="platelabel"><span>Noise σ 0.14</span><span class="verdict fail">fails</span></div>
+      <img src="img/noise-high.png" alt="The symbol with heavy random speckle, colours becoming hard to distinguish." width="540" height="540">
+    </figure>
+  </div>
+  <figcaption style="max-width:var(--wide)"><b>A gentle slope, not a cliff.</b> 100% → 94% → 88% → 78% → 53% → 19% as the noise rises. Compare the blur numbers above: that is the difference between damage the code was designed for and damage it was not.</figcaption>
+
+  <h3>Tilt: geometry, mostly solved</h3>
+
+  <p>Photographing a screen at an angle squashes the square into a trapezium. This is the easiest problem on the page, because the finders and the alignment marker give four known points, and four points are exactly what you need to compute and undo the distortion. Tilting is in fact <em>encouraged</em> — a slight angle moves the camera's own reflection off the symbol.</p>
+
+  <div class="duo">
+    <figure class="plate">
+      <div class="platelabel"><span>Slight tilt</span><span class="verdict ok">decodes</span></div>
+      <img src="img/tilt-small.png" alt="The symbol seen at a slight angle, appearing as a mild trapezium." width="737" height="737">
+    </figure>
+    <figure class="plate">
+      <div class="platelabel"><span>Severe tilt</span><span class="verdict fail">fails</span></div>
+      <img src="img/tilt-large.png" alt="The symbol seen at a steep angle, strongly foreshortened." width="934" height="934">
+    </figure>
+  </div>
+  <figcaption style="max-width:var(--wide)"><b>Read these two as geometry, not as a threshold.</b> The tilt measurements are the one part of the harness currently known to be unreliable — see the note below.</figcaption>
+
+  <div class="note">
+    <span class="notelabel">Honest caveat</span>
+    <p>The tilt numbers are not currently trustworthy, and it is worth saying so rather than quoting them. Tilting resizes the image by a ratio very close to 1, and the test harness resamples with a cheap single-sample filter. That produces an interference pattern against the module grid — the same effect that makes photographs of screens show rippling bands.</p>
+    <p>The result is measurements that go up and down instead of steadily worsening: a tilt of 0.10 reads fine, 0.15 and 0.20 fail, 0.25 and 0.30 read fine again. That is the measuring instrument talking, not the format. Fixing it means resampling more carefully.</p>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">06</span><h2>Why colour still gets more error correction</h2></div>
+
+  <p class="lead">Both layers carry redundancy so that damaged modules can be reconstructed. The format gives the colour layer noticeably more of it — and after measuring, that turns out to be right for a reason nobody had written down.</p>
+
+  <p>The written justification was that colour is the noisier channel. Section 04 shows it is not: colour measures 7.6 dB <em>better</em> on a clean capture. So the obvious move was to cut colour's redundancy back to match brightness, and take the capacity saved.</p>
+
+  <p>That was tested directly, by doing it and re-measuring everything:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Redundancy given to colour</th><th>Capacity</th><th>Noise</th><th>Glare</th><th>Blur 4px</th></tr></thead>
+      <tbody>
+        <tr><td>As shipped</td><td>116 B</td><td class="lo">unchanged</td><td class="lo">unchanged</td><td>81%</td></tr>
+        <tr><td>Reduced one step</td><td>126 B <span style="opacity:.6">(+8.6%)</span></td><td class="lo">unchanged</td><td class="lo">unchanged</td><td class="hi">3%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Nearly 9% more data per symbol, and every impairment unchanged except one — where it collapsed from 81% to 3%. Putting the redundancy back restored the 81%.</p>
+
+  <p>So both findings are true at once, and they resolve like this: <strong>colour's weakness is not noise, it is blur.</strong> A signal-to-noise measurement is a statement about random speckle, and it is structurally blind to neighbouring modules bleeding together. The extra redundancy is real protection — it is just protecting against a different enemy than the documentation claimed.</p>
+
+  <div class="note">
+    <span class="notelabel">What changed</span>
+    <p>The redundancy table itself was left exactly as specified. What needed correcting was the sentence explaining it — because anyone tuning the format from "colour is noisier" would optimise the wrong quantity, and the measurements above show they would get an 8.6% capacity gain that quietly destroys defocus tolerance.</p>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">07</span><h2>Four profiles, and what QR fits in the same square</h2></div>
+
+  <p class="lead">There are four ways to configure a symbol. They trade density against robustness — and one of them, it turns out, trades away both.</p>
+
+  <p>A <em class="term">profile</em> fixes two things: how many colours the palette has, and how finely the colour layer is sampled. That second choice is the one that matters, and it is easy to get backwards.</p>
+
+  <h3>More colours does not mean more data</h3>
+
+  <p>Every module always carries its own brightness bit. The only variable is the <strong>chroma cell</strong> — the block of modules that share a single colour decision. Watch what happens to a 2×2 block of four modules:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Profile</th><th>Colours</th><th>Chroma cell</th><th>Luma bits</th><th>Chroma bits</th><th>Bits / module</th></tr></thead>
+      <tbody>
+        <tr><td>M</td><td>2</td><td>—</td><td>4</td><td>0</td><td>1.000</td></tr>
+        <tr><td>C1</td><td>4</td><td>1×1</td><td>4</td><td class="hi">4</td><td class="hi">2.000</td></tr>
+        <tr><td>C2</td><td>4</td><td>2×2</td><td>4</td><td>1</td><td>1.227</td></tr>
+        <tr><td>C3</td><td>8</td><td>1×1</td><td>4</td><td class="hi">8</td><td class="hi">3.000</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>C1 stores a hue for <em>every module</em>: four hue bits per block. C2 has the same four colours but makes all four modules <strong>share one hue symbol</strong> — one bit per block instead of four. That single change costs it 39% of its capacity, and the palette never entered into it.</p>
+
+  <p>C3 combines the two levers in the favourable direction: eight colours means each hue symbol is worth 2 bits rather than 1, <em>and</em> it keeps a symbol per module. Eight chroma bits per block, 3.00 bits per module, half again as dense as C1.</p>
+
+  <div class="note">
+    <span class="notelabel">This is a change, and it is recent</span>
+    <p>The specification originally paired C3's eight colours with a 2×2 cell, which is the unfavourable combination: doubling the palette adds one bit per cell, while quartering the number of cells divides by four. Net, it measured <strong>1.455</strong> bits per module — eight colours carrying <em>less</em> than four.</p>
+    <p>That configuration was measured against the others and changed to a 1×1 cell, which doubled its capacity from 82 to 165 bytes. The evidence is below.</p>
+  </div>
+
+  <p>The bits-per-module column is measured from the real layout rather than assumed. Only C2 falls short of its ideal 1.25, because a 2×2 cell can straddle a fixed pattern or contain a reference module, and an odd-numbered side cannot be tiled evenly by 2×2 blocks. A 1×1 cell has none of those problems, which is why C1 and C3 land exactly on 2.00 and 3.00.</p>
+
+  <h3>The same 33×33 square, against QR</h3>
+
+  <p>QR uses the identical size formula, so a 33×33 LC symbol and a QR <strong>version 4</strong> are the same grid. Capacity at the default error-correction setting, with QR's four levels for reference:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>33×33 symbol</th><th>Parity</th><th>Capacity</th><th>vs QR-L</th><th>vs QR-M</th></tr></thead>
+      <tbody>
+        <tr><td>QR — level L</td><td>20%</td><td>78 B</td><td class="lo">1.00×</td><td class="lo">—</td></tr>
+        <tr><td>QR — level M</td><td>36%</td><td>62 B</td><td class="lo">—</td><td class="lo">1.00×</td></tr>
+        <tr><td>QR — level Q</td><td>52%</td><td>44 B</td><td class="lo">—</td><td class="lo">—</td></tr>
+        <tr><td>QR — level H</td><td>64%</td><td>32 B</td><td class="lo">—</td><td class="lo">—</td></tr>
+        <tr><td>LC — M (mono)</td><td>25%</td><td>66 B</td><td>0.85×</td><td>1.06×</td></tr>
+        <tr><td>LC — C1</td><td>25%</td><td class="hi">116 B</td><td class="hi">1.49×</td><td class="hi">1.87×</td></tr>
+        <tr><td>LC — C2</td><td>25%</td><td>75 B</td><td>0.96×</td><td>1.21×</td></tr>
+        <tr><td>LC — C3</td><td>25%</td><td class="hi">165 B</td><td class="hi">2.12×</td><td class="hi">2.66×</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Those rows are not a fair fight, because QR's levels and LC's are defined differently — QR quotes how much damage it can repair, LC quotes the code rate directly. Pairing them instead by <em>how much of the symbol is parity</em>, which is the honest comparison:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Profile</th><th>LC @ 15% parity</th><th>vs QR-L (20%, 78 B)</th><th>LC @ 35% parity</th><th>vs QR-M (36%, 62 B)</th></tr></thead>
+      <tbody>
+        <tr><td>M (mono)</td><td>76 B</td><td>0.97×</td><td>57 B</td><td>0.92×</td></tr>
+        <tr><td>C1</td><td>135 B</td><td class="hi">1.73×</td><td>96 B</td><td class="hi">1.55×</td></tr>
+        <tr><td>C2</td><td>87 B</td><td>1.12×</td><td>63 B</td><td>1.02×</td></tr>
+        <tr><td>C3</td><td>194 B</td><td class="hi">2.49×</td><td>137 B</td><td class="hi">2.21×</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><strong>C1 delivers the 1.5×–2× the format set out to achieve; C3 goes past it.</strong> C2 is roughly a wash with QR, and the monochrome profile is slightly <em>behind</em> — which is the useful control, because it says the colour layer is carrying the entire gain. LC spends area QR does not need: palette anchors, scattered reference modules, and a format region twice the size of QR's.</p>
+
+  <h3>What eight colours look like</h3>
+
+  <p>Same 2×2 structure as before — brightness down the rows, hue across the columns — but now four hues instead of two. Every one of these is a colour a single module can be:</p>
+
+  <div class="pal">
+    <div class="sw"><div class="chip" style="background:#663E05"></div><div class="swmeta"><span class="swname">Dark amber</span>#663E05<br>dark · hue 71°</div></div>
+    <div class="sw"><div class="chip" style="background:#065222"></div><div class="swmeta"><span class="swname">Dark green</span>#065222<br>dark · hue 146.5°</div></div>
+    <div class="sw"><div class="chip" style="background:#0C4784"></div><div class="swmeta"><span class="swname">Dark blue</span>#0C4784<br>dark · hue 280°</div></div>
+    <div class="sw"><div class="chip" style="background:#7B274D"></div><div class="swmeta"><span class="swname">Dark rose</span>#7B274D<br>dark · hue 355.5°</div></div>
+    <div class="sw"><div class="chip" style="background:#E2AC71"></div><div class="swmeta"><span class="swname">Light amber</span>#E2AC71<br>light · hue 71°</div></div>
+    <div class="sw"><div class="chip" style="background:#81C58C"></div><div class="swmeta"><span class="swname">Light green</span>#81C58C<br>light · hue 146.5°</div></div>
+    <div class="sw"><div class="chip" style="background:#95B5FE"></div><div class="swmeta"><span class="swname">Light blue</span>#95B5FE<br>light · hue 280°</div></div>
+    <div class="sw"><div class="chip" style="background:#F89ABD"></div><div class="swmeta"><span class="swname">Light rose</span>#F89ABD<br>light · hue 355.5°</div></div>
+  </div>
+
+  <p>The hue angles are deliberately <strong>uneven</strong> — 71°, 146.5°, 280°, 355.5°. Four hues spaced at a tidy 90° cannot be made vivid enough in a screen's colour range to clear the format's own minimum, so the spacing is stretched toward the directions where more saturated colour is available. Tidiness loses to reachability.</p>
+
+  <h3>Both profiles, the same message</h3>
+
+  <div class="duo">
+    <figure class="plate">
+      <div class="platelabel"><span>C1 · 4 colours</span><span>33×33</span></div>
+      <img src="img/symbol.png" alt="The four-colour green and magenta symbol, 33 by 33 modules." width="540" height="540">
+    </figure>
+    <figure class="plate">
+      <div class="platelabel"><span>C3 · 8 colours</span><span>29×29</span></div>
+      <img src="img/symbol-c3.png" alt="The same data as an eight-colour symbol in amber, green, blue and rose, visibly smaller at 29 by 29 modules." width="492" height="492">
+    </figure>
+  </div>
+  <figcaption style="max-width:var(--wide)"><b>The density argument, at actual scale.</b> Identical payload, identical module size — the C3 symbol is simply smaller, because each of its modules carries three bits instead of two. Both were decoded before being written to this page.</figcaption>
+
+  <figure class="plate" style="max-width:26rem">
+    <div class="platelabel"><span>C3 chroma layer</span><span>four hue states</span></div>
+    <img src="img/layer-chroma-c3.png" alt="The eight-colour symbol with brightness flattened, leaving a mosaic of four hues: amber, green, blue and rose." width="492" height="492">
+  </figure>
+  <figcaption><b>The same brightness-flattening trick as section 02.</b> Where C1's colour layer had two hues, this has four — and each one is worth two bits instead of one.</figcaption>
+
+  <h3>What the density costs</h3>
+
+  <p>Four hue states have to share the same colour circle, so they end up 75° apart instead of 170°, and less vivid with it. That is a materially harder decision for a scanner to make:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Profile</th><th>Hue states</th><th>Separation</th><th>Distance apart</th><th>Vividness</th><th>Colour SNR</th></tr></thead>
+      <tbody>
+        <tr><td>C1 / C2</td><td>2</td><td>169.8°</td><td>110.0</td><td>C* 55</td><td class="hi">22.8 dB</td></tr>
+        <tr><td>C3</td><td>4</td><td>75.2°</td><td>48.7</td><td>C* 40</td><td>15.7 dB</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Crowding four hues into the circle costs <strong>7.1 dB</strong> of separation. So the question is not whether C3 is less robust — it plainly is — but whether it is less robust in a way that matters, and by how much. That is a measurement, not an argument.</p>
+
+  <h3>Measured head to head</h3>
+
+  <p>One symbol size, each profile loaded to its own capacity, sixteen attempts per point. The figure is the damage level at which success falls through 50% — <strong>higher is better</strong>, and the units differ per row, so compare across a row and never down a column.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Impairment</th><th>C1 — 116 B</th><th>C2 — 75 B</th><th>C3 — 165 B</th></tr></thead>
+      <tbody>
+        <tr><td>Noise</td><td class="hi">0.128</td><td class="hi">0.128</td><td>0.096</td></tr>
+        <tr><td>Blur</td><td>4.71</td><td class="hi">5.75</td><td>4.94</td></tr>
+        <tr><td>Glare strength</td><td class="hi">0.600</td><td class="hi">0.600</td><td>0.510</td></tr>
+        <tr><td>Glare size</td><td class="hi">0.300</td><td class="hi">0.300</td><td>0.288</td></tr>
+        <tr><td>Occlusion</td><td>0.300</td><td>0.300</td><td class="hi">0.304</td></tr>
+        <tr><td>Shading</td><td class="lo">never fails</td><td class="lo">never fails</td><td class="lo">never fails</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>C3 gives up about <strong>25% of its noise tolerance and 15% of its glare tolerance</strong> against C1 — real, but far short of the 7.1 dB of raw separation it lost, because the error correction absorbs much of it. Blur it very slightly wins, and occlusion is a tie. For that it carries <strong>42% more data in the same square</strong>.</p>
+
+  <p>No profile is best at everything, which is what makes the choice a real one rather than a default. C2 buys blur tolerance with density. C1 balances. C3 buys density with margin.</p>
+
+  <div class="note">
+    <span class="notelabel">How this table changed the format</span>
+    <p>The original C3 — eight colours at a 2×2 cell — was measured first, and it was the <em>most</em> blur-tolerant profile in the set, never dropping below 50% anywhere in the sweep. But that was the only column it won, C2 covers nearly the same ground, and it paid with the worst noise and glare figures for a capacity barely above C2's.</p>
+    <p>Moving it to a 1×1 cell doubled its capacity from 82 to 165 bytes. Noise tolerance came out <em>identical</em>, glare slightly <em>better</em>, and only blur regressed — to 4.94, still marginally ahead of C1. Twice the data, for a change that was free on three impairments out of four.</p>
+  </div>
+
+  <p>C3 is optional in the specification: implementations must support M, C1 and C2, and may reject C3 entirely. It is also never selected automatically — a caller has to name it, and the trade above is documented where that choice is made. Reach for it when capture conditions are genuinely good and the payload will not otherwise fit. Reach for C1 the rest of the time.</p>
+</section>
+
+<div class="foot">
+  <p>Every symbol on this page was produced by the LC Code encoder and damaged by the project's own degradation harness, at 12 device pixels per module with the calibration border enabled — the same configuration the quoted success rates were measured on. Percentages are over 32 independent attempts per point, each with a different payload and a randomised placement of the damage, which carries a margin of roughly ±9 points. Colour values are CIELAB: <em class="term">L*</em> is lightness, <em class="term">a*b*</em> the two colour axes, and hue angles are measured in that plane.</p>
+  <p>LC capacities and bits-per-module are computed from the real layout rather than estimated. QR capacities are the published byte-mode figures for version 4 from ISO/IEC 18004, and QR parity percentages are its error-correction codewords as a share of the total — the one comparison on this page not produced by running code.</p>
+</div>
+
+</div>
+
+</body>
+</html>

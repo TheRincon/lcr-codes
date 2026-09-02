@@ -106,6 +106,13 @@ pub struct Diagnostics {
     pub references_rejected: u8,
     /// Per-module luma SNR, measured from the symbol's own known-colour modules.
     pub estimated_snr_db: f32,
+    /// Per-cell chroma SNR, on the same scale as [`Diagnostics::estimated_snr_db`].
+    ///
+    /// Not in §14.3's `Diagnostics`, which lists only the one figure. Added because
+    /// §8.2's unequal protection is a quantitative claim about the *gap* between the two
+    /// layers' channels, and a single combined SNR cannot express it — see D10.
+    /// `f32::NEG_INFINITY` on profile `M`, which has no chroma layer.
+    pub chroma_snr_db: f32,
     /// Frames combined before decoding (§12.4).
     pub frames_combined: u8,
     /// The format region as read.
@@ -266,6 +273,7 @@ impl<V: PacketVerifier> Decoder<V> {
             illum_residual_rms: p.illum.residual_rms,
             references_rejected: p.illum.rejected.min(255) as u8,
             estimated_snr_db: d.stats.snr_db(),
+            chroma_snr_db: d.stats.chroma_snr_db(&p.palette),
             frames_combined: frames,
             format: p.format,
             format_margin: p.format_margin,

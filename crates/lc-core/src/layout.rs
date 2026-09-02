@@ -594,8 +594,12 @@ mod tests {
             "{}",
             ratio(Profile::C2)
         );
+        // C3 is 8 colours at a 1×1 chroma cell: 1 luma bit + 2 chroma bits per module.
+        // Unlike `C2` there is no partial-cell shortfall to account for, because a 1×1
+        // cell can never straddle a fixed pattern — so this lands on the ideal 3.00 the
+        // same way `C1` lands on 2.00. See D11.
         assert!(
-            (ratio(Profile::C3) - 1.455).abs() < 0.01,
+            (ratio(Profile::C3) - 3.00).abs() < 0.001,
             "{}",
             ratio(Profile::C3)
         );

@@ -63,15 +63,54 @@ impl Version {
 }
 
 /// Colour / subsampling configuration (§5).
+///
+/// Measured head to head at v4 (33×33), each profile loaded to its own capacity, by
+/// `cargo run -p lc-decode --release --example profiles`. `m50` is the impairment
+/// magnitude at which decoding falls through 50%; higher is better.
+///
+/// | | capacity | noise | blur | glare |
+/// |---|---:|---:|---:|---:|
+/// | `M` | 66 B | — | — | — |
+/// | `C1` | 116 B | 0.128 | 4.71 | 0.600 |
+/// | `C2` | 75 B | 0.128 | **5.75** | 0.600 |
+/// | `C3` | **165 B** | 0.096 | 4.94 | 0.510 |
+///
+/// There is no profile that is best at everything, so the choice is a real one: `C1`
+/// balances, `C2` buys blur tolerance with density, `C3` buys density with margin.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Profile {
     /// Monochrome fallback. 2 colours, 1.00 bits/module.
+    ///
+    /// Slightly *behind* a QR code of the same size — the colour layer is where LC Code's
+    /// density advantage lives, and this profile does not have one. Its purpose is
+    /// surviving a monochrome sensor or a capture too poor to trust colour at all.
     M,
-    /// 4 colours, 1×1 chroma cell, 2.00 bits/module. Default for screen.
+    /// 4 colours, 1×1 chroma cell, 2.00 bits/module. **Default for screen.**
+    ///
+    /// The balanced choice and the right default: best-in-class on every impairment
+    /// except blur, at 1.87× a QR version 4 at level M.
     C1,
-    /// 4 colours, 2×2 chroma cell, 1.25 bits/module. Default for print.
+    /// 4 colours, 2×2 chroma cell, 1.227 bits/module. **Default for print.**
+    ///
+    /// Keeps `C1`'s widely separated hues and spends the 2×2 cell purely on averaging
+    /// four samples, which buys ~22% more blur tolerance than `C1` for ~35% less capacity.
+    /// Print is also where halftone chroma noise lives, an impairment the §15 harness does
+    /// not yet model — so `C2`'s case on paper rests on more than the table above.
     C2,
-    /// 8 colours, 2×2 chroma cell, 1.50 bits/module. Optional.
+    /// 8 colours, 1×1 chroma cell, 3.00 bits/module. **Optional, and the least robust.**
+    ///
+    /// The density option: 165 B at v4 against `C1`'s 116, which is 1.42× `C1` and 2.66×
+    /// a QR version 4 at level M. Nothing else in the format comes close.
+    ///
+    /// **It pays for that in margin, and you should opt in knowingly.** Four hue states
+    /// instead of two sit 75° apart rather than 170°, at `C* ≈ 40` rather than 55, so the
+    /// chroma decision is measurably harder: ~25% less noise tolerance and ~15% less
+    /// glare tolerance than `C1`. Blur is a wash. Use it where the capture conditions are
+    /// genuinely good — a bright screen at close range, §13.1 honoured — and where the
+    /// payload will not otherwise fit. Use `C1` everywhere else.
+    ///
+    /// §5 makes this profile optional and requires only `M`, `C1` and `C2`, so a decoder
+    /// is permitted to reject it. Do not select it automatically on a caller's behalf.
     C3,
 }
 
@@ -110,8 +149,8 @@ impl Profile {
     #[inline]
     pub const fn chroma_cell(self) -> u16 {
         match self {
-            Profile::M | Profile::C1 => 1,
-            Profile::C2 | Profile::C3 => 2,
+            Profile::M | Profile::C1 | Profile::C3 => 1,
+            Profile::C2 => 2,
         }
     }
 

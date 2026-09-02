@@ -50,6 +50,7 @@ test: component
 # `--lib` rather than the whole suite: the assertions sit in crate internals that the
 # unit tests reach directly, while the integration suites are dominated by the §15
 # degradation sweep — ~5 minutes unoptimised, for no additional assertion coverage.
+[doc("Run the unit tests unoptimised, so debug_assert! is live.")]
 test-debug:
     cargo test --workspace --lib
 
@@ -104,6 +105,7 @@ component-wit: component
 #
 # zstd rather than gzip for the transfer figure: ~10% smaller on these artifacts, and the
 # format anyone shipping a component today would reach for.
+[doc("Gate the scanner component against §14.2's size budget.")]
 wasm-size: component
     #!/usr/bin/env bash
     set -euo pipefail
@@ -132,6 +134,7 @@ wit-check:
 # API; `WASMTIME_C_API` may point at an unpacked release, otherwise this falls back to
 # the copy bundled in the wasmtime-go module cache — which is there because that module
 # ships a component-capable C library its own Go bindings do not expose (see D9).
+[doc("Build and run the C host trial against the built component.")]
 c-host: component
     #!/usr/bin/env bash
     set -euo pipefail
@@ -162,13 +165,38 @@ c-host: component
 gallery:
     cargo run -p lc-render --release --example gallery -- examples
 
+# Regenerate docs/img/ — the figures docs/explainer.html reads.
+#
+# Every figure is rendered by the encoder and damaged by the §15 harness at the same
+# settings the explainer's quoted success rates were measured on, so a figure and its
+# caption cannot drift apart. The page links these rather than embedding them, so it
+# stays a 46 KB diff instead of a 2.7 MB one.
+[doc("Regenerate the figures used by docs/explainer.html.")]
+figures:
+    cargo run -p lc-decode --release --example explain
+
 # What JSON-shaped payloads cost, end to end.
 payload-sizes:
     cargo run -p lc-decode --release --example json
 
 # Sweep each degradation to find where decoding stops working.
-envelope:
-    cargo run -p lc-decode --release --example envelope
+#
+# Reports success *rate* per cell, which is what §15 asks for and what comparing two
+# builds requires. Optional argument is the trial count (default 16); the standard error
+# is 0.5/sqrt(n), so pass 64 or more when a difference matters.
+[doc("Sweep each degradation for success rate vs magnitude (§15).")]
+envelope trials="":
+    cargo run -p lc-decode --release --example envelope -- {{trials}}
+
+# Measure where each layer fails, to calibrate the §8.2 rate split (open decision #5).
+tune trials="":
+    cargo run -p lc-decode --release --example tune -- {{trials}}
+
+# One symbol size, each profile loaded to its own capacity — the comparison that says
+# which profile to reach for. This is what established D11.
+[doc("Compare the colour profiles head to head at one symbol size.")]
+profiles trials="":
+    cargo run -p lc-decode --release --example profiles -- {{trials}}
 
 # Print detection internals for a degraded capture.
 diagnose:
@@ -185,11 +213,22 @@ ldpc:
 capacity:
     cargo run --release -p xtask -- capacity
 
+# Regenerate docs/ldpc.md — AWGN decoding thresholds per rate (§14.5 step 5).
+#
+# Slow (~4 min): it is a Monte-Carlo waterfall, 240 frames at each of 16 SNR points for
+# six rates at three layer lengths. Deliberately not in `ci` for that reason — the output
+# is committed, and it only changes when the base graphs do.
+[doc("Regenerate docs/ldpc.md — AWGN decoding thresholds per rate.")]
+thresholds:
+    cargo run --release -p xtask -- thresholds > docs/ldpc.md
+    @echo "  wrote docs/ldpc.md"
+
 # Search for the §4 palette constants against the sRGB gamut (open decisions #1 and #2).
 #
 # Reports the best configuration per profile, what the §4.2 luma gap costs in chroma, and
 # what each hue orientation is worth — the last so D1's green-against-magenta choice can
 # be priced against the alternatives rather than assumed.
+[doc("Search the §4 palette constants against the sRGB gamut.")]
 palette:
     cargo run --release -p xtask -- palette
 

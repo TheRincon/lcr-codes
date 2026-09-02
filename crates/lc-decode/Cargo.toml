@@ -18,4 +18,6 @@ lc-core = { workspace = true }
 
 [dev-dependencies]
 lc-encode = { workspace = true }
-lc-render = { workspace = true }
+# `png` only here: the examples write PNG figures, and a dev-dependency cannot reach the
+# scanner bundle §14.1 keeps thin.
+lc-render = { workspace = true, features = ["png"] }

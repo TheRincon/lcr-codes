@@ -13,7 +13,7 @@ decode-only and full.
 [`docs/decisions.md`](docs/decisions.md) are being carried forward so work can continue,
 not signed off. Both are cheap to unwind — see "Unwinding the provisional decisions" below.
 
-**263 tests, all passing, zero warnings.** `just test` (plus `just test-debug`, 217 unit
+**265 tests, all passing, zero warnings.** `just test` (plus `just test-debug`, 217 unit
 tests unoptimised — see below).
 
 ---
@@ -32,7 +32,7 @@ gallery. `just test` and `just test-debug` are both green. Nothing needs unwindi
 
 ```bash
 just component     # rebuild dist/ — gitignored, so it will be missing
-just test          # 263 tests; depends on `component`
+just test          # 265 tests; depends on `component`
 just test-debug    # 217 unit tests unoptimised, exercising debug_assert!
 just c-host        # the C trial, needs the Go module cache (see below)
 ```
@@ -47,36 +47,28 @@ just c-host        # the C trial, needs the Go module cache (see below)
 
 ### What to pick up next
 
-**§8.2 ECC rate tuning** — still the last thing blocking a v1.0 wire-format freeze.
+**§8.2 ECC rate tuning is done, and the rates did not move.** The full argument is D10 in
+[`docs/decisions.md`](docs/decisions.md); the short version is that the table was right and
+its stated reason was not.
 
-- The rate table in §8.2 is the spec's own guesses, labelled `[TBD]` there.
-- **It is less unblocked than this file used to claim.** §14.5 step 9 and §15 both want
-  *success rate* against degradation magnitude — §15 says outright that "a pass/fail
-  corpus will not tell you whether a change helped". The harness does not produce one:
-  `examples/envelope.rs` runs a single trial per magnitude and prints `+` or `.`, and of
-  the twelve degradations in `tests/support/ops.rs` only `noise` takes a seed. The other
-  eleven are deterministic, so repeating a cell returns the identical raster and there is
-  nothing to average. Threading a seed through the degradations that have a natural
-  randomisation axis — specular blob position, tilt axis, occlusion placement, sub-pixel
-  sampling phase — and reporting a fraction over N trials is a prerequisite for tuning
-  rates, not a nicety.
-- It changes `crates/lc-core/src/ecc/`, so it wants doing before anything depends on
-  those rates.
-- Start by reading §8.2 and `crates/lc-decode/tests/degradation.rs`, then sweep rates
-  against the harness rather than editing the table by hand.
+- `just envelope` reports success *rate* per cell (§15's metric) with a clean control row.
+- `just thresholds` writes [`docs/ldpc.md`](docs/ldpc.md) — each rate step buys ~1 dB, and
+  §8.2's two-step offset grants chroma 1.8–2.4 dB.
+- `Diagnostics::chroma_snr_db` measures the chroma channel on the same scale as the luma
+  one. Chroma reads **7.6 dB better** than luma on a clean capture, not worse — it is the
+  palette's amplitude ratio, `20·log10(55/22.9)`. So §8.2's "chroma is measured over a
+  noisier channel" is not what the numbers say.
+- But narrowing the offset to one step, tested directly, buys 8.6% capacity on `C1` and
+  drops blur-radius-4 success from **81% to 3%**. The protection is earning its keep.
+- Both are true because chroma's handicap is **spatial bandwidth, not noise** (§1.4, not
+  §8.2). A per-module noise sigma is blind to defocus, which is the impairment that
+  actually binds chroma.
 
-**Ordering, and a piece of luck.** Chroma-layer SNR is a direct function of the `a*b*`
-distance between the hue centroids, so the palette has to settle before chroma rates are
-measured. It moved on 2026-09-02 (see Fixed) — and nothing was lost, because the rates had
-never been measured at all: `RATES` together with `LUMA_RATE_INDEX`/`CHROMA_RATE_INDEX`
-reproduce §8.2's guessed table exactly. If panel calibration later moves `C*` again, any
-chroma rates measured before it have to be re-measured. Luma rates are independent of all
-this.
-
-For scale, the 2026-09-02 fix moved the centroid separation from 106.6 to 110.1 — about
-3%, or 0.28 dB. That is real but small, and the envelope sweep cannot see it: an A/B over
-the whole sweep moved exactly one cell, in the marginal band, which is indistinguishable
-from luck at one trial per cell. That is the measurement gap above, demonstrated.
+Remaining, and smaller than it was: the result is measured on `C1` at one payload size.
+`C2` and `C3` have different chroma-cell geometry, so `just tune` still wants a run per
+profile before a freeze. `just profiles` now covers the *robustness* half of that question
+and produced D11 — the `C3` chroma cell changed from 2×2 to 1×1 as a result, taking it
+from 82 B to 165 B at v4.
 
 Second, smaller: `just ci` runs locally via the pre-push hook but nothing runs it on a
 fork. The scanner sits at **93% of its size budget** measured raw (D8), so that gate wants
@@ -109,6 +101,10 @@ that must call into the crates (`ldpc`, `capacity`). See the note atop the justf
 just component       # both wasm components into dist/, validated
 just test-debug      # unit tests unoptimised, so debug_assert! is live
 just palette         # search the §4 palette constants against the sRGB gamut
+just envelope 64     # success rate vs degradation magnitude, 64 trials/cell
+just tune            # where each layer fails, for the §8.2 rate split
+just profiles        # C1 / C2 / C3 head to head at one symbol size
+just thresholds      # regenerate docs/ldpc.md (~4 min)
 just wasm-size       # gate the scanner against §14.2's budget
 just gallery         # regenerate examples/
 just payload-sizes   # JSON payloads, end to end
@@ -151,7 +147,7 @@ sign-off:
   surface cannot cancel a shading gradient, which is the impairment the step exists for.
 
 Also, all settled rather than open: §6.1's capacity table was 15–20% optimistic at the
-large end (D5); §5's bits/module figures are unreachable for `C2`/`C3` (D4); §13.1's ≥ 8
+large end (D5); §5's bits/module figure is unreachable for `C2` (D4); §13.1's ≥ 8
 px/module floor did not detect (D6); `no_std` does not build and will not be made to (D7);
 and the wasm target is a Component Model component rather than the browser bundle §14.2
 describes (D8).
@@ -177,15 +173,13 @@ The component exists and is measured; what is missing is the other side of the b
       `wazero` is core-wasm only. Nothing to do here until that changes.
 - [ ] `just ci` in actual CI. The hook covers local pushes, nothing covers a fork.
 
-### 2. Tune the ECC rates
+### 2. Tune the ECC rates — done
 
-§8.2's rates are still the spec's guesses — `RATES` plus the two index tables reproduce
-that table verbatim, and nothing has been measured against a channel. This is the last
-thing blocking a v1.0 wire-format freeze.
-
-It needs the harness to report a success *rate* first; see "What to pick up next" above
-for why it does not yet. Tuning against single-trial pass/fail would produce numbers that
-look measured and are not.
+**Measured, and left unchanged** — see D10. The two-step luma/chroma offset is necessary
+and maximal; §8.2's stated reason for it is wrong and D10 records the correct one. Still
+worth a `just tune` run on `C2` and `C3`, whose chroma-cell geometry differs, before the
+wire format freezes — and note `C3`'s geometry changed in D11, so any earlier `C3` figure
+is void.
 
 ### 3. Signing (§10) — optional, lower priority
 

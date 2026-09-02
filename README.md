@@ -32,6 +32,12 @@ calibration target for the illumination fit.
 per profile, each as PNG, SVG and the source JSON. Every one is decoded before it is
 written, so anything there reads back to the JSON beside it.
 
+**[`docs/explainer.html`](docs/explainer.html)** is the illustrated walkthrough — what the
+luma and chroma layers actually are, what a decibel means here, how the profiles compare,
+and what each kind of damage does. Open it in a browser; every figure in it is rendered by
+the encoder and damaged by the §15 harness rather than drawn by hand. `just figures`
+regenerates them.
+
 ## Why not just use a QR code
 
 Density, and graceful failure. LC Code targets **1.5–2.0 bits/module** against monochrome's

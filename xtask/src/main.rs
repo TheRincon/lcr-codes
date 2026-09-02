@@ -12,6 +12,7 @@
 //! sRGB gamut (open decisions #1 and #2). See `palette.rs`.
 
 mod palette;
+mod thresholds;
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -39,7 +40,10 @@ fn main() {
         "ldpc" => print!("{}", generate_tables()),
         "capacity" => print!("{}", capacity_table()),
         "palette" => print!("{}", palette::report()),
-        other => eprintln!("unknown task {other:?}; expected `ldpc`, `capacity` or `palette`"),
+        "thresholds" => print!("{}", thresholds::report()),
+        other => eprintln!(
+            "unknown task {other:?}; expected `ldpc`, `capacity`, `palette` or `thresholds`"
+        ),
     }
 }
 

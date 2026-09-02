@@ -101,6 +101,34 @@ impl ChannelStats {
         20.0 * (separation / self.sigma_l.max(1e-3)).log10()
     }
 
+    /// Chroma separation in units of its own noise — the chroma-layer counterpart of
+    /// [`ChannelStats::snr_db`], and the number §8.2's unequal protection is a bet about.
+    ///
+    /// Both are `20·log10(amplitude / sigma)`, where amplitude is *half* the distance
+    /// between the two nearest decision points. That is the same quantity as the SNR axis
+    /// in `docs/ldpc.md`, which sends BPSK at ±1 through noise of standard deviation
+    /// `sigma`, so a layer's SNR here can be read directly against the rate thresholds
+    /// tabulated there — which is the whole point of measuring it.
+    ///
+    /// The separation is the **minimum** distance between hue centroids rather than the
+    /// mean. Errors go to the nearest neighbour, so the closest pair sets the error rate;
+    /// with `k = 2` the two coincide, but on `C3`'s four uneven hues (D2) they do not.
+    ///
+    /// Returns `f32::NEG_INFINITY` for profile `M`, which has no chroma layer to measure.
+    pub fn chroma_snr_db(&self, palette: &Palette) -> f32 {
+        if palette.hues < 2 {
+            return f32::NEG_INFINITY;
+        }
+        let mut min_d = f32::INFINITY;
+        for i in 0..palette.hues {
+            for j in (i + 1)..palette.hues {
+                let ([a1, b1], [a2, b2]) = (palette.hue_ab[i], palette.hue_ab[j]);
+                min_d = min_d.min(((a1 - a2).powi(2) + (b1 - b2).powi(2)).sqrt());
+            }
+        }
+        20.0 * ((min_d / 2.0) / self.sigma_ab.max(1e-3)).log10()
+    }
+
     /// Log-likelihood ratio of one luma sample. Positive means bit 0, which is `L0`
     /// (dark) — see the bit-to-level convention in [`lc_core::modulate`].
     #[inline]
@@ -469,6 +497,43 @@ mod tests {
         assert!(a.snr_db() > b.snr_db());
         // 46 L* of separation against σ=4 is 23/4 ≈ 15 dB.
         assert!((a.snr_db() - 15.2).abs() < 0.5, "{}", a.snr_db());
+    }
+
+    /// Both SNRs must be on one scale, or comparing the layers is meaningless — and
+    /// comparing them is the entire purpose of §8.2's unequal protection.
+    #[test]
+    fn both_layer_snrs_share_a_scale() {
+        let p = Palette::for_profile(Profile::C1);
+        let st = ChannelStats {
+            sigma_l: 4.0,
+            sigma_ab: 4.0,
+            ..stats()
+        };
+        // Luma: 46 L* apart, so amplitude 23 against sigma 4 is ~15 dB.
+        assert!((st.snr_db() - 15.2).abs() < 0.5, "{}", st.snr_db());
+        // Chroma: the C4 hue centroids are ~110 apart in a*b*, so amplitude 55 against
+        // the same sigma is ~22.8 dB — the palette hands chroma more separation than
+        // luma, which is why the measured gap runs the opposite way to §8.2's premise.
+        let c = st.chroma_snr_db(&p);
+        assert!((c - 22.8).abs() < 0.6, "{c}");
+        assert!(c > st.snr_db());
+
+        // Halving the noise is +6 dB on either layer.
+        let quiet = ChannelStats {
+            sigma_ab: 2.0,
+            ..st
+        };
+        assert!((quiet.chroma_snr_db(&p) - c - 6.02).abs() < 0.05);
+    }
+
+    /// Profile `M` has no chroma layer, so there is nothing to report.
+    #[test]
+    fn mono_has_no_chroma_snr() {
+        let st = stats();
+        assert_eq!(
+            st.chroma_snr_db(&Palette::for_profile(Profile::M)),
+            f32::NEG_INFINITY
+        );
     }
 
     #[test]

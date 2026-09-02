@@ -31,7 +31,7 @@ Payloads travel as CBOR, not JSON — §9.4's "author in JSON, transmit CBOR". T
 | [`profile-m`](profile-m.png) | M | v6 | 41×41 | 1681 | Monochrome fallback (§4.6). Luma layer only — this is what a mono sensor or an unrecoverable chroma layer leaves you. |
 | [`profile-c1`](profile-c1.png) | C1 | v4 | 33×33 | 1089 | Screen default: 4 colours, co-sited chroma, 2.00 bits/module. |
 | [`profile-c2`](profile-c2.png) | C2 | v5 | 37×37 | 1369 | Print default: 4 colours, 2×2 chroma cells, more robust and less dense. |
-| [`profile-c3`](profile-c3.png) | C3 | v5 | 37×37 | 1369 | 8 colours, 2×2 cells. Optional (§5) and wants a good capture. |
+| [`profile-c3`](profile-c3.png) | C3 | v3 | 29×29 | 841 | 8 colours, 2×2 cells. Optional (§5) and wants a good capture. |
 
 ## Without the reference border
 

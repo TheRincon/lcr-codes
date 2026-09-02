@@ -16,6 +16,10 @@ impl Rng {
     fn unit(&mut self) -> f32 {
         (self.next() >> 11) as f32 / (1u64 << 53) as f32
     }
+    /// Uniform in `lo..hi`.
+    fn range(&mut self, lo: f32, hi: f32) -> f32 {
+        lo + self.unit() * (hi - lo)
+    }
     fn normal(&mut self) -> f32 {
         let u1 = self.unit().max(1e-9);
         (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * self.unit()).cos()
@@ -83,7 +87,12 @@ fn bilinear(r: &Raster, x: f32, y: f32) -> [f32; 3] {
 fn perspective(r: &Raster, tilt: f32, rotate_deg: f32) -> Raster {
     let (sin, cos) = rotate_deg.to_radians().sin_cos();
     let (w, h) = (r.width as f32, r.height as f32);
-    let grow = (cos.abs() + sin.abs()) / (1.0 - 0.6 * tilt);
+    // The rotated, projected symbol plus its quiet zone must fit. The `+ 0.3` is not
+    // cosmetic: without it `grow` rises with tilt, so a *mild* tilt gets a tighter canvas
+    // than a strong one and clips the quiet zone off the corners — which made the tilt
+    // sweep non-monotonic (0.1 failing where 0.3 passed) and was measuring the harness
+    // rather than the decoder.
+    let grow = (cos.abs() + sin.abs()) / (1.0 - 0.6 * tilt) + 0.3;
     let size = ((w * grow).ceil() as u32).max(r.width);
     let mut out = Raster { width: size, height: size, data: vec![255; (size * size * 3) as usize] };
     let centre = size as f32 / 2.0;
@@ -117,8 +126,24 @@ fn perspective(r: &Raster, tilt: f32, rotate_deg: f32) -> Raster {
 /// Multiplicative brightness falloff across the frame — vignetting, or the shoulder of a
 /// glare gradient. `strength` is the fraction of light lost at the far corner.
 fn shading(r: &Raster, strength: f32) -> Raster {
+    // atan2(0.4, 0.6) — the direction the original fixed 0.6u + 0.4v gradient ran in.
+    shading_dir(r, strength, 33.690_07)
+}
+
+/// [`shading`] with the gradient running in an arbitrary direction.
+///
+/// Which way a shadow falls is a property of the scene, not of how bad the shadow is, so
+/// a success *rate* at a given strength has to average over it (§15).
+fn shading_dir(r: &Raster, strength: f32, dir_deg: f32) -> Raster {
+    let (sin, cos) = dir_deg.to_radians().sin_cos();
+    // Normalise so the projection spans exactly 1.0 across the frame at any angle, and
+    // offset so the brightest corner is untouched — `strength` then means the same
+    // fraction of light lost at the far corner regardless of direction.
+    let norm = cos.abs() + sin.abs();
+    let (a, b) = (cos / norm, sin / norm);
+    let t0 = a.min(0.0) + b.min(0.0);
     map_linear(r, |u, v, c| {
-        let s = 1.0 - strength * (0.6 * u + 0.4 * v);
+        let s = 1.0 - strength * (a * u + b * v - t0);
         std::array::from_fn(|i| c[i] * s)
     })
 }
@@ -223,3 +248,114 @@ fn occlude(r: &Raster, x0: f32, y0: f32, w: f32, h: f32) -> Raster {
     })
 }
 
+
+// ---------------------------------------------------------------------------------
+// Seeded trials (§15)
+// ---------------------------------------------------------------------------------
+
+/// The impairments swept for an operating envelope, as one axis a harness can iterate.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Impair {
+    Tilt,
+    Rotation,
+    Shading,
+    SpecularStrength,
+    SpecularRadius,
+    Noise,
+    Blur,
+    Occlusion,
+}
+
+impl Impair {
+    const ALL: [Impair; 8] = [
+        Impair::Tilt,
+        Impair::Rotation,
+        Impair::Shading,
+        Impair::SpecularStrength,
+        Impair::SpecularRadius,
+        Impair::Noise,
+        Impair::Blur,
+        Impair::Occlusion,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Impair::Tilt => "perspective tilt",
+            Impair::Rotation => "in-plane rotation",
+            Impair::Shading => "shading",
+            Impair::SpecularStrength => "specular strength",
+            Impair::SpecularRadius => "specular radius",
+            Impair::Noise => "noise sigma",
+            Impair::Blur => "blur radius",
+            Impair::Occlusion => "occlusion frac",
+        }
+    }
+
+    /// Magnitudes to sweep. Chosen to straddle the failure knee rather than to look tidy.
+    fn magnitudes(self) -> &'static [f32] {
+        match self {
+            Impair::Tilt => &[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+            Impair::Rotation => &[5.0, 15.0, 30.0, 45.0, 60.0, 90.0],
+            Impair::Shading => &[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+            Impair::SpecularStrength => &[0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+            Impair::SpecularRadius => &[0.15, 0.20, 0.25, 0.30, 0.35, 0.40],
+            Impair::Noise => &[0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14],
+            Impair::Blur => &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Impair::Occlusion => &[0.10, 0.15, 0.20, 0.25, 0.30, 0.35],
+        }
+    }
+}
+
+/// Apply `imp` at `magnitude`, drawing from `seed` everything a real capture varies but
+/// the magnitude does not name.
+///
+/// This is what turns a pass/fail grid into the success *rate* §15 asks for. Magnitude is
+/// the quantity under study and is held exactly; where the glare sits, which way the
+/// shading runs, which axis the symbol tilts about and where a finger lands are nuisance
+/// parameters, and a single fixed choice of them measures one arbitrary scenario rather
+/// than the impairment. Note `Rotation` and `Blur` draw nothing — neither has a nuisance
+/// parameter — so for those the payload is the only axis of variation, which is why the
+/// caller varies that too.
+fn apply(imp: Impair, r: &Raster, magnitude: f32, seed: u64) -> Raster {
+    let mut rng = Rng(seed | 1);
+    match imp {
+        // Tilt about a random axis: the magnitude is how far it leans, not which way.
+        //
+        // KNOWN ARTEFACT: the tilt row is not monotone — 0.1 scores below 0.3. A mild
+        // tilt scales the image by a factor very near 1, and `bilinear` resampling at a
+        // near-unity ratio beats against the 12 px module grid and aliases; a stronger
+        // tilt moves the ratio away from 1 and the beat period shortens until it averages
+        // out within a module. It is real moiré (§15 asks for a sweep of exactly this),
+        // but here it is confounded with the quantity being swept, so read the tilt row
+        // as indicative only. Fixing it means supersampling `perspective` rather than
+        // point-sampling one bilinear tap per output pixel.
+        Impair::Tilt => perspective(r, magnitude, rng.range(0.0, 360.0)),
+        Impair::Rotation => perspective(r, 0.0, magnitude),
+        Impair::Shading => shading_dir(r, magnitude, rng.range(0.0, 360.0)),
+        Impair::SpecularStrength => {
+            let (cx, cy) = (rng.range(0.2, 0.8), rng.range(0.2, 0.8));
+            specular(r, cx, cy, 0.30, magnitude)
+        }
+        Impair::SpecularRadius => {
+            let (cx, cy) = (rng.range(0.2, 0.8), rng.range(0.2, 0.8));
+            specular(r, cx, cy, magnitude, 0.6)
+        }
+        Impair::Noise => noise(r, magnitude, rng.next()),
+        Impair::Blur => blur(r, magnitude as u32),
+        Impair::Occlusion => {
+            let x = rng.range(0.0, 1.0 - magnitude);
+            let y = rng.range(0.0, 1.0 - magnitude);
+            occlude(r, x, y, magnitude, magnitude)
+        }
+    }
+}
+
+/// A pseudo-random payload of `len` bytes.
+///
+/// Varying the payload across trials is what gives `Rotation` and `Blur` independent
+/// realisations at all, and for every impairment it averages over codewords — which is
+/// the point when the quantity being measured is an ECC rate.
+fn trial_payload(len: usize, seed: u64) -> Vec<u8> {
+    let mut rng = Rng(seed | 1);
+    (0..len).map(|_| (rng.next() >> 33) as u8).collect()
+}

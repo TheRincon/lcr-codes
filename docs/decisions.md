@@ -124,7 +124,7 @@ fit:      observed_c  ≈  gain_c(x, y) · nominal_c  +  flare_c(x, y)
 correct:  nominal     =  affine · [ (observed_c − flare_c(x, y)) / gain_c(x, y) ]
 ```
 
-### D4. §5's bits-per-module figures are not reachable for `C2` and `C3`
+### D4. §5's bits-per-module figure is not reachable for `C2`
 
 **Status:** measured values pinned. `crates/lc-core/src/layout.rs`
 
@@ -133,12 +133,15 @@ correct:  nominal     =  affine · [ (observed_c − flare_c(x, y)) / gain_c(x, 
 | M | 1.00 | 1.000 |
 | C1 | 2.00 | 2.000 |
 | C2 | 1.25 | **1.227** |
-| C3 | 1.50 | **1.455** |
+| C3 | 1.50 | **3.000** (see D11 — the chroma cell changed) |
 
-The shortfall is the partial-chroma-cell rule (see P6) and decomposes cleanly: ~6.3% from
-scattered references disqualifying their 2×2 cell, ~2.7% because `side` is always odd so a
-2×2 grid cannot tile it, and the rest from cells straddling fixed patterns. §5's figures
-are the geometric ideal for an infinite field with no references.
+`C2`'s shortfall is the partial-chroma-cell rule (see P6) and decomposes cleanly: ~6.3%
+from scattered references disqualifying their 2×2 cell, ~2.7% because `side` is always odd
+so a 2×2 grid cannot tile it, and the rest from cells straddling fixed patterns. §5's
+figure is the geometric ideal for an infinite field with no references.
+
+Only profiles with a 2×2 cell can suffer this. A 1×1 cell cannot straddle anything, which
+is why `C1` — and now `C3` — land exactly on their ideal.
 
 ### D5. §6.1's capacity table was optimistic
 
@@ -350,6 +353,92 @@ build-once-run-anywhere property, since you are back to shipping per-platform bi
 
 ---
 
+### D10. §8.2's rate table is right; its stated reason is not
+
+**Status:** table unchanged, rationale corrected. `crates/lc-decode/src/demod.rs`
+
+§8.2 gives each ECC level a chroma rate two steps stronger than its luma rate and calls
+the inequality load-bearing, because "chroma bits are measured over a noisier,
+lower-bandwidth channel". Both halves of the table were guesses. Measuring them needed a
+per-layer SNR, so `ChannelStats::chroma_snr_db` was added alongside the existing
+`snr_db` — both are `20·log10(amplitude / sigma)` against half the distance between the
+nearest decision points, which is the same axis `docs/ldpc.md` sweeps, so a layer's
+measured SNR can be read straight against the rate thresholds.
+
+**Chroma is not the noisier channel.** On a clean capture it measures **37.3 dB against
+luma's 29.7** — 7.6 dB *better*. That is not a surprise once measured: it is almost
+exactly the palette's amplitude ratio, `20·log10(55 / 22.9) = 7.6 dB`, because D1 gives
+the hue axis 110 units of `a*b*` separation while the luma axis has a 45.8 `L*` gap.
+Under noise or glare the two converge to parity (within 0.4 dB) but never cross.
+
+**The extra protection is still doing work.** Narrowing the offset from two steps to one
+buys 8.6% capacity on `C1` (v4: 116 → 126 B) and costs the blur envelope almost
+everything — success at blur radius 4 falls from **81% to 3%**, far outside the ±9-point
+error bar, with every other impairment unchanged. Restoring the offset restores the 81%.
+
+The two findings resolve against each other in §1.4 rather than §8.2. Chroma's handicap is
+**spatial bandwidth, not noise** — it is low-passed by the capture pipeline and sampled
+over a wider kernel (§12.6), so defocus destroys it first. A per-module noise sigma cannot
+see that, which is why the SNR measurement and the blur sweep disagree: the SNR is blind to
+the impairment that actually binds chroma.
+
+Two steps is also the most the family allows — level 3's chroma already sits on `RATES[5]`,
+the last entry, so the offset cannot be widened without extending the rate list.
+
+**So the table ships as §8.2 printed it**, now measured rather than guessed. The wording
+that should change is §8.2's "noisier": it is the reason given for a decision that is
+correct for a different reason, and anyone recalibrating the palette from that sentence
+would tune the wrong quantity.
+
+### D11. `C3` becomes 8 colours at a 1×1 chroma cell
+
+**Status:** wire format changed. `crates/lc-core/src/version.rs`
+
+§5 specifies `C3` as eight colours at a **2×2** chroma cell, and calls it "high-quality
+screen capture". Those two things contradict each other, and measuring the profiles head
+to head is what made it obvious.
+
+**As specified, `C3` was nearly pointless.** Eight colours sounds denser than four but is
+not, because the palette is not what sets density — the chroma cell is. Every module
+carries its own luma bit either way; the only question is how many modules share a hue
+symbol. Doubling the palette adds one bit per cell, while going 1×1 → 2×2 divides the
+number of cells by four. So `C3` measured **1.455** bits/module against `C1`'s 2.000.
+
+Measured at v4, each profile loaded to its own capacity (`--example profiles`):
+
+| | capacity | noise m50 | blur m50 | glare m50 |
+|---|---:|---:|---:|---:|
+| `C1` | 116 B | 0.128 | 4.71 | 0.600 |
+| `C2` | 75 B | 0.128 | **5.75** | 0.600 |
+| `C3` **old**, 2×2 | 82 B | 0.096 | **> 6.0** | 0.480 |
+| `C3` **new**, 1×1 | **165 B** | 0.096 | 4.94 | 0.510 |
+
+The old `C3` was not strictly dominated — the 2×2 cell averages four chroma samples and
+made it the most blur-tolerant profile in the set. But that is the one thing it won, `C2`
+covers the same ground at 5.75, and it paid for the win with the worst noise and glare
+figures and a capacity barely above `C2`'s.
+
+**Moving to a 1×1 cell doubles its capacity for almost nothing.** Noise tolerance is
+*identical* (0.096 either way), glare is slightly *better* (0.510 against 0.480), and only
+blur regresses — to 4.94, which is still marginally ahead of `C1`. 82 B → 165 B for a
+change that is, on three of four impairments, free.
+
+That makes the profile lineup genuinely non-overlapping for the first time: `C2` trades
+density for blur tolerance, `C1` balances, `C3` trades margin for density. Against a QR
+version 4 in the same 33×33 square, `C3` now carries **2.66×** what QR-M does.
+
+**Why this is legitimate to change.** §5 marks `C3` optional and requires only `M`, `C1`
+and `C2`; §4.4's eight-colour palette is still `[TBD]` in the draft; and no wire format has
+been frozen. The profile field is two bits with all four values already allocated, so
+adding a *fifth* profile would mean restructuring the format region — redefining the one
+optional profile costs nothing by comparison.
+
+**The cost, stated plainly.** `C3` is now the least robust profile by design: four hue
+states 75° apart at `C* ≈ 40`, against two states 170° apart at `C* ≈ 55`. That is ~25%
+less noise tolerance and ~15% less glare tolerance than `C1`. It is documented on the enum
+variant itself so the trade is visible at the point of choice, and nothing selects it
+automatically — a caller has to ask for it by name.
+
 ## Pinned — filling holes the draft left open
 
 | # | Spec item | Pinned as | Where |
@@ -378,12 +467,12 @@ build-once-run-anywhere property, since you are back to shipping per-platform bi
   `UnsupportedCompression` rather than silently accepted. Needs a real corpus to build
   from; §9.3 is right that hand-writing it is the wrong move.
 - **§4.5 print palette** (open #3) — not started. `C2` currently uses the screen palette.
-- **§8.2 ECC rate table** (open #5) — still the spec's guesses, reproduced verbatim by
-  `RATES` and the two index tables. Not yet unblocked: §14.5 step 9 and §15 both want
-  success *rate* against degradation magnitude, and the harness reports a single pass/fail
-  trial per magnitude (only `noise` of its twelve degradations is seeded). Seeding the
-  degradations and averaging over trials comes first — §15 is explicit that "a pass/fail
-  corpus will not tell you whether a change helped".
+- **§8.2 ECC rate table** (open #5) — **closed, values unchanged.** See D10: the two-step
+  luma/chroma offset is both necessary (narrowing it costs the blur envelope 81% → 3% at
+  radius 4) and maximal (level 3 already sits on the last rate in the family). The
+  reasoning §8.2 gives for it is wrong, and D10 records what should replace it. Standing
+  caveat: measured on `C1` at one payload size, and `C2`/`C3` have different chroma-cell
+  geometry, so re-run `just tune` before freezing those.
 - **§6.1 quiet zone = 2** (open #10) — untested against textured backgrounds.
 - **§13.1 device px/module minimum** (open #14) — 8 is now the working floor as the spec
   requires (D6); `RenderOptions` clamps to it and defaults to 10. Moiré onset still not
