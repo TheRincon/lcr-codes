@@ -190,6 +190,16 @@ pub fn decode(
     Ok(convert(Decoder::new().decode(&view)?))
 }
 
+/// Render a CBOR body as JSON text — the read side of §9.4.
+///
+/// The encoder converts JSON to CBOR because CBOR is 20–33% smaller on these shapes; a
+/// scanner displaying a payload needs the inverse, and doing it here rather than in the
+/// host keeps a second CBOR parser out of every embedder.
+pub fn cbor_to_json(body: &[u8]) -> Result<String, WasmError> {
+    let value = lc_core::cbor::Value::from_slice(body)?;
+    Ok(lc_core::json::to_json(&value))
+}
+
 /// Multi-frame LLR combining (§12.4), which the spec calls "the single best use of a live
 /// camera preview": banding and glare move between frames, so accumulating soft
 /// information across them is far cheaper than tightening the code rate.

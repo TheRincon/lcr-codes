@@ -357,14 +357,11 @@ fn apply(imp: Impair, r: &Raster, magnitude: f32, seed: u64) -> Raster {
     match imp {
         // Tilt about a random axis: the magnitude is how far it leans, not which way.
         //
-        // KNOWN ARTEFACT: the tilt row is not monotone — 0.1 scores below 0.3. A mild
-        // tilt scales the image by a factor very near 1, and `bilinear` resampling at a
-        // near-unity ratio beats against the 12 px module grid and aliases; a stronger
-        // tilt moves the ratio away from 1 and the beat period shortens until it averages
-        // out within a module. It is real moiré (§15 asks for a sweep of exactly this),
-        // but here it is confounded with the quantity being swept, so read the tilt row
-        // as indicative only. Fixing it means supersampling `perspective` rather than
-        // point-sampling one bilinear tap per output pixel.
+        // Averaging over the axis is not optional here. The fixed patterns are asymmetric
+        // — finders at three corners, only a 5×5 alignment marker at the fourth — so the
+        // decoder's tolerance genuinely depends on which corner the projection
+        // foreshortens. A single azimuth measures one arbitrary case; the spread across
+        // azimuths at a fixed magnitude is real, and only the mean of it means anything.
         Impair::Tilt => perspective(r, magnitude, rng.range(0.0, 360.0)),
         Impair::Rotation => perspective(r, 0.0, magnitude),
         Impair::Shading => shading_dir(r, magnitude, rng.range(0.0, 360.0)),

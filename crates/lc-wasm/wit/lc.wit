@@ -143,6 +143,20 @@ interface decoder {
   }
 }
 
+/// Turning a decoded body into something displayable.
+///
+/// Deliberately *not* part of `decoder`, and so not in the `scanner` world. It is a
+/// decode-side utility and belongs there on the merits, but §9.4's JSON writer and the
+/// CBOR value tree cost ~16 KB, which took the scanner from 93% to 101% of §14.2's size
+/// budget. A minimal scanner should stay minimal and render the body host-side; a build
+/// that already carries the encoder pays nothing extra for this.
+interface codec {
+  /// Render a CBOR body as JSON text — the read side of §9.4's "author in JSON, transmit
+  /// CBOR". A decoded `payload` whose `ctype` is `cbor` is bytes; this is the inverse of
+  /// the conversion the encoder performed.
+  cbor-to-json: func(body: list<u8>) -> result<string, string>;
+}
+
 /// Writing symbols (§8).
 interface encoder {
   use types.{profile, compression};
@@ -197,4 +211,5 @@ world scanner {
 world lc-code {
   export decoder;
   export encoder;
+  export codec;
 }

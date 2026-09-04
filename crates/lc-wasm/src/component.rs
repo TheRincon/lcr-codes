@@ -154,6 +154,24 @@ impl GuestAccumulator for Acc {
     }
 }
 
+// ---------------------------------------------------------------- codec
+
+/// Gated on `encode` because that is the feature selecting the `lc-code` world, which is
+/// the only world exporting `codec`. The dependency is on the *world*, not on encoding —
+/// see the interface's own note in `wit/lc.wit` for why it is not in the scanner.
+#[cfg(feature = "encode")]
+mod codec_impl {
+    use super::exports;
+    use super::{Component, err};
+    use exports::lc::code::codec::Guest as CodecGuest;
+
+    impl CodecGuest for Component {
+        fn cbor_to_json(body: Vec<u8>) -> Result<String, String> {
+            crate::cbor_to_json(&body).map_err(err)
+        }
+    }
+}
+
 // ---------------------------------------------------------------- encoder
 
 #[cfg(feature = "encode")]

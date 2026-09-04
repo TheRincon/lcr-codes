@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LC Code display</title>
+<style>
+  :root {
+    --bg: #0e120d; --panel: #171d15; --line: #2a3326;
+    --ink: #e9eee4; --dim: #97a291; --ok: #8bd377; --bad: #e0a070; --accent: #78297c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    padding: 1.5rem 1rem 3rem;
+  }
+  .wrap { max-width: 52rem; margin: 0 auto; }
+  h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  .sub { color: var(--dim); font-size: .85rem; margin: 0 0 1.25rem; }
+
+  .cols { display: grid; grid-template-columns: 1fr; gap: 1.25rem; }
+  @media (min-width: 46rem) { .cols { grid-template-columns: 22rem 1fr; } }
+
+  textarea {
+    width: 100%; min-height: 9rem; resize: vertical;
+    font: .85rem/1.5 ui-monospace, Menlo, monospace;
+    color: var(--ink); background: #0b0f0a;
+    border: 1px solid var(--line); border-radius: 5px; padding: .7rem .8rem;
+  }
+  label.f { display: block; font-size: .78rem; color: var(--dim); margin: .8rem 0 .3rem; }
+  select, input[type=number] {
+    font: inherit; font-size: .85rem; width: 100%;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; padding: .4rem .5rem;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+  button {
+    font: inherit; font-size: .88rem; padding: .55rem 1rem; margin-top: .9rem;
+    border-radius: 5px; border: 1px solid var(--accent); background: var(--accent);
+    color: var(--ink); cursor: pointer; width: 100%;
+  }
+  button.ghost { background: var(--panel); border-color: var(--line); }
+  button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+
+  .stage {
+    background: #fff; border-radius: 6px; padding: 1rem;
+    display: grid; place-items: center; min-height: 18rem;
+  }
+  /* §13.1: integer device-pixel multiples. Never let the browser resample the symbol. */
+  canvas { image-rendering: pixelated; display: block; max-width: 100%; height: auto; }
+  .meta {
+    font: .78rem/1.5 ui-monospace, Menlo, monospace;
+    color: var(--dim); margin-top: .7rem; text-align: center;
+  }
+  .meta b { color: var(--ink); }
+  .err { color: var(--bad); font-size: .85rem; margin-top: .7rem; }
+  .tips { color: var(--dim); font-size: .8rem; margin-top: 1.5rem; }
+  .tips b { color: var(--ink); font-weight: 600; }
+
+  /* Presentation mode: the symbol, a white ground, nothing else.
+     Hide by naming what goes, not by excluding what stays — `.stagewrap` sits inside
+     `.cols`, so a `.wrap > *:not(.stagewrap)` rule hides the column that contains it and
+     leaves a blank white screen. */
+  body.present { padding: 0; background: #fff; }
+  /* The reading column is capped at 52rem; presenting is not reading. Without this the
+     integer scale computed against the viewport overflows an 832px container and the
+     symbol is clipped. */
+  body.present .wrap { max-width: none; }
+  body.present h1,
+  body.present .sub,
+  body.present .tips,
+  body.present .meta,
+  body.present .err,
+  body.present .panel { display: none; }
+  body.present .cols { grid-template-columns: 1fr; gap: 0; }
+  body.present .stage { min-height: 100vh; border-radius: 0; padding: 0; }
+  /* §13.1 wants integer device-pixel multiples; JS sets an exact size, so let it. */
+  body.present canvas { max-width: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LC Code display</h1>
+  <p class="sub">Encodes on this device and draws the symbol at exact device pixels. Point the scanner page at it.</p>
+
+  <div class="cols">
+    <div class="panel">
+      <label class="f" for="json">Payload (JSON — transmitted as CBOR, §9.4)</label>
+      <textarea id="json" spellcheck="false">{
+  "name": "Fred",
+  "loc": "45.00,55.0",
+  "note": "decoded on a phone"
+}</textarea>
+
+      <div class="row">
+        <div>
+          <label class="f" for="profile">Profile</label>
+          <select id="profile">
+            <option value="c1" selected>C1 — 4 colour</option>
+            <option value="c3">C3 — 8 colour, densest</option>
+            <option value="c2">C2 — 4 colour, 2×2</option>
+            <option value="mono">M — monochrome</option>
+          </select>
+        </div>
+        <div>
+          <label class="f" for="px">Pixels / module</label>
+          <input type="number" id="px" value="12" min="8" max="32" step="1">
+        </div>
+      </div>
+
+      <label class="f"><input type="checkbox" id="border" checked> Reference border (§6.4)</label>
+
+      <button id="go">Encode and display</button>
+      <button id="present" class="ghost">Present full screen</button>
+    </div>
+
+    <div class="stagewrap">
+      <div class="stage"><canvas id="out" width="10" height="10"></canvas></div>
+      <div class="meta" id="meta"></div>
+      <div class="err" id="err"></div>
+    </div>
+  </div>
+
+  <p class="tips">
+    <b>For a reliable scan (§13.1):</b> turn the laptop's brightness to maximum, turn off
+    Night Shift / True Tone / any "vivid" colour mode, and leave the symbol still. Keep at
+    least 8 pixels per module — the default 12 is inside the range the spec prefers. Hold
+    the phone slightly off-axis so its own reflection lands away from the symbol (§13.2).
+  </p>
+</div>
+
+<script type="module">
+import { encoder } from './lc/lc-code.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('out'), ctx = canvas.getContext('2d');
+
+function draw() {
+  $('err').textContent = '';
+  const modulePx = Math.max(8, Math.min(32, Number($('px').value) || 12));
+  const opts = {
+    profile: $('profile').value,
+    version: undefined,          // let the encoder pick the smallest that fits
+    eccLuma: 1, eccChroma: 1,    // §8.2 level 1, the default
+    compression: undefined,      // try each, keep the smallest (§9.3)
+    referenceBorder: $('border').checked,
+    mask: undefined,             // run the §8.5 penalty search
+  };
+
+  let r;
+  try {
+    r = encoder.encodeJson($('json').value, opts, modulePx);
+  } catch (e) {
+    $('meta').textContent = '';
+    $('err').textContent = 'Encode failed: ' + String(e.payload ?? e.message ?? e);
+    return;
+  }
+
+  // `rendered.pixels` is packed RGB; ImageData wants RGBA.
+  const rgba = new Uint8ClampedArray(r.width * r.height * 4);
+  for (let i = 0, j = 0; i < r.pixels.length; i += 3, j += 4) {
+    rgba[j] = r.pixels[i]; rgba[j + 1] = r.pixels[i + 1];
+    rgba[j + 2] = r.pixels[i + 2]; rgba[j + 3] = 255;
+  }
+  canvas.width = r.width; canvas.height = r.height;
+  ctx.putImageData(new ImageData(rgba, r.width, r.height), 0, 0);
+
+  const bytes = new TextEncoder().encode($('json').value).length;
+  $('meta').innerHTML =
+    `<b>v${r.version}</b> · ${r.side}×${r.side} modules · <b>${r.width}×${r.height}</b> px · ` +
+    `${modulePx} px/module · ${bytes} B of JSON`;
+}
+
+$('go').onclick = draw;
+$('profile').onchange = draw;
+$('border').onchange = draw;
+$('px').onchange = draw;
+
+// Scale the symbol up by a whole number of pixels, never a fraction.
+//
+// §13.1 asks for integer device-pixel multiples because a fractional one resamples, and
+// the resulting pattern aliases against the capturing sensor — the same effect that made
+// this project's own tilt measurements wrong until the harness was fixed. Filling the
+// screen also matters for range: the phone needs ≥ 8 device pixels per module *as
+// captured*, so a bigger symbol is a longer working distance.
+function fitPresent() {
+  const presenting = document.body.classList.contains('present');
+  if (!presenting || !canvas.width) {
+    canvas.style.width = canvas.style.height = '';
+    return;
+  }
+  const scale = Math.max(1, Math.floor(Math.min(
+    (window.innerWidth - 32) / canvas.width,
+    (window.innerHeight - 32) / canvas.height,
+  )));
+  canvas.style.width = `${canvas.width * scale}px`;
+  canvas.style.height = `${canvas.height * scale}px`;
+}
+
+function present(on) {
+  document.body.classList.toggle('present', on);
+  fitPresent();
+}
+
+$('present').onclick = async () => {
+  present(true);
+  // Fullscreen is a nicety — presentation mode still works without it, and Safari can
+  // refuse the request outside a user gesture it recognises.
+  try { await document.documentElement.requestFullscreen(); } catch { /* not fatal */ }
+  fitPresent();
+};
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) present(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') present(false);
+});
+window.addEventListener('resize', fitPresent);
+
+draw();
+</script>
+</body>
+</html>

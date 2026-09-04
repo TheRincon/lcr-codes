@@ -8,7 +8,7 @@ point.
 Reference implementation of [`lc-code-spec-v0.4.md`](lc-code-spec-v0.4.md), in Rust,
 shipped as a **WebAssembly component**.
 
-**263 tests, zero warnings.** `just test`
+**265 tests, zero warnings.** `just test`
 
 ---
 
@@ -31,6 +31,13 @@ calibration target for the illumination fit.
 [`examples/`](examples/) has a symbol for each of seven representative payloads, plus one
 per profile, each as PNG, SVG and the source JSON. Every one is decoded before it is
 written, so anything there reads back to the JSON beside it.
+
+Two integration guides, for opposite hosts:
+
+- **[`WASM-PLAN.md`](WASM-PLAN.md)** — a host you control. No JavaScript, no WASI, no host
+  imports at all, because the component asks for none.
+- **[`FIREFOX.md`](FIREFOX.md)** — a stock browser, with camera capture. `just web`
+  transpiles the component and serves it; the bundle is 47% of §14.2's gzipped budget.
 
 **[`docs/explainer.html`](docs/explainer.html)** is the illustrated walkthrough — what the
 luma and chroma layers actually are, what a decibel means here, how the profiles compare,
@@ -103,8 +110,8 @@ hand-written ABI.
 ```
 just component
 
-dist/lc-code.wasm          decode + encode   282,508 bytes   (103,617 zstd)
-dist/lc-code-scanner.wasm  decode only       192,046 bytes    (68,771 zstd)
+dist/lc-code.wasm          decode + encode   283,338 bytes   (103,693 zstd)
+dist/lc-code-scanner.wasm  decode only       192,876 bytes    (68,845 zstd)
 ```
 
 ```wit

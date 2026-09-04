@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LC Code scanner</title>
+<style>
+  :root {
+    --bg: #0e120d;
+    --panel: #171d15;
+    --line: #2a3326;
+    --ink: #e9eee4;
+    --dim: #97a291;
+    --ok: #8bd377;
+    --bad: #e0a070;
+    --accent: #78297c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    padding: max(1rem, env(safe-area-inset-top)) 1rem 2rem;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; }
+  h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0 0 .25rem;
+  }
+  .sub { color: var(--dim); font-size: .85rem; margin: 0 0 1.25rem; }
+
+  .stage {
+    position: relative;
+    background: #000;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    display: grid;
+    place-items: center;
+  }
+  video, canvas.view { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .idle { color: var(--dim); font-size: .9rem; padding: 2rem; text-align: center; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; margin: .85rem 0; }
+  button {
+    font: inherit;
+    font-size: .88rem;
+    padding: .5rem .9rem;
+    border-radius: 5px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--dim); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+  label.toggle { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--dim); }
+
+  .out {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: .9rem 1rem;
+    margin-top: .85rem;
+  }
+  .status { font-weight: 600; margin-bottom: .5rem; }
+  .status.ok { color: var(--ok); }
+  .status.bad { color: var(--bad); }
+  pre {
+    margin: 0 0 .75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font: .85rem/1.5 ui-monospace, Menlo, monospace;
+    background: #0b0f0a;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: .7rem .8rem;
+    max-height: 12rem;
+    overflow: auto;
+  }
+  .diag {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: .5rem .9rem;
+    font: .78rem/1.4 ui-monospace, Menlo, monospace;
+    color: var(--dim);
+  }
+  .diag b { display: block; color: var(--ink); font-weight: 600; font-size: .95rem; }
+  .note { color: var(--dim); font-size: .8rem; margin-top: 1rem; }
+  .note code { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LC Code scanner</h1>
+  <p class="sub">The decode-only WebAssembly component, transpiled for the browser. Nothing is uploaded — decoding happens on this device.</p>
+
+  <div class="stage" id="stage">
+    <div class="idle" id="idle">Start the camera, or decode the sample frame.</div>
+    <video id="video" playsinline muted hidden></video>
+  </div>
+
+  <div class="controls">
+    <button id="start" class="primary">Start camera</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="sample">Decode sample frame</button>
+    <label class="toggle"><input type="checkbox" id="accumulate" checked> Combine frames (§12.4)</label>
+  </div>
+
+  <div class="out">
+    <div class="status" id="status">Idle</div>
+    <pre id="body" hidden></pre>
+    <div class="diag" id="diag" hidden></div>
+  </div>
+
+  <p class="note">Camera capture needs a secure context: this page works over <code>localhost</code> or HTTPS. On a phone, serve it over HTTPS or a tunnel — plain <code>http://192.168.x.x</code> will load but the browser will refuse camera access.</p>
+</div>
+
+<canvas id="work" hidden></canvas>
+
+<script type="module">
+// The full component rather than the scanner build, because `codec.cbor-to-json` renders
+// a decoded body for display and §14.2's size budget keeps it out of the minimal scanner.
+// A shipping scanner would use `lc-code-scanner.wasm` and render host-side.
+import { decoder, codec } from './lc/lc-code.js';
+
+const $ = (id) => document.getElementById(id);
+const video = $('video'), work = $('work'), ctx = work.getContext('2d', { willReadFrequently: true });
+let stream = null, timer = null, acc = null;
+
+function show(kind, msg, body, d) {
+  $('status').className = 'status' + (kind ? ' ' + kind : '');
+  $('status').textContent = msg;
+  $('body').hidden = body === undefined;
+  if (body !== undefined) $('body').textContent = body;
+  $('diag').hidden = !d;
+  if (d) {
+    const cell = (label, value) => `<div><b>${value}</b>${label}</div>`;
+    $('diag').innerHTML = [
+      cell('version', 'v' + d.version),
+      cell('profile', d.profile.toUpperCase()),
+      cell('luma SNR', d.snrDb.toFixed(1) + ' dB'),
+      cell('chroma', d.chromaRecovered ? 'recovered' : 'lost'),
+      cell('homography', d.alignmentFound ? 'full' : 'affine'),
+      cell('frames', String(d.framesCombined)),
+      cell('LDPC iters', `${d.lumaIterations}/${d.chromaIterations}`),
+      cell('refs dropped', String(d.referencesRejected)),
+    ].join('');
+  }
+}
+
+// A decoded body is bytes. Show text when it is text, hex when it is not.
+function render(payload) {
+  const bytes = new Uint8Array(payload.body);
+
+  // §9.4 puts CBOR on the wire, so the common case needs rendering back to the JSON the
+  // sender authored. Pretty-printed, so a phone shows structure rather than one long line.
+  if (payload.ctype === 'cbor') {
+    try {
+      return JSON.stringify(JSON.parse(codec.cborToJson(bytes)), null, 2);
+    } catch {
+      // A body can be CBOR-typed and still not parse if the decode was marginal, and
+      // showing the bytes beats showing nothing.
+    }
+  }
+
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  const printable = /^[\x09\x0a\x0d\x20-\x7e -￿]*$/.test(text);
+  return printable ? text
+    : [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+}
+
+function attempt(image) {
+  // The accumulator combines log-likelihoods across frames, which §12.4 calls the single
+  // best use of a live preview: glare and banding move between frames, so the evidence
+  // adds up even when no single frame is decodable on its own.
+  if (acc) {
+    try {
+      acc.push(image);
+    } catch (e) {
+      return { ok: false, why: String(e.payload ?? e), frames: acc.frames() };
+    }
+    try {
+      return { ok: true, res: acc.tryDecode(), frames: acc.frames() };
+    } catch (e) {
+      return { ok: false, why: String(e.payload ?? e), frames: acc.frames() };
+    }
+  }
+  try {
+    return { ok: true, res: decoder.decode(image) };
+  } catch (e) {
+    return { ok: false, why: String(e.payload ?? e) };
+  }
+}
+
+function present(out) {
+  if (out.ok) {
+    const p = out.res.packet;
+    if (p.tag === 'unsigned' || p.tag === 'verified') {
+      show('ok', p.tag === 'verified' ? 'Decoded and verified' : 'Decoded',
+           render(p.val), out.res.diagnostics);
+      return true;
+    }
+    if (p.tag === 'partial') {
+      show('bad', `Luma prefix only — ${p.val.length} bytes, not usable content`,
+           undefined, out.res.diagnostics);
+      return false;
+    }
+    show('bad', 'Signed, but no key configured to verify it', undefined, out.res.diagnostics);
+    return false;
+  }
+  const n = out.frames ? ` · ${out.frames} frame${out.frames === 1 ? '' : 's'} combined` : '';
+  show('', 'Looking…  ' + out.why + n);
+  return false;
+}
+
+function grab(source, w, h) {
+  work.width = w; work.height = h;
+  ctx.drawImage(source, 0, 0, w, h);
+  const img = ctx.getImageData(0, 0, w, h);
+  return { pixels: new Uint8Array(img.data.buffer), width: w, height: h,
+           stride: w * 4, format: 'rgba8' };
+}
+
+function tick() {
+  if (!stream) return;
+  const w = video.videoWidth, h = video.videoHeight;
+  if (w && h) {
+    if (present(attempt(grab(video, w, h))) && acc) { acc.reset(); }
+  }
+  // Decoding is tens of milliseconds; yielding between frames keeps the preview smooth.
+  timer = setTimeout(tick, 120);
+}
+
+$('start').onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+      audio: false,
+    });
+  } catch (e) {
+    show('bad', 'Camera unavailable: ' + (e.message || e));
+    return;
+  }
+  video.srcObject = stream;
+  video.hidden = false;
+  $('idle').hidden = true;
+  await video.play();
+  acc = $('accumulate').checked ? new decoder.Accumulator() : null;
+  $('start').disabled = true; $('stop').disabled = false;
+  show('', 'Looking…');
+  tick();
+};
+
+$('stop').onclick = () => {
+  clearTimeout(timer); timer = null;
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = null;
+  video.hidden = true; $('idle').hidden = false;
+  // Resources cross the wasm boundary and must be released explicitly.
+  acc?.[Symbol.dispose]?.(); acc = null;
+  $('start').disabled = false; $('stop').disabled = true;
+  show('', 'Stopped');
+};
+
+$('accumulate').onchange = () => {
+  acc?.[Symbol.dispose]?.();
+  acc = stream && $('accumulate').checked ? new decoder.Accumulator() : null;
+};
+
+$('sample').onclick = async () => {
+  show('', 'Loading sample…');
+  const buf = new Uint8Array(await (await fetch('./frame.rgba')).arrayBuffer());
+  const dv = new DataView(buf.buffer);
+  const width = dv.getUint32(0, true), height = dv.getUint32(4, true);
+  const pixels = buf.subarray(8);
+
+  // Draw it so the page shows what was decoded.
+  work.width = width; work.height = height;
+  const img = new ImageData(new Uint8ClampedArray(pixels), width, height);
+  ctx.putImageData(img, 0, 0);
+  const view = document.querySelector('canvas.view') || Object.assign(document.createElement('canvas'), { className: 'view' });
+  view.width = width; view.height = height;
+  view.getContext('2d').putImageData(img, 0, 0);
+  $('stage').appendChild(view);
+  $('idle').hidden = true;
+
+  const t0 = performance.now();
+  const out = attempt({ pixels, width, height, stride: width * 4, format: 'rgba8' });
+  const ms = performance.now() - t0;
+  present(out);
+  if (out.ok) $('status').textContent += ` · ${ms.toFixed(0)} ms`;
+};
+</script>
+</body>
+</html>

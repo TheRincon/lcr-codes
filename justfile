@@ -122,6 +122,30 @@ wasm-size: component
         exit 1
     fi
 
+# Transpile the scanner component for the browser and serve the demo.
+#
+# `jco` turns the component into a core module plus JS bindings for the Component Model
+# ABI. Served from localhost because a camera needs a secure context — a plain LAN address
+# loads the page but the browser refuses `getUserMedia`.
+#
+# Node comes from Homebrew explicitly: nvm shadows it with a v14 that cannot run jco.
+web port="8000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH=/opt/homebrew/bin:$PATH
+    just component
+    # The full component, not the scanner: `display.html` needs `encoder`, and
+    # `index.html` needs `codec.cbor-to-json` to show a CBOR body as JSON. A shipping
+    # scanner would take `lc-code-scanner.wasm` and render host-side instead.
+    npx --yes @bytecodealliance/jco@latest transpile dist/lc-code.wasm \
+        -o web/lc --no-typescript
+    cargo run -p lc-decode --release --example frame -- web/frame.rgba
+    echo
+    echo "  display:  http://localhost:{{port}}/display.html   (laptop)"
+    echo "  scanner:  http://localhost:{{port}}/               (phone — needs HTTPS)"
+    echo "  ^C to stop"
+    cd web && python3 -m http.server {{port}}
+
 # Check the WIT interface parses and round-trips.
 wit-check:
     wasm-tools component wit crates/lc-wasm/wit/lc.wit > /dev/null && echo "  wit ok"

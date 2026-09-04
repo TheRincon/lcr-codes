@@ -203,6 +203,35 @@ fn encodes_json_and_decodes_it_back() {
     assert_eq!(back.packet.as_json().as_deref(), Some(JSON));
 }
 
+/// The read side of §9.4. A scanner receives a CBOR body and has to show something; this
+/// is what turns those bytes back into the document the sender authored.
+#[test]
+fn cbor_body_renders_back_to_json() {
+    let out = lc_wasm::encode_json(JSON, &EncodeOptions::default(), 10).expect("encode");
+    let back = lc_wasm::decode(
+        &out.pixels,
+        out.width,
+        out.height,
+        out.width * 3,
+        PixelFormat::Rgb8,
+    )
+    .expect("round-trip");
+
+    // Go through the body bytes rather than `as_json`, because that is all a host holding
+    // a `payload` over the WIT boundary has.
+    let body = match &back.packet {
+        lc_wasm::DecodedPacket::Unsigned { body, .. } => body.clone(),
+        other => panic!("expected an unsigned packet, got {other:?}"),
+    };
+    assert_eq!(lc_wasm::cbor_to_json(&body).expect("render"), JSON);
+}
+
+#[test]
+fn cbor_to_json_rejects_garbage_rather_than_panicking() {
+    assert!(lc_wasm::cbor_to_json(&[0xff, 0xff, 0xff]).is_err());
+    assert!(lc_wasm::cbor_to_json(&[]).is_err());
+}
+
 #[test]
 fn encodes_text_and_bytes() {
     let opts = EncodeOptions::default();

@@ -208,6 +208,37 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
 
 ## Fixed
 
+**The harness's tilt sweep was measuring its own resampler.** The `perspective tilt` row
+was not monotone — 59% at magnitude 0.1 against 78% at 0.3 — and a fixed-azimuth magnitude
+sweep read `+ . . + + .`. A mild tilt scales the image by a ratio very near 1, and
+`perspective` took a single bilinear tap per output pixel, so the sample grid beat against
+the 12 px module pitch. That is genuine moiré, which §15 wants a *separate* sweep of, but
+here it was confounded with the quantity being swept.
+
+`perspective` now supersamples 4×4 across each output pixel's footprint — the box filter a
+sensor pixel applies, and the right model given a projective map compresses the source by a
+different factor at every row. The fixed-azimuth sweep now reads `+ + + + + .`, and the
+envelope row reads 66 / 72 / 69 / 34 / 9 / 16 / 3: monotone within its ±9-point error bar
+where it previously was not.
+
+**The residual spread across azimuth is real, and worth knowing.** Doubling to 8×8 changes
+essentially nothing, which rules out aliasing. Failures come back as `BadFrame` /
+`CrcMismatch` with a *perfect* format-region margin — so the symbol is found and the format
+reads, and only the payload sampling is off. The cause is that the fixed patterns are
+asymmetric: finders at three corners, only a 5×5 alignment marker at the fourth, so
+tolerance genuinely depends on which corner the projection foreshortens.
+
+Note this was measured at **v4**, and the pinned §6.2 rule gives v4 exactly one alignment
+marker — interior markers only start appearing around v14, where the same rule yields six.
+So the open question is not the placement rule (that is settled, open #9) but whether tilt
+tolerance improves with version once those markers exist. Untested, and cheap to test:
+`just profiles` and the tilt rows of `just envelope` both currently pin v4.
+
+Cost: `just envelope 32` went from ~1 min to ~5, essentially all of it in the two tilt
+rows. It is an on-demand tool and not part of `just ci`, so this was judged worth paying.
+Two earlier fixes in the same function: the canvas sizing used to clip the quiet zone at
+low tilt, and the original sweep tested four azimuths out of 360.
+
 **Both palettes shipped with a gamut-clipped colour, and the assertion that would have
 caught it was compiled out.** D1 derives the palettes on three rules — iso-luminant hue
 states shared across levels, a single common `C*`, and a `C*` the sRGB gamut reaches at

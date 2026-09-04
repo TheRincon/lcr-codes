@@ -665,13 +665,19 @@ td.lo { color: var(--ink-faint); }
       <img src="img/tilt-large.png" alt="The symbol seen at a steep angle, strongly foreshortened." width="934" height="934">
     </figure>
   </div>
-  <figcaption style="max-width:var(--wide)"><b>Read these two as geometry, not as a threshold.</b> The tilt measurements are the one part of the harness currently known to be unreliable — see the note below.</figcaption>
+  <figcaption style="max-width:var(--wide)"><b>Around 70% succeed at the milder of these two.</b> Which is lower than it sounds, because a live camera gets many frames a second and can combine them — a stationary symbol is a free repeat.</figcaption>
 
   <div class="note">
-    <span class="notelabel">Honest caveat</span>
-    <p>The tilt numbers are not currently trustworthy, and it is worth saying so rather than quoting them. Tilting resizes the image by a ratio very close to 1, and the test harness resamples with a cheap single-sample filter. That produces an interference pattern against the module grid — the same effect that makes photographs of screens show rippling bands.</p>
-    <p>The result is measurements that go up and down instead of steadily worsening: a tilt of 0.10 reads fine, 0.15 and 0.20 fail, 0.25 and 0.30 read fine again. That is the measuring instrument talking, not the format. Fixing it means resampling more carefully.</p>
+    <span class="notelabel">This measurement was wrong until recently</span>
+    <p>The tilt figures used to go up and down instead of steadily worsening: 0.10 read fine, 0.15 and 0.20 failed, 0.25 and 0.30 read fine again. That was the measuring instrument, not the format. Tilting resizes the image by a ratio very close to 1, and the harness was sampling once per pixel, so its sample grid beat against the module grid — the same effect that makes photographs of screens show rippling bands.</p>
+    <p>It now averages sixteen samples across each pixel, which is what a real sensor pixel does. The sweep became orderly, and doubling the sampling again changes nothing — which is how we know what is left over is not an artefact.</p>
   </div>
+
+  <h3>What is left over is a genuine weak spot</h3>
+
+  <p>Tilt tolerance still depends on <em>which way</em> you tilt, and that turns out to be a real property of the symbol rather than a measurement problem. When these tilts fail, the scanner still finds the symbol and still reads the format region perfectly — it is only the payload that comes out corrupted. So the symbol is being located and then sampled slightly off.</p>
+
+  <p>The reason is visible in the first picture on this page. There are bullseyes at three corners and only a small alignment marker at the fourth. Tilting so that the <strong>weak corner</strong> is the one squashed by perspective gives the scanner less to work with than tilting the other way. The specification already reserves the idea of extra interior markers for large symbols and leaves it undecided; this is evidence for deciding it.</p>
 </section>
 
 <section>
