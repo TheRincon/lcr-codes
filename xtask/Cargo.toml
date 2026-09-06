@@ -8,3 +8,6 @@ publish = false
 
 [dependencies]
 lc-core = { workspace = true, features = ["std"] }
+# `deflate` so the golden vectors can pin a §9.3 compressed case; the workspace
+# dependency sets `default-features = false`.
+lc-encode = { workspace = true, features = ["std", "deflate"] }

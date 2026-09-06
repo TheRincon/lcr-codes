@@ -251,6 +251,16 @@ thresholds:
     cargo run --release -p xtask -- thresholds > docs/ldpc.md
     @echo "  wrote docs/ldpc.md"
 
+# Regenerate the wire-format freeze, vectors/golden-v1.json (§15).
+#
+# Only run this when a wire-format change is *intended*. `golden_vectors_still_match`
+# fails when the encoder's output moves, and the point is to notice; regenerating to make
+# a red test go green throws away the signal. The diff is the record of what changed.
+[doc("Regenerate the golden vectors. Only when a wire-format change is intended.")]
+vectors:
+    cargo run --release -p xtask -- vectors > vectors/golden-v1.json
+    @echo "  wrote vectors/golden-v1.json — review the diff"
+
 # Search for the §4 palette constants against the sRGB gamut (open decisions #1 and #2).
 #
 # Reports the best configuration per profile, what the §4.2 luma gap costs in chroma, and

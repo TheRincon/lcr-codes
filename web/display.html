@@ -47,7 +47,29 @@
   .stage {
     background: #fff; border-radius: 6px; padding: 1rem;
     display: grid; place-items: center; min-height: 18rem;
+    overflow: hidden;   /* a tilted symbol can reach past its box */
   }
+
+  /* The symbol plus its impairment overlays, tilted as one object.
+     `isolate` keeps the blend modes below from reaching the page behind. */
+  .symbol { position: relative; display: inline-block; isolation: isolate; }
+  .symbol .layer { position: absolute; inset: 0; pointer-events: none; }
+  /* Glare is emitted light arriving on top — additive. Shadow is light removed —
+     multiplicative. Same split the §15 harness uses for `specular` and `shading`. */
+  .symbol .glare { mix-blend-mode: screen; }
+  .symbol .shade { mix-blend-mode: multiply; }
+
+  .imp { border-top: 1px solid var(--line); margin-top: 1.1rem; padding-top: .9rem; }
+  .imp h2 {
+    font-size: .8rem; font-weight: 600; margin: 0 0 .1rem; letter-spacing: -.01em;
+  }
+  .imp .why { font-size: .75rem; color: var(--dim); margin: 0 0 .7rem; }
+  .slider { display: grid; grid-template-columns: 1fr auto; gap: .3rem; align-items: baseline; }
+  .slider .val {
+    font: .72rem ui-monospace, Menlo, monospace; color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 0 0 .3rem; }
   /* §13.1: integer device-pixel multiples. Never let the browser resample the symbol. */
   canvas { image-rendering: pixelated; display: block; max-width: 100%; height: auto; }
   .meta {
@@ -114,10 +136,42 @@
 
       <button id="go">Encode and display</button>
       <button id="present" class="ghost">Present full screen</button>
+
+      <div class="imp">
+        <h2>Impairments</h2>
+        <p class="why">Applied to the display, so the phone sees them through real optics.
+          Carried into full screen.</p>
+
+        <label class="f slider"><span>Tilt ← →</span><span class="val" id="vry">0°</span></label>
+        <input type="range" id="ry" min="-60" max="60" value="0" step="1">
+
+        <label class="f slider"><span>Tilt ↑ ↓</span><span class="val" id="vrx">0°</span></label>
+        <input type="range" id="rx" min="-60" max="60" value="0" step="1">
+
+        <label class="f slider"><span>Glare</span><span class="val" id="vgl">0%</span></label>
+        <input type="range" id="gl" min="0" max="100" value="0" step="1">
+
+        <label class="f slider"><span>Glare size</span><span class="val" id="vgs">45%</span></label>
+        <input type="range" id="gs" min="15" max="90" value="45" step="1">
+
+        <label class="f slider"><span>Shadow</span><span class="val" id="vsh">0%</span></label>
+        <input type="range" id="sh" min="0" max="100" value="0" step="1">
+
+        <label class="f slider"><span>Shadow angle</span><span class="val" id="vsa">135°</span></label>
+        <input type="range" id="sa" min="0" max="359" value="135" step="5">
+
+        <button id="reset" class="ghost">Reset impairments</button>
+      </div>
     </div>
 
     <div class="stagewrap">
-      <div class="stage"><canvas id="out" width="10" height="10"></canvas></div>
+      <div class="stage">
+        <div class="symbol" id="symbol">
+          <canvas id="out" width="10" height="10"></canvas>
+          <div class="layer glare" id="glareLayer"></div>
+          <div class="layer shade" id="shadeLayer"></div>
+        </div>
+      </div>
       <div class="meta" id="meta"></div>
       <div class="err" id="err"></div>
     </div>
@@ -128,6 +182,16 @@
     Night Shift / True Tone / any "vivid" colour mode, and leave the symbol still. Keep at
     least 8 pixels per module — the default 12 is inside the range the spec prefers. Hold
     the phone slightly off-axis so its own reflection lands away from the symbol (§13.2).
+  </p>
+  <p class="tips">
+    <b>On the tilt sliders:</b> tilting here is not the same as tilting the phone. A CSS
+    transform resamples the symbol <em>before</em> it reaches the screen, so the browser's
+    filter sits in the path — the same class of artefact that made this project's synthetic
+    tilt measurements wrong until the harness was fixed. Physically moving the phone leaves
+    the pixels intact and warps only the optical path, which is the honest test. Use the
+    sliders to sweep quickly and find roughly where things break, then confirm the
+    interesting cases by moving the phone. Glare and shadow carry no such caveat — they are
+    composited over the symbol, not resampled.
   </p>
 </div>
 
@@ -191,12 +255,55 @@ function fitPresent() {
     canvas.style.width = canvas.style.height = '';
     return;
   }
-  const scale = Math.max(1, Math.floor(Math.min(
+  const set = (s) => {
+    canvas.style.width = `${canvas.width * s}px`;
+    canvas.style.height = `${canvas.height * s}px`;
+  };
+  let scale = Math.max(1, Math.floor(Math.min(
     (window.innerWidth - 32) / canvas.width,
     (window.innerHeight - 32) / canvas.height,
   )));
-  canvas.style.width = `${canvas.width * scale}px`;
-  canvas.style.height = `${canvas.height * scale}px`;
+  // Tilt projects the symbol into a larger box than the canvas occupies, and by an amount
+  // that depends on the perspective divide rather than anything convenient to compute.
+  // Measuring is exact where a formula would be a guess; step the *integer* scale down
+  // until the transformed box fits, so §13.1's whole-pixel rule survives the fit.
+  for (; scale > 1; scale--) {
+    set(scale);
+    const r = $('symbol').getBoundingClientRect();
+    if (r.width <= window.innerWidth && r.height <= window.innerHeight) break;
+  }
+  set(scale);
+}
+
+/// Impairments applied to the *display*, so the phone meets them through real optics
+/// rather than in simulation.
+function applyImpairments() {
+  const v = (id) => Number($(id).value);
+  const [ry, rx, gl, gs, sh, sa] = ['ry', 'rx', 'gl', 'gs', 'sh', 'sa'].map(v);
+
+  $('vry').textContent = `${ry}°`;
+  $('vrx').textContent = `${rx}°`;
+  $('vgl').textContent = `${gl}%`;
+  $('vgs').textContent = `${gs}%`;
+  $('vsh').textContent = `${sh}%`;
+  $('vsa').textContent = `${sa}°`;
+
+  // A long perspective keeps the near edge from ballooning, so what is being tested is
+  // the decoder's homography rather than an extreme projection the optics would never
+  // produce. §13.2 recommends 10–20° off-axis in practice.
+  $('symbol').style.transform =
+    `perspective(2400px) rotateX(${rx}deg) rotateY(${ry}deg)`;
+
+  // Additive, like a reflection landing on glass (§3's dominant screen impairment).
+  $('glareLayer').style.background = gl === 0 ? 'none'
+    : `radial-gradient(circle at 68% 32%, rgba(255,255,255,${gl / 100}) 0%, ` +
+      `rgba(255,255,255,0) ${gs}%)`;
+
+  // Multiplicative, like light removed — the model D3 argues the §12.3 fit must assume.
+  $('shadeLayer').style.background = sh === 0 ? 'none'
+    : `linear-gradient(${sa}deg, rgba(0,0,0,${sh / 100}) 0%, rgba(0,0,0,0) 100%)`;
+
+  fitPresent();
 }
 
 function present(on) {
@@ -219,7 +326,17 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('resize', fitPresent);
 
+for (const id of ['ry', 'rx', 'gl', 'gs', 'sh', 'sa']) {
+  $(id).addEventListener('input', applyImpairments);
+}
+$('reset').onclick = () => {
+  const defaults = { ry: 0, rx: 0, gl: 0, gs: 45, sh: 0, sa: 135 };
+  for (const [id, val] of Object.entries(defaults)) $(id).value = val;
+  applyImpairments();
+};
+
 draw();
+applyImpairments();
 </script>
 </body>
 </html>

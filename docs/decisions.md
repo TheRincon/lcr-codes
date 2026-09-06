@@ -498,6 +498,33 @@ automatically — a caller has to ask for it by name.
 - **§9.3 `cflag 11`** (Brotli preset dictionary, open #11) — rejected as
   `UnsupportedCompression` rather than silently accepted. Needs a real corpus to build
   from; §9.3 is right that hand-writing it is the wrong move.
+
+  **Measured 2026-09-05: brotli itself does not fit the scanner, which makes both brotli
+  cflags unusable by a conforming minimal decoder.** Building the scanner component with
+  `lc-decode/brotli` enabled takes it from **192,876 to 392,293 bytes** — the codec alone
+  costs 199,417 bytes, or **97% of §14.2's entire 200 KB budget**, and lands the scanner at
+  192% of it. So `cflag 10` already produces symbols the default scanner rejects as
+  `UnsupportedCompression`, and `cflag 11` would inherit that plus a dictionary.
+
+  That reorders the question. A preset dictionary is worth building when brotli is present;
+  the finding is that brotli cannot be present in the build §14.2 describes. Before
+  spending a corpus on `cflag 11`, decide what `cflag 10` is *for* — a full build that
+  already carries the encoder can afford brotli, a scanner cannot, and a compression flag
+  half the decoders reject is a poor use of two scarce wire-format bits.
+
+  **zstd was considered and does not fit either**, though the tooling argument for it is
+  real.
+  Measured on representative payloads: a 62-byte JSON document goes to **68 bytes** under
+  `zstd -19` — it *expands* — against 58 for raw DEFLATE; a 168-byte document goes to 133
+  against DEFLATE's 125. The cause is frame overhead, which is **13 bytes** on empty input
+  against raw DEFLATE's 2, and at §9.1 payload sizes a fixed 13-byte header is most of the
+  win. Three further obstacles: `cflag` is two bits with all four values allocated, so
+  zstd would displace something rather than join it; the scanner has ~11.6 KB of headroom
+  against §14.2's budget and a pure-Rust zstd decoder is several times that; and §9.3's
+  own point stands, which is that the win at these sizes comes from a *preset dictionary*,
+  not from the algorithm. `zstd --train` is genuinely better tooling for building one than
+  brotli offers — that is the one real argument, and it is not enough to overcome a
+  13-byte header on a 60-byte payload.
 - **§4.5 print palette** (open #3) — not started. `C2` currently uses the screen palette.
 - **§8.2 ECC rate table** (open #5) — **closed, values unchanged.** See D10: the two-step
   luma/chroma offset is both necessary (narrowing it costs the blur envelope 81% → 3% at

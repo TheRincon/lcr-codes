@@ -13,6 +13,7 @@
 
 mod palette;
 mod thresholds;
+mod vectors;
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -41,8 +42,9 @@ fn main() {
         "capacity" => print!("{}", capacity_table()),
         "palette" => print!("{}", palette::report()),
         "thresholds" => print!("{}", thresholds::report()),
+        "vectors" => print!("{}", vectors::report()),
         other => eprintln!(
-            "unknown task {other:?}; expected `ldpc`, `capacity`, `palette` or `thresholds`"
+            "unknown task {other:?}; expected `ldpc`, `capacity`, `palette`, `thresholds` or `vectors`"
         ),
     }
 }
