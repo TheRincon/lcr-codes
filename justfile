@@ -251,6 +251,42 @@ thresholds:
     cargo run --release -p xtask -- thresholds > docs/ldpc.md
     @echo "  wrote docs/ldpc.md"
 
+# Fuzz an untrusted-input entry point. Targets: decode_rgb, cbor, json, frame.
+#
+# Needs nightly and cargo-fuzz. The corpus is seeded from the golden vectors and a real
+# capture, so the fuzzer starts from valid symbols rather than from noise — which matters
+# most for `decode_rgb`, where a random buffer is rejected long before it reaches anything
+# interesting.
+#
+# A crash worth keeping becomes a unit test in the crate it belongs to, not a file here.
+[doc("Fuzz an untrusted-input entry point (decode_rgb / cbor / json / frame).")]
+fuzz target="decode_rgb" secs="120":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p fuzz/corpus/{{target}}
+    python3 - <<'SEED'
+    import json, pathlib, struct
+    d = json.load(open('vectors/golden-v1.json'))
+    t = "{{target}}"
+    out = pathlib.Path(f"fuzz/corpus/{t}")
+    if t == "frame":
+        for v in d['vectors']:
+            if 'modules' in v:
+                (out / f"{v['name']}.bin").write_bytes(bytes.fromhex(v['modules']))
+    elif t == "json":
+        for v in d['vectors']:
+            if v['input'] == 'json':
+                (out / f"{v['name']}.json").write_text(v['payload'])
+    elif t == "decode_rgb":
+        p = pathlib.Path('web/frame.rgba')
+        if p.exists():
+            raw = p.read_bytes()
+            w, h = struct.unpack_from('<II', raw, 0)
+            hdr = struct.pack('<HHH', w, h, w * 4) + bytes([1])
+            (out / 'real-symbol.bin').write_bytes(hdr + raw[8:])
+    SEED
+    cd fuzz && cargo +nightly fuzz run {{target}} -- -max_total_time={{secs}} -print_final_stats=1
+
 # Regenerate the wire-format freeze, vectors/golden-v1.json (§15).
 #
 # Only run this when a wire-format change is *intended*. `golden_vectors_still_match`

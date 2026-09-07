@@ -76,8 +76,26 @@ impl<'a> ImageView<'a> {
         if width == 0 || height == 0 {
             return Err(DecodeError::ShortBuffer);
         }
-        let min_stride = width as usize * format.channels();
-        let need = (height as usize - 1) * stride as usize + min_stride;
+        // Checked, because every operand here is caller-supplied and the products are big
+        // enough to wrap. `width · channels` alone exceeds `u32` past ~1.07e9, and **the
+        // scanner is wasm32**, where `usize` is 32 bits — so on the target that matters
+        // most this overflows at merely large values, not absurd ones.
+        //
+        // Unchecked, the two builds failed differently and both were wrong: debug panicked
+        // with "attempt to add with overflow", which in a wasm component is a trap that
+        // poisons the instance and which §14.2 forbids in the hot path; release wrapped to
+        // a small `need` and returned the right answer only because `stride < min_stride`
+        // short-circuits ahead of it. Reordering that condition would have turned a
+        // silently wrapped bound into an out-of-range view.
+        let Some(min_stride) = (width as usize).checked_mul(format.channels()) else {
+            return Err(DecodeError::ShortBuffer);
+        };
+        let need = (height as usize - 1)
+            .checked_mul(stride as usize)
+            .and_then(|rows| rows.checked_add(min_stride));
+        let Some(need) = need else {
+            return Err(DecodeError::ShortBuffer);
+        };
         if (stride as usize) < min_stride || data.len() < need {
             return Err(DecodeError::ShortBuffer);
         }
@@ -97,13 +115,12 @@ impl<'a> ImageView<'a> {
         height: u32,
         format: PixelFormat,
     ) -> Result<ImageView<'a>, DecodeError> {
-        ImageView::new(
-            data,
-            width,
-            height,
-            width * format.channels() as u32,
-            format,
-        )
+        // Checked for the same reason as `new`: this product is `u32`, so it wraps past a
+        // width of ~1.07e9 on *every* target rather than only on wasm32.
+        let Some(stride) = width.checked_mul(format.channels() as u32) else {
+            return Err(DecodeError::ShortBuffer);
+        };
+        ImageView::new(data, width, height, stride, format)
     }
 
     #[inline]
@@ -433,6 +450,57 @@ pub fn binarize(gray: &[u8], width: u32, height: u32) -> Binary {
 
 #[cfg(test)]
 mod tests {
+    /// Adversarial dimensions must be rejected, not overflow.
+    ///
+    /// `width`, `height` and `stride` all come from the caller — in the wasm component
+    /// they arrive across the ABI from whatever the host chose — so every product here is
+    /// attacker-controlled. Before this was checked, the largest values `decode_rgba`
+    /// accepts panicked the debug build outright, and the release build was correct only
+    /// because an unrelated short-circuit ran first.
+    ///
+    /// `usize` is 32 bits on wasm32, which is the build this matters most for, so the
+    /// cases below are chosen to wrap there as well as on a 64-bit host.
+    #[test]
+    fn adversarial_dimensions_are_rejected_not_overflowed() {
+        let data = [0u8; 64];
+        let cases: [(u32, u32, u32, PixelFormat); 6] = [
+            (u32::MAX, u32::MAX, u32::MAX, PixelFormat::Rgba8),
+            (u32::MAX, u32::MAX, u32::MAX, PixelFormat::Rgb8),
+            (u32::MAX, 1, u32::MAX, PixelFormat::Gray8),
+            // width * 4 exceeds u32 past ~1.07e9: wraps on wasm32, not on a 64-bit host.
+            (1_500_000_000, 2, 8, PixelFormat::Rgba8),
+            (1, u32::MAX, u32::MAX, PixelFormat::Rgb8),
+            (u32::MAX, u32::MAX, 1, PixelFormat::Rgba8),
+        ];
+        for (w, h, stride, format) in cases {
+            assert!(
+                ImageView::new(&data, w, h, stride, format).is_err(),
+                "accepted an impossible view: {w}x{h} stride {stride} {format:?}"
+            );
+        }
+    }
+
+    /// `packed` computes the stride itself, in `u32`, so it wraps a decade earlier than
+    /// `new` does — past a width of ~1.07e9 on every target, not just wasm32.
+    #[test]
+    fn packed_rejects_a_width_whose_stride_would_wrap() {
+        let data = [0u8; 64];
+        for format in [PixelFormat::Rgb8, PixelFormat::Rgba8] {
+            assert!(ImageView::packed(&data, u32::MAX, 1, format).is_err());
+            assert!(ImageView::packed(&data, 2_000_000_000, 1, format).is_err());
+        }
+    }
+
+    /// The rejection must not be so eager that legitimate padded planes stop working —
+    /// a camera plane with row padding is the normal case, not an edge one.
+    #[test]
+    fn a_padded_plane_is_still_accepted() {
+        let data = [0u8; 4 * 16];
+        let view = ImageView::new(&data, 3, 4, 16, PixelFormat::Rgba8)
+            .expect("stride 16 > 3*4 = 12 is a legitimate padded row");
+        assert_eq!((view.width, view.height, view.stride), (3, 4, 16));
+    }
+
     use super::*;
 
     fn checker(w: u32, h: u32, cell: u32) -> Vec<u8> {

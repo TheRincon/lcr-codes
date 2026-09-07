@@ -40,8 +40,28 @@ pub fn parse(input: &str) -> Result<Value, LcError> {
 /// Render a CBOR value as JSON text.
 ///
 /// Byte strings become lowercase hex — CBOR has a type JSON does not, and hex is the
-/// least surprising rendering for the diagnostic and CLI paths this serves. Round-tripping
-/// JSON → CBOR → JSON is exact; CBOR → JSON → CBOR is not, by construction.
+/// least surprising rendering for the diagnostic and CLI paths this serves.
+///
+/// ## Neither direction round-trips exactly
+///
+/// An earlier version of this comment claimed JSON → CBOR → JSON was exact. Fuzzing
+/// falsified it, and the exceptions are worth knowing because the scanner renders payloads
+/// through here (`codec.cbor-to-json`), so they are what a user sees:
+///
+/// | input | becomes | renders as |
+/// |---|---|---|
+/// | `-0` | `Uint(0)` — no fraction or exponent, so the *integer* path | `0` |
+/// | `-0.0`, `-1e-400` | `Float(-0.0)` | `-0` |
+/// | `1e400` | `Float(inf)` | `null` |
+/// | *(any NaN)* | `Float(NaN)` | `null` |
+///
+/// None of these is a defect. The text `-0` is genuinely ambiguous between integer zero
+/// and negative zero and every implementation picks a side; JSON has no infinity or NaN to
+/// render, so `null` is the only honest answer. What *does* hold, and is fuzzed: the
+/// projection **converges** — one pass may lose information, and from the second pass on
+/// nothing changes.
+///
+/// CBOR → JSON → CBOR is lossy by construction, for byte strings and non-text map keys.
 pub fn to_json(v: &Value) -> String {
     let mut s = String::new();
     write_json(&mut s, v);
@@ -366,6 +386,33 @@ impl Parser<'_> {
 
 #[cfg(test)]
 mod tests {
+    /// The lossy corners of the JSON projection, pinned so they stay deliberate.
+    ///
+    /// Every case here was found by the `json` fuzz target, which had been asserting
+    /// one-pass idempotence — an invariant that does not hold and never could. What holds
+    /// is convergence, and these are the inputs that need a second pass to reach it.
+    #[test]
+    fn the_json_projection_is_lossy_but_converges() {
+        for (input, first, settled) in [
+            // `-0` has no fraction or exponent, so it takes the integer path and the sign
+            // is gone before a float is ever involved.
+            ("-0", "0", "0"),
+            // With a fraction or exponent it is a float, and negative zero survives.
+            ("-0.0", "-0", "0"),
+            ("-1e-400", "-0", "0"),
+            // JSON cannot write an infinity, so `null` is the only honest rendering.
+            ("1e400", "null", "null"),
+            ("-1e400", "null", "null"),
+        ] {
+            let once = to_json(&parse(input).expect("parses"));
+            assert_eq!(once, first, "first pass on {input:?}");
+            let twice = to_json(&parse(&once).expect("re-parses"));
+            assert_eq!(twice, settled, "second pass on {input:?}");
+            let thrice = to_json(&parse(&twice).expect("re-parses"));
+            assert_eq!(thrice, twice, "projection never settled for {input:?}");
+        }
+    }
+
     use super::*;
     use alloc::vec;
 

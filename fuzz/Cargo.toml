@@ -1,0 +1,46 @@
+[package]
+name = "lc-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace. `cargo-fuzz` builds with `-Z sanitizer` on nightly, and the root
+# workspace is stable — sharing a lockfile and profile set between them is more trouble
+# than the isolation costs.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+lc-core = { path = "../crates/lc-core", features = ["std", "deflate"] }
+lc-decode = { path = "../crates/lc-decode", features = ["std", "deflate"] }
+
+[[bin]]
+name = "decode_rgb"
+path = "fuzz_targets/decode_rgb.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cbor"
+path = "fuzz_targets/cbor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json"
+path = "fuzz_targets/json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame"
+path = "fuzz_targets/frame.rs"
+test = false
+doc = false
+bench = false
