@@ -284,7 +284,11 @@ impl<V: PacketVerifier> Decoder<V> {
     /// right place to spend it, since §6.2 shares QR's finder by design and a §17.2
     /// dual-render, or simply two symbols on one poster, is otherwise undecodable.
     pub fn decode(&self, img: &ImageView) -> Result<DecodeOutput, DecodeError> {
-        let (gray, binary) = binarise(img);
+        // Greyscale only, for now: the ring path (D17) reads luma and never touches the
+        // binary, so a screen symbol — which is what a finder-less symbol is — should not
+        // pay for binarisation and denoising at all. That cost moves below, behind the
+        // finder fallback that actually needs it.
+        let gray = img.gray_buffer();
         let mut first_err = None;
 
         // Finder-less first (D17): it is what a screen symbol now is, and a frame with no
@@ -305,6 +309,7 @@ impl<V: PacketVerifier> Decoder<V> {
             Err(e) => first_err = Some(e),
         }
 
+        let binary = binarise(&gray, img);
         let candidates = match scan(img, gray, &binary) {
             Ok(c) => c,
             Err(e) => return Err(first_err.unwrap_or(e)),
@@ -593,7 +598,7 @@ fn scan(
 /// reset. Single-frame [`Decoder::decode`] handles that case; multi-frame accumulation
 /// does not yet.
 fn prepare(img: &ImageView) -> Result<Prepared, DecodeError> {
-    let (gray, binary) = binarise(img);
+    let gray = img.gray_buffer();
     // Safe to try before the finder path even here, where there is no CRC: a ring is only
     // accepted after the sequence correlates *and* a BCH-protected format decodes to the
     // version the correlation named. Noise does not clear both.
@@ -601,6 +606,7 @@ fn prepare(img: &ImageView) -> Result<Prepared, DecodeError> {
         Ok(p) => return Ok(p),
         Err(e) => e,
     };
+    let binary = binarise(&gray, img);
     match scan(img, gray, &binary) {
         Ok(candidates) => prepare_from(img, &binary, &candidates[0]),
         Err(e) => Err(if matches!(ring_err, LcError::NotFound) {
@@ -611,12 +617,14 @@ fn prepare(img: &ImageView) -> Result<Prepared, DecodeError> {
     }
 }
 
-/// §12.1: greyscale and binarise once, for both detection paths.
-fn binarise(img: &ImageView) -> (Vec<u8>, image::Binary) {
-    // Do all of this before touching colour.
-    let gray = img.gray_buffer();
-    let binary = image::binarize(&gray, img.width, img.height).denoised();
-    (gray, binary)
+/// §12.1's binarisation, for the finder path only.
+///
+/// Deliberately *not* done alongside the greyscale conversion. The ring detector reads
+/// greyscale directly, so on the common path — a screen symbol, found by its ring — this
+/// never runs, and a live preview stops paying for a full-frame binarise and denoise per
+/// frame that nothing reads.
+fn binarise(gray: &[u8], img: &ImageView) -> image::Binary {
+    image::binarize(gray, img.width, img.height).denoised()
 }
 
 /// §12.1–§12.3 for a finder-less symbol, located and described entirely by its ring (D17).

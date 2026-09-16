@@ -530,3 +530,166 @@ fn inner_layer_as_payload() {
     let r = noise(&r, 0.03, 0xBEEF);
     report("inner-as-payload realistic", &r, None, v);
 }
+
+/// What deferring binarisation behind the ring path actually saves per frame.
+///
+/// The ring detector reads greyscale; only the finder fallback needs the binary. This times
+/// a full decode of a ringed symbol (ring path, no binarisation) against the binarise-and-
+/// denoise pass it used to pay for regardless.
+#[test]
+#[ignore]
+fn decode_cost_by_path() {
+    use lc_decode::image::binarize;
+    use std::time::Instant;
+
+    let sym = symbol();
+    let r = render_at(&sym, 12);
+    let view = ImageView::new(&r.data, r.width, r.height, r.width * 3, PixelFormat::Rgb8).unwrap();
+    let gray = view.gray_buffer();
+
+    const N: u32 = 20;
+    let t0 = Instant::now();
+    for _ in 0..N {
+        let _ = binarize(&gray, r.width, r.height).denoised();
+    }
+    let binarise = t0.elapsed() / N;
+
+    let t0 = Instant::now();
+    for _ in 0..N {
+        Decoder::new()
+            .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+            .expect("decodes");
+    }
+    let decode = t0.elapsed() / N;
+
+    println!(
+        "{}x{}: decode {decode:?}, binarise+denoise {binarise:?} ({:.1}% of a decode, now skipped on the ring path)",
+        r.width,
+        r.height,
+        100.0 * binarise.as_secs_f64() / decode.as_secs_f64()
+    );
+}
+
+/// Numbers the README and the explainer quote, recomputed.
+///
+/// Both documents predate D17–D19 and quote the classic layout's capacity, which is now
+/// only what a print or border-less symbol carries. This prints the ringed figures beside
+/// them, and the QR side measured with `qrcodegen` rather than transcribed.
+#[test]
+#[ignore]
+fn doc_numbers() {
+    use lc_core::capacity::{capacity_for_symbol, smallest_version_for_symbol};
+    use lc_core::{EccLevel, Version};
+    use lc_render::qr::{QrEcc, qr_encode_bytes};
+
+    let ecc = EccLevel::DEFAULT;
+    let profiles = [Profile::M, Profile::C1, Profile::C2, Profile::C3];
+
+    println!("\n== capacity at a fixed grid, ECC default (ring / classic) ==");
+    for v in [1u8, 2, 3, 4] {
+        let version = Version::new(v).unwrap();
+        print!("  v{v} {:>2}x{:<2} ", version.side(), version.side());
+        for p in profiles {
+            let ring = capacity_for_symbol(version, p, ecc, true).body_bytes;
+            let classic = capacity_for_symbol(version, p, ecc, false).body_bytes;
+            print!("| {p:?} {ring:>4} / {classic:<4} ");
+        }
+        println!();
+    }
+
+    println!("\n== QR byte capacity at the same grids ==");
+    for (label, ecl) in [
+        ("L", QrEcc::Low),
+        ("M", QrEcc::Medium),
+        ("Q", QrEcc::Quartile),
+        ("H", QrEcc::High),
+    ] {
+        print!("  QR-{label} ");
+        for maxv in [1u8, 2, 3, 4] {
+            let mut best = 0;
+            for n in 1..500usize {
+                match qr_encode_bytes(&vec![0x41u8; n], ecl) {
+                    Ok(q) if q.version <= maxv => best = n,
+                    _ => break,
+                }
+            }
+            let side = 17 + 4 * maxv as u32;
+            print!("| v{maxv} {side}x{side} {best:>4} B ");
+        }
+        println!();
+    }
+
+    println!("\n== v4 33x33, ring on, by ECC level (parity share of each layer) ==");
+    let rates = lc_core::ecc::ldpc::RATES;
+    let (li, ci) = (
+        lc_core::ecc::ldpc::LUMA_RATE_INDEX,
+        lc_core::ecc::ldpc::CHROMA_RATE_INDEX,
+    );
+    let v4 = Version::new(4).unwrap();
+    for level in 0..4u8 {
+        let e = EccLevel {
+            luma: level,
+            chroma: level,
+        };
+        print!(
+            "  level {level}: luma rate {:.2} ({:.0}% parity), chroma rate {:.2} ({:.0}% parity) ",
+            rates[li[level as usize]],
+            100.0 * (1.0 - rates[li[level as usize]]),
+            rates[ci[level as usize]],
+            100.0 * (1.0 - rates[ci[level as usize]])
+        );
+        for p in profiles {
+            print!(
+                "| {p:?} {:>4} B ",
+                capacity_for_symbol(v4, p, e, true).body_bytes
+            );
+        }
+        println!();
+    }
+
+    println!("\n== same payload: who needs what (LC ring on) ==");
+    for n in [34usize, 50, 96, 144] {
+        let data = vec![0x41u8; n];
+        let lc = |p| {
+            smallest_version_for_symbol(n, p, ecc, true)
+                .map(|v| format!("v{} {}x{}", v.get(), v.side(), v.side()))
+                .unwrap_or_else(|_| "—".into())
+        };
+        let qr = |e| {
+            qr_encode_bytes(&data, e)
+                .map(|q| format!("v{} {}x{}", q.version, q.size, q.size))
+                .unwrap_or_else(|_| "—".into())
+        };
+        println!(
+            "  {n:>3} B: C1 {:<12} C3 {:<12} | QR-L {:<12} QR-M {:<12} QR-Q {:<12} QR-H {}",
+            lc(Profile::C1),
+            lc(Profile::C3),
+            qr(QrEcc::Low),
+            qr(QrEcc::Medium),
+            qr(QrEcc::Quartile),
+            qr(QrEcc::High)
+        );
+    }
+}
+
+/// Does tilt tolerance still depend on which way you lean the symbol?
+///
+/// The explainer's §05 blamed an asymmetric layout: bullseyes at three corners and a small
+/// alignment marker at the fourth, so leaning on the weak corner gave the decoder less to
+/// work with. A finder-less symbol (D17) has four identical ring corners, so that argument
+/// no longer applies — this measures whether the effect survived it.
+#[test]
+#[ignore]
+fn tilt_by_azimuth() {
+    let base = render_at(&symbol(), 12);
+    for tilt in [0.15f32, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85] {
+        let row: Vec<String> = (0..8)
+            .map(|k| {
+                let az = k as f32 * 45.0;
+                let ok = decodes(&perspective(&base, tilt, az));
+                format!("{az:>3.0}\u{b0} {}", if ok { "ok" } else { "--" })
+            })
+            .collect();
+        println!("tilt {tilt:.2}: {}", row.join(" | "));
+    }
+}

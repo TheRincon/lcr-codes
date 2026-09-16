@@ -318,7 +318,7 @@ mod tests {
                 let p = raster.pixel(x as u32, y as u32);
                 // Rec.709 luma, so the LC half's colours reduce sensibly rather than
                 // thresholding into noise that the detector might latch onto.
-                ((0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32) as u8).min(255)
+                (0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32) as u8
             },
         );
         let grids = prepared.detect_grids();

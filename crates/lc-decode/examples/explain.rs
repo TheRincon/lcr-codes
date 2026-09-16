@@ -11,6 +11,7 @@ use lc_core::color::{self, Lab};
 use lc_core::{Compression, Profile};
 use lc_decode::Decoder;
 use lc_encode::EncodeOptions;
+use lc_render::qr::{QrEcc, QrSymbol, qr_encode_bytes};
 use lc_render::{Raster, RenderOptions, png_encode, render_rgb};
 
 include!("../tests/support/ops.rs");
@@ -30,6 +31,39 @@ fn save(name: &str, r: &Raster) {
         "  {name:<22} {}x{}  {bytes:>6} B  decodes={ok}",
         r.width, r.height
     );
+}
+
+/// Write a figure that is not an LC Code, so the decode check does not apply.
+fn save_plain(name: &str, r: &Raster) {
+    std::fs::write(format!("{DIR}/{name}.png"), png_encode(r)).unwrap();
+    println!("  {name:<22} {}x{}", r.width, r.height);
+}
+
+/// A QR symbol as a raster, at the same module pitch as the LC figures, with its
+/// mandatory 4-module quiet zone.
+fn qr_raster(qr: &QrSymbol, px: u32) -> Raster {
+    let side = qr.outer() * px;
+    let mut data = vec![255u8; (side * side * 3) as usize];
+    let quiet = (qr.outer() - qr.size) / 2;
+    for y in 0..qr.size {
+        for x in 0..qr.size {
+            if !qr.get(x, y) {
+                continue;
+            }
+            for dy in 0..px {
+                for dx in 0..px {
+                    let (px_x, px_y) = ((x + quiet) * px + dx, (y + quiet) * px + dy);
+                    let i = ((px_y * side + px_x) * 3) as usize;
+                    data[i..i + 3].copy_from_slice(&[0, 0, 0]);
+                }
+            }
+        }
+    }
+    Raster {
+        width: side,
+        height: side,
+        data,
+    }
 }
 
 /// Rec.709 luma, as a grey image — literally what a monochrome sensor records.
@@ -138,6 +172,16 @@ fn main() {
     let c3r = render_rgb(&c3, &ropts);
     save("symbol-c3", &c3r);
     save("layer-chroma-c3", &chroma_only(&c3r, 62.0));
+
+    // QR carrying the *same* payload at the *same* module pitch, for the density
+    // comparison on the page. Generated, not transcribed — `qrcodegen` encodes it and the
+    // test suite reads it back with an independent decoder (`rqrr`).
+    let qr = qr_encode_bytes(payload, QrEcc::Medium).expect("96 bytes fits a QR");
+    println!(
+        "  qr-medium              QR v{} {}x{} modules",
+        qr.version, qr.size, qr.size
+    );
+    save_plain("qr-medium", &qr_raster(&qr, PX));
 
     // Palette.
     save("palette-c4", &swatches(&lc_core::palette::C4_COLORS, 64));

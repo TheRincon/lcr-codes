@@ -72,15 +72,32 @@ fn main() {
 
 /// Recompute the §6.1 capacity table from the real layout and codes (open decision #8).
 fn capacity_table() -> String {
-    use lc_core::capacity::capacity;
+    use lc_core::capacity::capacity_for_symbol;
     use lc_core::version::{EccLevel, Profile, Version};
 
-    let mut s =
-        String::from("| Version | Side | M | C1 | C2 | C3 |\n|---:|---:|---:|---:|---:|---:|\n");
-    for v in Version::all() {
-        let _ = write!(s, "| {} | {} |", v.get(), v.side());
-        for p in [Profile::M, Profile::C1, Profile::C2, Profile::C3] {
-            let _ = write!(s, " {} |", capacity(v, p, EccLevel::DEFAULT).body_bytes);
+    // Two tables, because since D17 there are two layouts and they differ by up to 3.6x.
+    // A single table reporting the classic one is how both README.md and the explainer came
+    // to quote pre-D17 capacities as if they were current.
+    let mut s = String::new();
+    for (title, border) in [
+        (
+            "With the §6.4 ring — the screen default: finder-less (D17), ring payload (D19)",
+            true,
+        ),
+        (
+            "Without the ring — print, and anything that may be read in greyscale (classic)",
+            false,
+        ),
+    ] {
+        let _ = writeln!(s, "### {title}\n");
+        s.push_str("| Version | Side | M | C1 | C2 | C3 |\n|---:|---:|---:|---:|---:|---:|\n");
+        for v in Version::all() {
+            let _ = write!(s, "| {} | {} |", v.get(), v.side());
+            for p in [Profile::M, Profile::C1, Profile::C2, Profile::C3] {
+                let cap = capacity_for_symbol(v, p, EccLevel::DEFAULT, border);
+                let _ = write!(s, " {} |", cap.body_bytes);
+            }
+            s.push('\n');
         }
         s.push('\n');
     }

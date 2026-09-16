@@ -20,7 +20,7 @@
 
 #![allow(dead_code)]
 
-use lc_core::capacity::capacity;
+use lc_core::capacity::capacity_for_symbol;
 use lc_core::version::{EccLevel, Profile, Version};
 use lc_core::{Compression, Packet};
 use lc_decode::Decoder;
@@ -52,7 +52,12 @@ type TrialSet = Vec<(Vec<u8>, Raster)>;
 
 fn bases(profile: Profile, trials: usize) -> (usize, TrialSet) {
     let v = Version::new(VERSION).unwrap();
-    let bytes = capacity(v, profile, EccLevel::DEFAULT).body_bytes;
+    // `capacity_for_symbol`, not `capacity`: these symbols are rendered with the ring on,
+    // and since D17/D19 that is a different layout with materially more capacity. Sizing
+    // with the classic figure under-filled every symbol here, handing the denser profiles
+    // LDPC shortening margin they would not have in use — exactly what this example's own
+    // header says it must not do.
+    let bytes = capacity_for_symbol(v, profile, EccLevel::DEFAULT, true).body_bytes;
     let opts = EncodeOptions {
         profile,
         version: Some(v),

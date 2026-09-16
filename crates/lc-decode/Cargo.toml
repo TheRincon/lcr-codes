@@ -20,4 +20,4 @@ lc-core = { workspace = true }
 lc-encode = { workspace = true }
 # `png` only here: the examples write PNG figures, and a dev-dependency cannot reach the
 # scanner bundle §14.1 keeps thin.
-lc-render = { workspace = true, features = ["png"] }
+lc-render = { workspace = true, features = ["png", "qr"] }
