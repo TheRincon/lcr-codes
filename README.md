@@ -51,6 +51,27 @@ Density, and graceful failure. LC Code targets **1.5–2.0 bits/module** against
 1.0 — measured at **1.73×** on this implementation — so payloads that would need an
 unreasonably large QR code fit in a scannable symbol.
 
+**You can now check this rather than take it on trust.** `just web` opens
+`display.html`, which draws a QR of the same payload beside the LC symbol at the same
+module pitch and reports the ratio. QR generation is the `qrcodegen` crate and the test
+suite reads the result back with `rqrr`, an independent decoder, so the thing being
+compared against is a real QR symbol.
+
+Be careful what the ratio means, because it moves with the pairing. On a 50-byte CBOR
+payload, against `C1` at ECC level 1:
+
+| | QR-L | QR-M | QR-Q | QR-H |
+|---|---:|---:|---:|---:|
+| QR grid | 29×29 | 33×33 | 37×37 | 41×41 |
+| area vs LC Code's 29×29 | **1.00×** | 1.29× | 1.63× | 2.00× |
+
+So LC Code is *level with* QR at its weakest error correction and pulls ahead as QR's
+strengthens. The bits/module figure above and the area figure here are different
+measurements and only the second is what a user sees. Note also that LC Code is carrying
+far more redundancy than QR-L in that tie — ECC level 1 is a luma rate of 0.75 — so the
+honest summary is that the two symbologies are close at small payloads and the gap opens
+with size and with error correction, not that LC Code is uniformly 1.73× anything.
+
 The trade is deliberate. JAB Code reaches ~3 bits/module; LC Code spends the difference on
 operating margin, because the impairments that actually break colour codes on a phone
 screen are severe: specular glare, panel refresh beating against a rolling shutter, moiré,

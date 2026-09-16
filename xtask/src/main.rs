@@ -10,8 +10,13 @@
 //!
 //! `cargo run -p xtask -- palette` searches for the §4 palette constants against the
 //! sRGB gamut (open decisions #1 and #2). See `palette.rs`.
+//!
+//! `cargo run -p xtask -- sweep <log.json>` reduces a real-camera capture log from
+//! `web/sweep.html` to §15's success-rate metric. See `sweep.rs`.
 
+mod debruijn;
 mod palette;
+mod sweep;
 mod thresholds;
 mod vectors;
 
@@ -41,10 +46,26 @@ fn main() {
         "ldpc" => print!("{}", generate_tables()),
         "capacity" => print!("{}", capacity_table()),
         "palette" => print!("{}", palette::report()),
+        "debruijn" => {
+            if std::env::args().nth(2).as_deref() == Some("--table") {
+                print!("{}", debruijn::table());
+            } else {
+                print!("{}", debruijn::report());
+            }
+        }
         "thresholds" => print!("{}", thresholds::report()),
         "vectors" => print!("{}", vectors::report()),
+        "sweep" => {
+            let path = std::env::args().nth(2).unwrap_or_default();
+            if path.is_empty() {
+                eprintln!("usage: xtask sweep <log.json>   (exported by web/sweep.html)");
+            } else {
+                print!("{}", sweep::report(&path));
+            }
+        }
         other => eprintln!(
-            "unknown task {other:?}; expected `ldpc`, `capacity`, `palette`, `thresholds` or `vectors`"
+            "unknown task {other:?}; expected `ldpc`, `capacity`, `palette`, `thresholds`, \
+             `vectors`, `sweep` or `debruijn`"
         ),
     }
 }

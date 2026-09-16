@@ -63,7 +63,18 @@ impl Default for EncodeOptions {
             version: None,
             ecc: EccLevel::DEFAULT,
             compression: None,
-            reference_border: false,
+            // Mandatory as of 2026-09-13, where it used to be opt-in.
+            //
+            // §6.4 made the border optional because on print the overhead is unacceptable,
+            // and on screen it is free — "it costs pixels nobody was using". Once the ring
+            // also carries the position sequence (`border::position`) that reasoning
+            // hardens into a requirement: the sequence is what a decoder localises from,
+            // and a symbol that omits it is a symbol that cannot be found that way. QR
+            // spends the same area on a quiet zone and gets nothing back for it.
+            //
+            // Print keeps the choice — `EncodeOptions::print` still turns it off — so this
+            // is a screen-profile default, not a format-wide mandate.
+            reference_border: true,
             mask: None,
         }
     }
@@ -148,11 +159,18 @@ pub fn encode_multipart(
 /// Encode an already-built frame, running the full §8 pipeline.
 pub fn encode_frame(frame: &Frame, opts: &EncodeOptions) -> Result<Symbol, LcError> {
     let bits = frame.to_bits()?;
+    // The ring decides the layout (D17): with it, the finders and their company are gone and
+    // that area is payload, so sizing has to use the layout the symbol will actually have.
     let version = match opts.version {
         Some(v) => v,
-        None => capacity::smallest_version(frame.body.len(), opts.profile, opts.ecc)?,
+        None => capacity::smallest_version_for_symbol(
+            frame.body.len(),
+            opts.profile,
+            opts.ecc,
+            opts.reference_border,
+        )?,
     };
-    let layout = Layout::new(version, opts.profile);
+    let layout = Layout::for_symbol(version, opts.profile, opts.reference_border);
     encode_bits(&bits, &layout, opts)
 }
 
@@ -214,6 +232,19 @@ fn encode_bits(bits: &BitVec, layout: &Layout, opts: &EncodeOptions) -> Result<S
 /// Capacity of a version/profile/ECC combination, re-exported for sizing decisions.
 pub fn capacity(version: Version, profile: Profile, ecc: EccLevel) -> SymbolCapacity {
     capacity::capacity(version, profile, ecc)
+}
+
+/// Capacity of the layout a symbol with these options actually uses (D17).
+///
+/// [`capacity`] is the classic, finder-bearing layout. With the §6.4 ring on, the symbol is
+/// finder-less and holds more — size against this one.
+pub fn capacity_for_symbol(
+    version: Version,
+    profile: Profile,
+    ecc: EccLevel,
+    reference_border: bool,
+) -> SymbolCapacity {
+    capacity::capacity_for_symbol(version, profile, ecc, reference_border)
 }
 
 pub mod sign;
@@ -291,10 +322,14 @@ mod tests {
             };
             let sym = encode_bytes(&data, &opts).unwrap();
             let v = sym.format.version;
-            assert!(capacity(v, Profile::C1, EccLevel::DEFAULT).body_bytes >= n);
+            // Default options carry the ring, so the symbol is finder-less (D17) and must
+            // be sized against that layout, not the classic one.
+            let cap =
+                |v| capacity_for_symbol(v, Profile::C1, EccLevel::DEFAULT, opts.reference_border);
+            assert!(cap(v).body_bytes >= n);
             if v.get() > 1 {
                 let smaller = Version::new(v.get() - 1).unwrap();
-                assert!(capacity(smaller, Profile::C1, EccLevel::DEFAULT).body_bytes < n);
+                assert!(cap(smaller).body_bytes < n);
             }
         }
     }

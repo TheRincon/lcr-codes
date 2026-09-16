@@ -12,14 +12,27 @@
 
 set shell := ["bash", "-uc"]
 
-# §14.2's budget for the decode-only component: 200 KB.
+# §14.2's budget for the decode-only component, gated on **two** bases (open decision #16).
 #
-# Measured **raw**, not compressed. The spec says "gzipped" because it assumed a browser
-# bundle fetched over a network (D8); a component is loaded from disk by a host, so the
-# uncompressed size is the one that has to fit. The difference is not cosmetic — the
-# scanner is 93% of budget raw against 33% zstd-compressed, so the compressed figure would
-# report comfort that does not exist.
-scanner_budget := "204800"
+# §14.2 says "< 200 KB gzipped" and marks it [TBD: validate]. That single number admits two
+# readings, and which one you take changes the answer by 2.5×:
+#
+#   * **Raw** — what a host loads from disk and holds in memory. D8 made the artifact a
+#     Component Model component rather than a browser bundle, so this is the figure for an
+#     embedded host.
+#   * **Compressed** — what crosses a network. §17.3's whole argument for the budget is "a
+#     web app or POS vendor", which is a transfer-size case, and FIREFOX.md documents
+#     exactly that path.
+#
+# Gating on only one was hiding the other: at 199,453 bytes the scanner read 97% of budget
+# raw and 38% gzipped. Both now have a limit and both are reported.
+#
+# The raw limit is §14.2's number taken literally. **The compressed limit is a proposal**,
+# not a measurement: half the raw budget, on the grounds that ~75 KB gzipped is already a
+# heavy web dependency and a gate that never fires is decoration. It wants justifying
+# against a real embedder's constraint before #16 can actually close.
+scanner_budget_raw := "204800"
+scanner_budget_gz := "102400"
 
 wasm_target := "wasm32-unknown-unknown"
 wasm_out := "target/wasm32-unknown-unknown/release/lc_wasm.wasm"
@@ -30,7 +43,25 @@ _default:
 # ---------------------------------------------------------------- check
 
 # Everything CI should run.
-ci: fmt-check test test-debug wasm-size
+#
+# `clippy` sits second because it is the cheapest thing that fails: it compiles in the dev
+# profile while `test` needs release, so a lint error surfaces in seconds rather than after
+# the full suite. It was missing until 2026-09-08, and six lints had accumulated in
+# untouched code from toolchain drift while this file claimed zero warnings — a gate nobody
+# runs is not a gate.
+ci: fmt-check clippy test test-debug wasm-size check-compare
+
+# Type-check the comparison component.
+#
+# `test` exercises the `compare` feature on the *host*, and `wasm-size` builds only the two
+# shipped artifacts — so nothing was compiling `component.rs` under `compare`, and moving QR
+# into `lc-render` broke that binding silently. It surfaced only when `just web` was run,
+# which is the worst place to find it: mid-setup for a capture session.
+#
+# `check` rather than a full build, so the gate stays cheap.
+[doc("Type-check the QR comparison component, which no other gate builds.")]
+check-compare:
+    cargo check -p lc-wasm --target {{wasm_target}} --features compare
 
 # Depends on `component` because `lc-wasm/tests/component.rs` loads the built artifact
 # from dist/ and runs it under wasmtime. Without that ordering the component tests would
@@ -39,6 +70,12 @@ ci: fmt-check test test-debug wasm-size
 # The whole test suite, including the component under wasmtime.
 test: component
     cargo test --workspace --release
+    # `qr` and `compare` are off by default so no shipped artifact carries QR, which also
+    # means the default run never builds their tests. Run them explicitly: the QR round
+    # trip against an independent decoder is the only thing standing behind both the
+    # density comparison and §17.2 dual-render.
+    cargo test -p lc-render --release --features qr qr::
+    cargo test -p lc-wasm --release --features compare
 
 # Exercise `debug_assert!`, which the release suite above compiles out.
 #
@@ -81,18 +118,55 @@ component: _component-full _component-scanner
 _dist:
     @mkdir -p dist
 
+# Binaryen's size pass, run on the **core module** before `wasm-tools component new`:
+# binaryen does not read component-model binaries, so optimising the component fails.
+#
+# Optional by design. Without binaryen the build still works and prints a note; with it, a
+# failure is a hard failure rather than a silently unoptimised artifact.
+#
+# `-Oz` here is not D15's declined `opt-level = "z"`. That changed rustc's codegen and cost
+# 11% median decode time; this is a post-pass over the same opt-level 3 output, and what it
+# mainly removes is code the linker retained but nothing reaches — 11 KB of float formatting
+# kept alive by a function-table entry with no live caller (D17).
+# Exactly the features rustc's `wasm32-unknown-unknown` output uses — **not** `-all`.
+# `-all` let binaryen optimise into instructions wasmtime rejects by default, and the
+# component then failed to parse at load: `wasm-tools validate --features=component-model`
+# passed it, so the gate that caught it was `cargo test -p lc-wasm`, which actually
+# instantiates the shipped artifact.
+wasm_opt_flags := "-Oz --enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int"
+
 # Decode + encode.
 _component-full: _dist
     cargo build -p lc-wasm --release --target {{wasm_target}}
-    wasm-tools component new {{wasm_out}} -o dist/lc-code.wasm
+    cp {{wasm_out}} target/full-core.wasm
+    @if command -v wasm-opt >/dev/null; then wasm-opt {{wasm_opt_flags}} -o target/full-core.opt.wasm target/full-core.wasm && mv target/full-core.opt.wasm target/full-core.wasm; else echo "  wasm-opt not found — skipping the size pass (brew install binaryen)"; fi
+    wasm-tools component new target/full-core.wasm -o dist/lc-code.wasm
+    wasm-tools strip --all dist/lc-code.wasm -o dist/lc-code.wasm
     wasm-tools validate --features=component-model dist/lc-code.wasm
 
 # Decode only. §14.1 keeps the encoder out so a scanner cannot acquire it by accident.
 _component-scanner: _dist
     cargo build -p lc-wasm --release --target {{wasm_target}} \
         --no-default-features --features decode
-    wasm-tools component new {{wasm_out}} -o dist/lc-code-scanner.wasm
+    cp {{wasm_out}} target/scanner-core.wasm
+    @if command -v wasm-opt >/dev/null; then wasm-opt {{wasm_opt_flags}} -o target/scanner-core.opt.wasm target/scanner-core.wasm && mv target/scanner-core.opt.wasm target/scanner-core.wasm; else echo "  wasm-opt not found — skipping the size pass (brew install binaryen)"; fi
+    wasm-tools component new target/scanner-core.wasm -o dist/lc-code-scanner.wasm
+    # `--all` rather than plain `strip`: the default leaves the `name` section, which on
+    # the scanner is 19 KB — 10% of the artifact — of debug symbols no shipped decoder
+    # needs. Plain `strip` saved 1,753 bytes; `--all` saves 20,733. The core module at
+    # {{wasm_out}} keeps its names, so a trap is still debuggable there.
+    wasm-tools strip --all dist/lc-code-scanner.wasm -o dist/lc-code-scanner.wasm
     wasm-tools validate --features=component-model dist/lc-code-scanner.wasm
+
+# Decode + encode + QR, for the `display.html` density comparison.
+#
+# Deliberately not part of `component`, so neither shipped artifact carries a competing
+# symbology. Only `just web` builds this, and it is the only artifact with QR in it.
+_component-compare: _dist
+    cargo build -p lc-wasm --release --target {{wasm_target}} --features compare
+    wasm-tools component new {{wasm_out}} -o dist/lc-code-compare.wasm
+    wasm-tools strip --all dist/lc-code-compare.wasm -o dist/lc-code-compare.wasm
+    wasm-tools validate --features=component-model dist/lc-code-compare.wasm
 
 # Print the WIT interface each component actually exports.
 component-wit: component
@@ -109,18 +183,34 @@ component-wit: component
 wasm-size: component
     #!/usr/bin/env bash
     set -euo pipefail
+    # gzip as well as zstd: §14.2 says "gzipped", so that is the figure the compressed
+    # budget is stated against. zstd stays because it is ~10% smaller on these artifacts
+    # and is what anyone shipping a component today would actually reach for.
     for f in dist/lc-code.wasm dist/lc-code-scanner.wasm; do
         raw=$(wc -c < "$f")
+        gz=$(gzip -9 -c "$f" | wc -c)
         zs=$(zstd -19 -c "$f" 2>/dev/null | wc -c)
-        printf "  %-28s raw %7d  zstd %7d\n" "$(basename $f)" "$raw" "$zs"
+        printf "  %-28s raw %7d  gzip %7d  zstd %7d\n" "$(basename $f)" "$raw" "$gz" "$zs"
     done
+    echo
     raw=$(wc -c < dist/lc-code-scanner.wasm)
-    pct=$(( raw * 100 / {{scanner_budget}} ))
-    echo "  scanner is ${pct}% of the §14.2 budget ({{scanner_budget}} bytes, raw)"
-    if [ "$raw" -gt "{{scanner_budget}}" ]; then
-        echo "  OVER BUDGET" >&2
-        exit 1
+    gz=$(gzip -9 -c dist/lc-code-scanner.wasm | wc -c)
+    praw=$(( raw * 100 / {{scanner_budget_raw}} ))
+    pgz=$(( gz * 100 / {{scanner_budget_gz}} ))
+    printf "  scanner raw   %7d / %7d  %3d%%  (embedded host, D8)\n" \
+        "$raw" "{{scanner_budget_raw}}" "$praw"
+    printf "  scanner gzip  %7d / %7d  %3d%%  (web delivery, §17.3)\n" \
+        "$gz" "{{scanner_budget_gz}}" "$pgz"
+    over=0
+    if [ "$raw" -gt "{{scanner_budget_raw}}" ]; then
+        echo "  OVER RAW BUDGET" >&2
+        over=1
     fi
+    if [ "$gz" -gt "{{scanner_budget_gz}}" ]; then
+        echo "  OVER COMPRESSED BUDGET" >&2
+        over=1
+    fi
+    exit $over
 
 # Transpile the scanner component for the browser and serve the demo.
 #
@@ -133,15 +223,20 @@ web port="8000":
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH=/opt/homebrew/bin:$PATH
-    just component
-    # The full component, not the scanner: `display.html` needs `encoder`, and
-    # `index.html` needs `codec.cbor-to-json` to show a CBOR body as JSON. A shipping
-    # scanner would take `lc-code-scanner.wasm` and render host-side instead.
-    npx --yes @bytecodealliance/jco@latest transpile dist/lc-code.wasm \
-        -o web/lc --no-typescript
+    just component _component-compare
+    # The compare component, not the scanner: `display.html` needs `encoder` and now
+    # `compare` for the QR side-by-side, and `index.html` needs `codec.cbor-to-json` to
+    # show a CBOR body as JSON. A shipping scanner would take `lc-code-scanner.wasm` and
+    # render host-side instead — and would carry no QR, which is why the comparison build
+    # is a third artifact rather than a change to the other two.
+    # `--name lc-code` so the emitted module keeps its filename regardless of which
+    # artifact fed it; all three pages import `./lc/lc-code.js` and should not have to care.
+    npx --yes @bytecodealliance/jco@latest transpile dist/lc-code-compare.wasm \
+        --name lc-code -o web/lc --no-typescript
     cargo run -p lc-decode --release --example frame -- web/frame.rgba
     echo
     echo "  display:  http://localhost:{{port}}/display.html   (laptop)"
+    echo "  sweep:    http://localhost:{{port}}/sweep.html     (phone — records trials)"
     echo "  scanner:  http://localhost:{{port}}/               (phone — needs HTTPS)"
     echo "  ^C to stop"
     cd web && python3 -m http.server {{port}}
@@ -188,6 +283,22 @@ c-host: component
 # Regenerate examples/ — a symbol per payload, each decoded before it is written.
 gallery:
     cargo run -p lc-render --release --example gallery -- examples
+
+# Regenerate examples/anatomy-c3.png — a C3 symbol with every part boxed and explained.
+#
+# The example writes an HTML page whose boxes are computed from lc-core's geometry, and
+# headless Chrome turns it into the PNG, because nothing in the workspace renders text.
+# The window size must match `PAGE` in `crates/lc-render/examples/anatomy.rs`. Chrome's
+# macOS path by default; elsewhere, `just chrome=/path/to/chrome anatomy`.
+chrome := "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+[doc("Regenerate examples/anatomy-c3.png, the annotated C3 reference figure.")]
+anatomy:
+    cargo run -p lc-render --release --example anatomy -- target/anatomy
+    "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1900,1170 \
+        --screenshot="$PWD/examples/anatomy-c3.png" "file://$PWD/target/anatomy/anatomy-c3.html" \
+        2>/dev/null
+    @echo "  wrote examples/anatomy-c3.png"
 
 # Regenerate docs/img/ — the figures docs/explainer.html reads.
 #
@@ -296,6 +407,42 @@ fuzz target="decode_rgb" secs="120":
 vectors:
     cargo run --release -p xtask -- vectors > vectors/golden-v1.json
     @echo "  wrote vectors/golden-v1.json — review the diff"
+
+# Regenerate docs/border-sequence.md — position sequences for the §6.4 border.
+#
+# Groundwork for reclaiming the finder area: a border whose every k-cell window is unique
+# is an absolute position reference, so it can carry orientation, sizing and the homography
+# correspondences that three 7x7 finders currently pay 192 modules for. Nothing consumes
+# these tables yet — this generates them and proves their properties first.
+#
+# Slow (~1 min): 32 backtracking searches plus a randomised arc-localisation measurement.
+# On-demand, like `thresholds`, and not part of `ci`.
+[doc("Regenerate docs/border-sequence.md — §6.4 border position sequences.")]
+debruijn:
+    cargo run --release -p xtask -- debruijn > docs/border-sequence.md
+    @echo "  wrote docs/border-sequence.md"
+
+# Regenerate the committed sequence table.
+#
+# §8.2's rule for the LDPC graphs applies here for the same reason: the construction is a
+# backtracking search with a budget and has no business inside a decoder. Generated
+# offline, committed, and re-checked in the crate that ships it by
+# `every_sequence_window_is_unique` — because the generator is not what a decoder runs
+# against, the table is.
+[doc("Regenerate the committed §6.4 border sequence table.")]
+debruijn-table:
+    cargo run --release -p xtask -- debruijn --table > crates/lc-core/src/border_seq.rs
+    @echo "  wrote crates/lc-core/src/border_seq.rs — review the diff"
+
+# Reduce a real-camera capture log to §15's success-rate metric.
+#
+# The log comes from `web/sweep.html` (served by `just web`), which records one line per
+# decode attempt against the geometry it was attempted at. This is the only measurement in
+# the project that is not self-referential: every other figure comes from the §15 harness,
+# which is code. See docs/capture-sweep.md for how to run one.
+[doc("Reduce a capture-sweep log from web/sweep.html to success rate vs geometry.")]
+sweep log:
+    @cargo run --release -q -p xtask -- sweep {{log}}
 
 # Search for the §4 palette constants against the sRGB gamut (open decisions #1 and #2).
 #

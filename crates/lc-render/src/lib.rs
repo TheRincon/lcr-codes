@@ -50,11 +50,21 @@ use alloc::vec;
 use alloc::vec::Vec;
 use lc_core::border;
 use lc_core::color::Srgb8;
+use lc_core::layout::Layout;
 use lc_core::palette::{BORDER_WHITE, Palette};
 use lc_core::{Profile, Symbol};
 
+/// §17.2 dual-render: an LC symbol beside a QR carrying a fallback URL.
+///
+/// Off by default — see the `qr` feature in `Cargo.toml`, and the module docs on why
+/// §17.2 calls this "a bridge, not an answer".
+#[cfg(feature = "qr")]
+pub mod qr;
+
 /// Quiet-zone width in modules (§6.1).
 pub const QUIET: u16 = border::QUIET as u16;
+/// Modules of white between the grid and the ring (§6.4, D18).
+pub const GAP: u16 = border::GAP as u16;
 /// Reference-border width in modules (§6.4).
 pub const BORDER: u16 = border::WIDTH as u16;
 
@@ -106,20 +116,25 @@ pub struct Canvas {
     pub margin: u16,
     /// Whether the §6.4 border is drawn.
     pub border: bool,
+    /// What the ring's colour choices carry: nothing, or the format codeword of a
+    /// finder-less symbol (D17).
+    pub ring: border::RingMode,
 }
 
 impl Canvas {
     /// Geometry for a symbol.
     pub fn of(symbol: &Symbol) -> Canvas {
         let border = symbol.format.reference_border;
+        let ring = if Layout::is_finderless(symbol.format.profile, border) {
+            border::RingMode::Data(symbol.format.to_codeword())
+        } else {
+            border::RingMode::Plain
+        };
         Canvas {
             side: symbol.side(),
-            margin: if border {
-                QUIET + BORDER + QUIET
-            } else {
-                QUIET
-            },
+            margin: if border { QUIET + BORDER + GAP } else { QUIET },
             border,
+            ring,
         }
     }
 
@@ -163,11 +178,12 @@ pub fn border_color(canvas: &Canvas, palette: &Palette, cx: u16, cy: u16) -> Opt
     if !canvas.border {
         return None;
     }
-    border::cell_color(
+    border::cell_color_in(
         cx as i32 - canvas.margin as i32,
         cy as i32 - canvas.margin as i32,
         canvas.side,
         palette,
+        canvas.ring,
     )
 }
 
@@ -182,6 +198,19 @@ pub fn canvas_color(
 ) -> Srgb8 {
     if canvas.shell(cx, cy) == 0 {
         return symbol.color_at(palette, cx - canvas.margin, cy - canvas.margin);
+    }
+    // A ring payload cell (D19) takes its colour from the symbol, not from the ring's own
+    // rule: it is an ordinary payload module that happens to live in the border.
+    if !symbol.ring.is_empty() {
+        let (x, y) = (
+            cx as i32 - canvas.margin as i32,
+            cy as i32 - canvas.margin as i32,
+        );
+        if let Some(i) = border::payload_cell_index(x, y, canvas.side)
+            && let Some(&idx) = symbol.ring.get(i)
+        {
+            return palette.colors[idx as usize];
+        }
     }
     border_color(canvas, palette, cx, cy).unwrap_or(opts.quiet_color)
 }
@@ -389,7 +418,9 @@ mod tests {
             mask: 2,
             reference_border: border,
         };
-        let layout = Layout::new(format.version, profile);
+        // The layout the format actually implies (D17) — a bordered colour symbol is
+        // finder-less, and a fixture that disagreed would build an impossible symbol.
+        let layout = Layout::for_symbol(format.version, profile, border);
         let cap = layout.capacity();
         let bits: Vec<bool> = (0..cap.luma_bits).map(|i| i % 3 == 0).collect();
         let ch: Vec<bool> = (0..cap.chroma_bits).map(|i| i % 5 < 2).collect();
@@ -403,12 +434,12 @@ mod tests {
         assert_eq!(plain.modules(), 33 + 4);
 
         let bordered = Canvas::of(&sample(Profile::C1, true));
-        assert_eq!(bordered.margin, 6);
-        assert_eq!(bordered.modules(), 33 + 12);
+        assert_eq!(bordered.margin, 5);
+        assert_eq!(bordered.modules(), 33 + 2 * (QUIET + BORDER + GAP));
     }
 
     #[test]
-    fn the_border_only_occupies_shells_three_and_four() {
+    fn the_border_only_occupies_its_own_shells() {
         let sym = sample(Profile::C1, true);
         let canvas = Canvas::of(&sym);
         let palette = sym.palette();
@@ -416,7 +447,8 @@ mod tests {
             for cx in 0..canvas.modules() {
                 let d = canvas.shell(cx, cy);
                 let has = border_color(&canvas, &palette, cx, cy).is_some();
-                assert_eq!(has, (3..=4).contains(&d), "({cx},{cy}) shell {d}");
+                let ring = (GAP + 1)..=(GAP + BORDER);
+                assert_eq!(has, ring.contains(&d), "({cx},{cy}) shell {d}");
             }
         }
     }
@@ -444,11 +476,11 @@ mod tests {
         let sym = sample(Profile::C1, true);
         let canvas = Canvas::of(&sym);
         let palette = sym.palette();
-        // Walk the top edge; shells 3 and 4 at the same x must match.
+        // Walk the top edge; the ring's two shells at the same x must match.
         let m = canvas.margin;
         for cx in m..(m + canvas.side) {
-            let a = border_color(&canvas, &palette, cx, m - 3).unwrap();
-            let b = border_color(&canvas, &palette, cx, m - 4).unwrap();
+            let a = border_color(&canvas, &palette, cx, m - (GAP + 1)).unwrap();
+            let b = border_color(&canvas, &palette, cx, m - (GAP + BORDER)).unwrap();
             assert_eq!(a, b, "column {cx}");
         }
     }

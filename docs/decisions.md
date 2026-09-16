@@ -471,6 +471,585 @@ less noise tolerance and ~15% less glare tolerance than `C1`. It is documented o
 variant itself so the trade is visible at the point of choice, and nothing selects it
 automatically — a caller has to ask for it by name.
 
+### D12. `decoder.probe` — geometry without a payload
+
+**Status:** addition beyond v0.4. `crates/lc-decode/src/lib.rs`, `wit/lc.wit`
+
+§14.4's API sketch has one entry point, `decode_rgb`, returning either a `DecodeOutput` or
+an error. §12.5 and §14.3 then ask a decoder to drive "user guidance ('move closer',
+'reduce glare')" from its diagnostics — but on the path where guidance is *needed*, the
+decode failed and there are no diagnostics. A host gets a string. It cannot distinguish
+
+- no symbol in the frame — the user is out of range, tell them to move closer, from
+- a symbol found, format read, payload unrecoverable — the user is in range and out of
+  margin, tell them to steady the phone or kill the glare,
+
+which are opposite instructions. `probe` runs §12.1–§12.3 and stops, so those two cases
+separate. It reports version, profile, format margin, the illumination residual, and the
+captured module pitch at both extremes.
+
+**It also makes a capture sweep analysable**, which is what prompted it: a measurement
+needs to bin its *failures* by the conditions they failed under, and a failure carrying no
+geometry cannot be binned at all. See [`capture-sweep.md`](capture-sweep.md).
+
+**Two new `Diagnostics` fields come with it**, `capture_pitch_min` / `capture_pitch_max`,
+both derived from the fitted homography by `Transform::pitch_range`. Their ratio measures
+viewing obliquity without needing camera intrinsics, which a browser does not expose.
+`probe_measures_the_pitch_the_renderer_drew_at` pins them against a known render, because
+every working-range figure measured through the rig scales with them.
+
+**The cost, stated plainly: the scanner went 192,876 → 196,104 bytes, 93% → 95% of
+§14.2's budget.** That is 3.2 KB for a function a minimal scanner could arguably live
+without, and it comes out of headroom that was already thin — the same headroom the brotli
+discussion above is competing for. It is kept in the `decoder` interface rather than
+banished to a full-build-only one because §12.5's user guidance is a scanner requirement,
+not a development convenience: a scanner that cannot tell "not found" from "found and
+marginal" cannot do what §12.5 asks of it. If the budget later binds, this is a candidate
+to move — the measurement rig uses the full component and would not notice.
+
+### D13. QR lives in `lc-render` behind `qr`, and detection had to learn to try again
+
+**Status:** addition beyond v0.4. `crates/lc-render/src/qr.rs`, `crates/lc-decode/src/detect.rs`
+
+§17.2 names dual-render — a standard QR alongside carrying a fallback URL — as one of three
+answers to the adoption problem, so it is a spec-sanctioned feature rather than a demo.
+`lc-render::qr` implements it: `render_dual_rgb` / `render_dual_png` compose an LC symbol
+and a QR at **one shared module pitch**, which is the property that makes a fallback a
+fallback. Rendering the QR smaller because it has fewer modules would produce a backup that
+stops working before the thing it backs up.
+
+**Off by default.** `lc-render` is in the wasm full build, where QR costs ~23 KB, and §17.2
+itself calls dual-render "a bridge, not an answer" — it trades the offline property for
+reach. A deployment should opt into that rather than acquire it by linking the renderer.
+`lc-wasm/compare` is the same code behind a second feature flag, so the density comparison
+in `display.html` and a rendered dual share one encoder and one set of round-trip tests.
+
+**Generation is `qrcodegen`; verification is `rqrr`.** Both pure Rust; `rqrr` is
+`default-features = false` so it drops `image`, and it is a dev-dependency that reaches no
+artifact. A hand-rolled QR encoder was started and abandoned: its masking, interleaving and
+format info are unprovable without a decoder, which would have left the density claim
+resting on the encoder being right.
+
+**What this exposed, and it is the important part.** §6.2 adopts QR's 1:1:3:1:1 finder
+deliberately (Appendix B), and **a finder carries no identity**. So a frame holding two
+codes presents six finder-like patterns, and when both sit at one module pitch the
+module-spread filter cannot separate them: a triple straddling the two symbols can score
+*better* on right-angleness than either real triple. Detection committed to the single
+best-scoring triple with no way back, so a dual-render — and equally two LC symbols on one
+poster, an ordinary thing to point a camera at — returned `FormatUndecodable` on a frame
+containing two perfectly good symbols.
+
+`detect_candidates` now returns the best triples in score order and `Decoder::decode` walks
+them. **The acceptance test is the CRC**, per §9.1's "the CRC is the authoritative
+accept/reject for decoding", and the first attempt at this got it wrong in an instructive
+way: accepting on the *format region* instead looked reasonable and made the noise-rejection
+test fail immediately. BCH(30,15) corrects three errors, so a random 30-bit word lands
+within distance 3 of a codeword about 14% of the time — trying six candidates against that
+filter turns "found nothing" into "found something" on frames containing no symbol at all.
+Only the CRC is strong enough to justify a retry.
+
+`Decoder::probe` and `FrameAccumulator` therefore still use the best candidate **only**:
+neither has a CRC to check a guess against, so for them retrying is strictly worse.
+`prepare`'s doc comment says so, and `probe_finds_nothing_in_a_frame_with_no_symbol` fails
+the moment that loop is reintroduced.
+
+**Cost, measured, twice.** Six candidates doubled the §15 degradation suite, 33.5 s →
+67.2 s, entirely on frames that fail — which in a live preview is every frame the user is
+still aiming. Three candidates recover all of it (33.5 s) and still fix the case, because a
+dual-render's two real triples both score well. `MAX_CANDIDATES = 3` is that measurement.
+
+The second cost was size, and `just wasm-size` failed on it. Collecting every scored triple
+into a `Vec`, sorting with `sort_by`, and taking three through a `filter_map`/`take`/
+`collect` chain cost **10.4 KB** in the scanner — 196,104 → 206,469 bytes, over §14.2's
+204,800 budget. Selecting the best three by insertion into a fixed three-entry array needs
+no sort, no growth and no iterator machinery, and costs **1.5 KB** instead (197,663, 96%).
+Worth recording because the naive version is what anyone would write first, and nothing
+about it looks expensive.
+
+**Known limitation.** `FrameAccumulator` can still lock onto a straddling triple in a
+two-code frame and keep it until reset. Single-frame `decode` handles that case; multi-frame
+accumulation does not yet.
+
+### D14. The §6.4 border is mandatory on screen, and carries a position sequence
+
+**Status:** deviates from v0.4. `crates/lc-core/src/border.rs`, `border_seq.rs`
+
+Two changes, the second the reason for the first.
+
+**The border now carries a de Bruijn-style position sequence.** §6.4's ring cycled the
+palette in index order, which made it good illumination references (§12.3) and nothing
+else — a periodic sequence cannot tell a decoder *where on the ring* it is looking.
+Replacing the period with a sequence whose every `k`-position window is unique turns the
+same cells into an absolute position reference: orientation, which edge, and how far along,
+for **no extra modules**. Sequences are generated by `just debruijn-table` and committed to
+`border_seq.rs`, following §8.2's rule for the LDPC graphs and for the same reason — the
+construction is a backtracking graph walk with a budget.
+
+The luma layer is what carries it, which §12.1 requires. The objection I expected to kill
+this did not hold: §4.1 makes hue states iso-luminant by design, so a palette-cycling ring
+ought to be invisible in luma — but P12 puts white and black in the cycle and the two luma
+levels are far apart, so `C1` binarises across the full 0–255. Colour rides on top, chosen
+from the entries at the required luma level, so **the sequence changes the order of the
+border colours, not their coverage** — `every_reference_colour_appears` still passes
+unchanged.
+
+**Why distributed rather than a marked corner or a gap.** §3 makes specular glare the
+dominant screen impairment and §12.3 already discards border references a highlight has
+ruined. A localised asymmetry is a single point of failure at exactly the wrong scale. A
+gap is worse still: occlusion *produces* gaps, so it would signal with the same alphabet the
+channel uses for damage.
+
+**Minimum window Hamming distance is 1, and that is not the operative number.** Separating
+`p` windows by distance 3 is sphere-packing-bound at `p·(1+k) ≤ 2^k`, which would force a
+12-position window at v1. But a decoder correlates whatever arc is unobscured against all
+rotations rather than looking up exactly `k` cells. Measured that way — corrupting arcs and
+requiring the true position to win outright, ties counting as failures — **~20 positions
+survive two misreads at every version**. See [`border-sequence.md`](border-sequence.md).
+
+**The border is therefore mandatory on screen**, where §6.4 made it optional. Once the ring
+is what a decoder localises from, a symbol that omits it is a symbol that cannot be found
+that way. QR spends the same area on a quiet zone and gets nothing back for it.
+`EncodeOptions::print` still turns it off, so this is a screen-profile default rather than a
+format-wide mandate — print has no border (§6.4 calls the overhead unacceptable there) and
+keeps the finders.
+
+**Format bit 14 is left alone for now**, still signalling the border and now always set on
+screen. Freeing it means restructuring the format region, which is also where open #11a's
+compact-format-region question lives; better to churn that region once than twice.
+
+**Size cost: the scanner went 197,663 → 199,453 bytes, 96% → 97% of §14.2's budget.** The
+table is ~1.7 KB of the 1.8 KB. Third bite this month after D12's `probe` and D13's
+multi-candidate detection, leaving 5,347 bytes. **The budget is now the binding constraint
+on this project**, and a ring-based detector will want room of its own.
+
+**What this does not do: the finders are still there.** This is the groundwork that makes
+removing them possible, not the removal. Detection is still §12.1's 1:1:3:1:1 run-ratio
+scan, so nothing can yet localise a symbol from the ring, and a finder-less symbol would
+decode nowhere. The measured prize, from the real layout: finders plus separators plus
+anchors are a **fixed 204 modules**, which is 46.3% of a v1 symbol and 1.0% of a v32 — so
+this is a small-symbol optimisation, and at v2 it is the difference between a 25×25 symbol
+and a 21×21 one for the same payload.
+
+Sequenced after the capture sweep deliberately: replacing detection before the sweep runs
+would leave the new detector comparable only against simulator numbers.
+
+### D15. Two size budgets, and the 200 KB was being read 2.5× too strictly
+
+**Status:** closes the measurement half of open decision #16. `justfile`
+
+§14.2 says "**< 200 KB gzipped** for decode only" and marks it `[TBD: validate]`. That one
+number admits two readings and the difference is not small:
+
+| basis | what it is | scanner, before this |
+|---|---|---:|
+| raw | what a host loads from disk and holds in memory (D8) | 199,453 — **97%** |
+| gzipped | what crosses a network, which is §17.3's actual argument | 79,341 — **38%** |
+
+The gate measured raw only. So a constraint that has been shaping real engineering — D12's
+`probe`, D13's bounded candidate search, D14's sequence table — was being enforced on the
+stricter basis while the other sat at 38% unmentioned. **Both are now gated and both are
+reported.**
+
+The raw limit is §14.2's number taken literally. The compressed limit is **a proposal, not
+a measurement**: half the raw budget, because ~75 KB gzipped is already a heavy web
+dependency and a gate that never fires is decoration. #16 cannot actually close until that
+number is justified against a real embedder rather than chosen for symmetry.
+
+**Savings found: 20,733 bytes, free.** `wasm-tools strip --all` on the built component.
+Plain `strip` saves only 1,753 — it leaves the `name` section, which on the scanner is 19 KB
+of debug symbols, 10% of the artifact, that no shipped decoder reads. Scanner 199,453 →
+178,720 (**97% → 87%** raw, 72% compressed); the full build 304,965 → 276,068. The core
+module at `target/…/lc_wasm.wasm` keeps its names, so a trap is still debuggable there.
+
+**`opt-level = "z"` measured and declined.** The `wasm-min` profile has been defined and
+unexercised since the project started. It works, and it costs:
+
+| build | raw | gzip | decode median | p90 |
+|---|---:|---:|---:|---:|
+| release + strip | 178,720 | 74,637 | 79.4 ms | 80.5 ms |
+| `wasm-min` + strip | 161,341 | 66,754 | **88.1 ms** | **98.0 ms** |
+
+Eight more points of raw budget for **11% median and 22% p90 decode time**. Declined:
+§1.1 goal 5 wants "real-time camera preview decoding on a mid-range phone", one 492×492
+frame already costs ~80 ms through jco on a laptop, and a phone is slower. Size is not the
+binding constraint at 87%; frame rate plausibly is. Revisit if the budget tightens or if
+decode gets materially faster.
+
+Measured under Node + jco, which adds glue overhead a native component host would not pay —
+so treat the absolute milliseconds as indicative and the *ratio* as the finding.
+
+### D16. Detection had an upper pitch limit, and now retries on a halved image
+
+**Status:** fixes a defect the capture sweep found. `crates/lc-decode/src/lib.rs` (`scan`,
+`PYRAMID_LEVELS`), `detect::candidates_from`, `image::downscale`
+
+**How it was found.** Raising the sweep rig's capture width to 4K tripled the captured
+module pitch, and nothing decoded at any distance — including close up, which is what made
+it look total. The §15 harness had never rendered above 12 px/module, so nothing had tested
+the top of the range.
+
+**The ceiling, measured on clean renders at v2/v4/v8** (identical at all three, so it is
+pitch and not version): decode worked at 8–14 and 18–22 captured px/module, failed at 16,
+and failed at everything from 24 up. Shifting the image a single pixel — same pitch,
+different phase between the binariser's 8-pixel block grid and the module grid — separated
+two faults:
+
+* **16 and 24 are `2·BLOCK` and `3·BLOCK`.** They failed only in phase; one pixel of offset
+  fixed them. D6's mechanism, recurring at multiples D6 never tested.
+* **A hard wall above ~24** that no offset rescued. Binarisation stayed healthy (dark
+  fraction ~34% at every pitch); `find_finders` simply stopped locating finders, reporting
+  two of three at pitch 30 with a module estimate of 26 against a true 30.
+
+**The fix.** If the full-resolution scan finds no candidate, halve the greyscale image and
+retry the finder search, up to two levels, each built from the one before. Halving halves
+the pitch, so pitch 40 lands at 10. Finder positions are lifted back to full-resolution
+coordinates and everything after the finder search — alignment, transform, sampling — runs
+at full resolution, so nothing needing precision is computed from a shrunken image.
+
+**Why two halvings rather than factors 1/2/3/4**, which was the first version: detection
+works over pitch 8–22, so a factor of 2 covers 16–44 and a factor of 4 covers 32–88, which
+already overlap — factor 3 was redundant. And building each level from the last means only
+the first halving touches full resolution. **Coverage-neutral, measured**: 80 of 88 pitch ×
+phase cells decode under both.
+
+**Result, clean renders, 8 grid phases each:**
+
+| px/module | 8–24 | 30 | 32 | 40 | 50 | 64 | 80 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| decodes | 8/8 | 4/8 | 7/8 | 8/8 | 7/8 | 7/8 | 7/8 |
+
+Every pitch from ~24 up previously decoded at 0 of 8.
+
+**Residuals, stated plainly.** Pitch 30 is a soft spot at 4/8. At pitch ≥ 32 with the grids
+exactly in phase, detection now succeeds and the *format region* fails its BCH decode — the
+same alignment fault, one stage later. `decodes_across_the_full_module_pitch_range` covers
+8–24 at both phases and ≥ 32 at the off-phase only, and its doc comment says so. The real
+fix for both is the binariser's fixed block grid, not another retry. Note that real optics
+rarely land on an exact integer pitch in exact phase, so this is likelier to bite synthetic
+renders than captures — but that is an argument, not a measurement.
+
+**Cost, timed with every stage inside the same loop iteration at 1280×720:**
+
+| frame | full-res scan | pyramid | full decode |
+|---|---:|---:|---:|
+| clean, no symbol | 22.3 ms | **+8.5 ms (+38%)** | 30.9 ms |
+| noisy, no symbol | 31.2 ms | does not run | 72.3 ms |
+| symbol found at full res | — | does not run | unchanged |
+
+On a noisy empty frame, noise yields a spurious finder triple at full resolution, so `scan`
+returns early and the pyramid never runs. Scanner size 178,720 → 180,270 bytes (+1,550);
+88% raw, 73% gzip.
+
+**A measurement mistake worth recording.** The first cost probe reported "+131%" and
+blamed the pyramid, and a comment claiming so briefly sat in the source. It had been
+comparing a bare scan against a full decode. The mipmap rewrite changed nothing in that
+number — which is what exposed it — and an interleaved decomposition showed the 41 ms is
+`Decoder::decode` walking D13's candidates through format reads on the spurious triple. So:
+
+**D13's candidate walk is the larger live-preview cost.** 41 ms beyond the scan on every
+noisy frame that finds nothing, and a live preview is mostly such frames (57–64% of sweep
+frames located no symbol). Not addressed here; it predates D16 and is the better target
+for scan-loop speed.
+
+**What it unlocks.** Range is bought with sensor pixels per module, and this ceiling was
+what made capture resolution unusable as a lever. `sweep.html` re-enables 1920, 2560 and
+3840 with their decode cost on the label. Unmeasured on a real capture.
+
+### D17. Finder-less symbols: the ring replaces finders, alignment, timing and format region
+
+**Status:** implemented, unmeasured on a real capture. `lc-core` (`border::RingMode`,
+`Layout::finderless`, `capacity_for_symbol`), `crates/lc-decode/src/ring.rs`, `prepare_ring`
+in `crates/lc-decode/src/lib.rs`. Golden vectors regenerated: the 29 ringed colour vectors
+changed; `profile-m-border` and the border-less vectors did not.
+
+**What changed.** A symbol is finder-less exactly when it carries the §6.4 ring and its
+profile is not `M`. Its layout holds payload and reference modules only — no finders,
+separators, palette anchors, alignment marker, timing, or in-grid format region. Those were
+204 fixed modules plus the 60-module format region at every version, 62% of a v1.
+
+**Everything they did now comes from the ring:**
+
+* **Where.** Every version's position sequence forces its four corner positions dark
+  (`forced_dark` in `xtask/src/debruijn.rs`), so the convex hull of a symbol's ink has the
+  ring's outer corners as its corners. Each corner is then refined by intersecting lines
+  fitted to the middles of the adjacent edges.
+* **Which version, which way up, mirrored or not.** Ring luma is sampled under each version's
+  geometry and correlated against that version's sequence at the four corner-aligned shifts,
+  both directions. Accepted at ≥ 0.85 agreement with a ≥ 0.08 lead over the runner-up.
+* **The format.** Every third ring position is a fixed-colour reference; the rest carry two
+  interleaved copies of the 30-bit masked BCH format codeword as Gray-labelled hue choices.
+  Illumination is fitted from the references alone — their colours do not depend on the
+  format — both palette families are tried, and soft BCH picks the one that decodes to the
+  version the correlation named.
+
+Decode tries the ring first and the finder path second. The CRC stays authoritative.
+
+**What it bought — the gallery, same payloads, same 12 px/module:**
+
+| Symbol | JSON | With finders | Finder-less |
+|---|---:|---|---|
+| `contact` | 34 B | v2 25×25 | **v1 21×21** |
+| `location-fix` | 54 B | v2 25×25 | **v1 21×21** |
+| `allergen-profile` | 66 B | v3 29×29 | **v1 21×21** |
+| `device-pairing` | 67 B | v3 29×29 | **v1 21×21** |
+| `membership` | 96 B | v3 29×29 | **v2 25×25** |
+| `device-config` | 144 B | v4 33×33 | **v3 29×29** |
+| `event-admission` (C1) | 144 B | v4 33×33 | **v3 29×29** |
+| `profile-c2` | 144 B | v5 37×37 | **v4 33×33** |
+| `profile-c3` | 144 B | v3 29×29 | **v2 25×25** |
+| `profile-m` | 144 B | v6 41×41 | v6 41×41 — keeps finders |
+
+As the groundwork section predicted, it is a small-symbol win: one or two versions at the
+sizes QR-style payloads actually occur at.
+
+**The trade: a greyscale capture cannot read one.** The format rides on hue. A mono sensor
+can still *locate* a finder-less symbol, but cannot read its format, and
+`finderless_symbol_through_a_grey_sensor_fails_closed` pins that it fails cleanly rather
+than guessing. §1.1 goal 3 now holds for border-less symbols and for profile `M`, which is
+why `M` keeps its finders even with a ring: it has no hue to carry the format on.
+
+**The first detector failed on clean renders, and `tests/ring_diag.rs` found three faults.**
+It traces every stage on the cases that failed; it is `#[ignore]`d and prints rather than
+asserts.
+
+1. **Ring luma was read from the shared adaptive binary.** The ring sits in white quiet
+   zone, so a binarisation block that is mostly white thresholds between a light hue (~188)
+   and white, and light ring cells binarise *dark*. True-version agreement on clean renders
+   was 0.67–0.89, and every clean render at 8, 20, 64 and 80 px/module was rejected. Luma
+   now comes from greyscale, thresholded by a two-means split over ±16 ring positions:
+   **1.000 at every pitch tested**.
+2. **The hull was built from the same binary.** Its 24-level dynamic-range floor is below
+   sensor noise in flat white, so at σ = 0.10 the quiet zone binarised as speckle and all
+   twelve noisy frames' hulls ran to the frame corners; and one global hull spanned two
+   symbols. The detector now builds its own ink map: 5th/95th-percentile levels per 16 px
+   cell pooled over 7×7 cells, a contrast floor of 80 levels, ink meaning anything more than
+   20% of the local range below paper white (so a symbol is one solid region, light hues
+   included), and connected regions on an 8 px grid. Each region's hull is tried largest
+   first, and the union of all ink last.
+3. **Hull corners sat up to 4 px off under blur r = 4.** A third of a module at 12 px/module:
+   the format read perfectly and the payload CRC failed. Hence the edge-line refinement.
+
+**Result.** Roundtrip 17/17 and degradation 12/12, including defocus, the realistic
+combination, and two symbols in one frame. Single-frame noise, measured on v3 `C1` at 12
+px/module:
+
+| σ | 0.35 | 0.36 | 0.37 | 0.38 | 0.39 | 0.40 |
+|---|---:|---:|---:|---:|---:|---:|
+| single frame decodes | 6/6 | 6/6 | 3/6 | 3/6 | 0/6 | 0/6 |
+| 12 accumulated frames | yes | yes | yes | no | no | no |
+
+That left accumulation under 0.02 of σ in which to beat a single frame, so
+`multi_frame_beats_single_frame` now uses glare that moves between frames (radius 0.3,
+strength 1.0: 0/12 single frames decode, 12 accumulated do) — the impairment §12.4 names.
+Its old comment put the single-frame limit at σ ≈ 0.06; a classic symbol measured now
+decodes 11/12 at σ = 0.10, so that figure was already stale for finders too.
+
+**Scanner size: 180,270 → 203,741 bytes, 99% of the raw budget, 82% compressed.** The first
+working detector put the scanner at 237,766 (116%, over). It had to earn its way back
+without D15's declined `opt-level = "z"`. Every cut below was measured, and none changed
+behaviour: roundtrip, degradation and all 24 diagnostic cases were re-run after each.
+
+| change | bytes saved |
+|---|---:|
+| Gift-wrapping hull instead of a sorting one; bounded region selection instead of a sort; closed-form edge fit instead of libm trig; mask-then-scan boundary points | 24,364 |
+| `detect::find_finders`' stable sort replaced by an insertion sort with identical order (pre-D17 code) | 6,633 |
+| Shoelace orientation instead of an angle sort in `quad`; family comparison instead of rebuilding a palette in the format check; radius flood fill instead of a dilation pass | 3,028 |
+| `#[inline(never)]` on the ring helpers — tried, **cost 582**, reverted | — |
+
+**That leaves 1,059 bytes, which is not room for the next feature.** The largest lead
+found: about 11 KB of float formatting (`core::fmt::float`'s Dragon and Grisu paths),
+reached only through `<f32 as Debug>::fmt`.
+
+**Traced afterwards, and it was not ours to delete.** Parsing the shipped binary — data
+section, element segments and every `i32.const` in the code section — finds that function in
+the indirect function table with **no live vtable and no caller**: the linker retained it and
+its Dragon/Grisu dependencies, and no edit to this project's source reaches it. Removing it
+needed a tool that does whole-module dead-code elimination, which is what D20 added; that is
+where the budget pressure actually went, not into another round of hand-shaving.
+
+**Limits, stated plainly.**
+
+* **A region is assumed to be one symbol.** Two symbols whose quiet zones touch, or a symbol
+  over printed text or other dark scene content, merge into one region whose hull is not a
+  ring. That fails safely — it does not correlate — but it fails.
+* **Pitch coverage was not re-measured on D16's 88-cell grid.** Measured: the diagnostic's
+  clean renders at 8, 12, 20, 64 and 80 px/module across the phases it tries, and the
+  roundtrip range test.
+* **Cost not timed.** The ring attempt runs before the finder scan on every frame, including
+  empty ones and classic symbols.
+* **Unmeasured on a real capture.** The sweep is the test, and real scenes are where the
+  one-region assumption will be tried.
+
+### D18. One module between the ring and the grid, not two
+
+**Status:** implemented. `border::GAP`, the renderer's canvas margin, the decoder's ring
+transform, and all 32 regenerated sequences.
+
+**What changed.** The white gap between the symbol grid and the §6.4 ring is one module.
+The quiet zone *outside* the ring is still §6.1's two, and border-less symbols are untouched
+— `QUIET` stays 2 and a new `GAP` carries the inner width. A bordered canvas goes from
+`side + 12` modules across to `side + 10`.
+
+**Why two was not load-bearing.** §6.1's quiet zone exists to isolate the **finders** for the
+1:1:3:1:1 run-length scan, and a finder-less symbol (D17) has none; the ring is found by its
+outer edge, which faces the other way. Nothing samples the gap — no white reference, no
+geometry. Its one remaining job is keeping ring colour out of the grid's edge modules under
+defocus, and one module is several times the ~⅓ module a blur at the §13.1 pitch floor
+spreads.
+
+**What it buys.** Nothing in payload: the grid is fixed by version. It buys *area*, or
+equivalently module pitch at a fixed size on screen — and pitch is range:
+
+| | v1 | v2 | v5 | v32 |
+|---|---:|---:|---:|---:|
+| canvas, modules across | 33 → 31 | 37 → 35 | 49 → 47 | 157 → 155 |
+| area saved | 11.8% | 10.5% | 8.0% | 2.5% |
+
+**What it cost, measured.** The defocus envelope, by ~10%: blur radius ~0.33 modules before,
+~0.30 now. `ring_diag::defocus_and_glare_envelope` across pitches:
+
+| px/module | r=2 | r=3 | r=4 | r=5 | r=6 |
+|---|---|---|---|---|---|
+| 12 | ok | ok (0.25) | **fails** (0.33) | — | — |
+| 14 | ok | ok | ok (0.29) | fails (0.36) | — |
+| 16 | ok | ok | ok | ok (0.31) | fails |
+| 20 | ok | ok | ok | ok | ok (0.30) |
+
+**The cost is geometric, not optical.** Payload sampling never sees ring colour: the luma
+kernel's taps sit 3 px inside the grid edge, a radius-4 blur reaches 1 px past them, and the
+ring is 12 px away. What changed is the reference square the homography is fitted from — the
+ring's outer square is now 31 modules across rather than 33, so the same 2–3 px corner error
+under blur is a larger fraction of it. `survives_defocus` states this and keeps a radius-4
+case at 14 px/module rather than dropping it.
+
+`multi_frame_beats_single_frame` needed its glare strengthened from 1.0 to 1.2: on the
+smaller canvas the blob covers proportionally less symbol, and 2 of 12 single frames were
+surviving. Everything else is unchanged — roundtrip 17/17, degradation 12/12, 555 tests.
+
+**Every version's ring got shorter** — v1 112 → 104 positions, v2 128 → 120, v32 608 → 600 —
+so all 32 sequences were regenerated and re-verified (`docs/border-sequence.md`).
+
+**A generator bug this surfaced, worth recording.** `xtask`'s `ring_positions` carried its
+own copy of the canvas geometry (`side + 12`), so after the gap narrowed it kept emitting
+sequences for the *old, longer* ring: every version's table was quietly wrong, and the
+decoder failed with `FormatUndecodable` on symbols it had just rendered. lc-core's
+`every_sequence_window_is_unique` caught it. The generator now calls `border::positions`, so
+there is one definition of the ring's length rather than two.
+
+**Scanner:** 203,649 raw (99% of budget), 84,898 gzip (82%).
+
+**Spec deviation, stated.** §6.1 says "quiet zone: 2 modules on all sides". For a ringed
+symbol the outer two remain and the inner gap is one. Open decision #10 — whether 2 is
+enough against textured backgrounds — is about the *outer* margin and is untouched by this.
+
+### D19. The ring's inner layer carries payload
+
+**Status:** implemented. `border::payload_cells`/`payload_cell_index`, `Layout::ring_cells`,
+`Symbol::ring`, `modulate`/`demodulate`, the renderer's `canvas_color`, and the decoder's
+`demodulate`, `collect_references` and ring reads. Golden vectors are now schema 2.
+
+**What changed.** P12 gave every ring position two radial layers of the same colour — a
+2-module-deep sampling target. That depth is now kept only where it is load-bearing: the
+**reference positions** (every third) and the **four corners**. A data position's inner cell
+is an ordinary payload module: one luma bit plus the profile's chroma bits, riding in the
+tail of the same two codewords the grid uses, so the existing LDPC codes and the §8.3
+interleaver spread them with no special handling. `C2` takes luma only — its 2×2 chroma cells
+cannot be formed in a band one module deep.
+
+**What it buys, in body bytes at default ECC:**
+
+| | v1 | v2 | v3 | v5 | v32 |
+|---|---:|---:|---:|---:|---:|
+| `C1` | 62 → **73** (+17.7%) | 92 → **106** (+15.2%) | +8.6% | +7.6% | +2.0% |
+| `C3` | 92 → **108** (+17.4%) | 135 → **152** (+12.6%) | +9.8% | +7.6% | +1.9% |
+
+In the gallery: `membership` v3 → v1, `event-admission` v3 → v2, `profile-c3` v2 → v1.
+
+**Why any of the ring stays 2-deep, measured rather than assumed.** The probe repainted every
+data position's inner cell with unrelated palette colours — what the ring would look like
+carrying payload — and had the decoder read data positions from the outer layer only:
+
+| case | sequence agreement | format margin | decode |
+|---|---|---|---|
+| clean, blur r=3, blur r=4 | 1.000 | 224 | ok |
+| noise σ = 0.10 / 0.20 | 1.000 | 175 / 160 (was 224) | ok |
+| realistic combination | **0.941** (was 1.000) | 224 | ok |
+
+Nothing that passes today stops passing; what shrinks is cushion, and it shrinks on the
+hardest case — 0.941 against the 0.85 accept threshold. Giving up the whole inner layer,
+references included, was worth +18.5% at v2 against the hybrid's +15.2%: three bytes, for the
+margins above and for the illumination fit's known-colour samples. Not a good trade.
+
+**Defocus came back.** D18 cost a step of the blur envelope; D19 returned it on the
+degradation fixture, because the 96-byte payload moved from v3 to v2 and now sits in a
+shorter, more redundant code — radius 5 at 12 px/module (0.42 modules) decodes where radius 4
+had stopped. The envelope is a property of the fixture as much as of the format, and
+`survives_defocus` says so.
+
+The multi-frame test's glare had to grow again, to radius 0.35 at strength 1.2: a
+fixed-fraction highlight covers less of a smaller symbol.
+
+**Wire format.** The grid array no longer describes the whole symbol, so the vectors carry
+`ring` — one palette index per ring payload cell — and the schema is 2. 31 of 34 vectors
+changed.
+
+**Limits, stated plainly.**
+
+* **Payload now rides on the most glare-exposed part of the symbol.** Interleaving spreads
+  it, but a highlight across one arc of the ring costs payload bits as well as format margin.
+  The probe above is synthetic; a real capture has not been run.
+* `C2` gains luma only, and profile `M` and border-less symbols gain nothing.
+* **The outer layer's spare hue slots are still unused** — every data position has
+  `log2(hues)` bits of colour choice and the format codeword uses 60 of them, leaving 2–4%
+  more capacity on the table. Cheap to add now the plumbing exists; not done here.
+
+### D20. Binaryen's size pass in the build, on the core module
+
+**Status:** implemented, optional. `justfile` (`wasm_opt_flags`, `_component-full`,
+`_component-scanner`).
+
+**Why it exists.** D19 put the scanner 1,376 bytes over §14.2's raw budget, and hand-shaving
+had run out: 1,185 bytes came back from deduplicating an LLR function, dropping an
+allocation, and collapsing a dead branch, and the next largest item — 11 KB of float
+formatting — turned out to be linker-retained code with no live caller that no source edit
+reaches (see D17). Whole-module dead-code elimination is the tool for that, and binaryen has
+it.
+
+**What it does, measured:**
+
+| artifact | without | with | change |
+|---|---:|---:|---:|
+| scanner | 206,176 (101%) | **182,324 (89%)** | −23,852 |
+| full | 305,609 | **272,729** | −32,880 |
+
+**And it is faster, which was the open question.** D15 declined `opt-level = "z"` because it
+cost 11% median decode time; a size win has to be priced the same way. Timed through
+wasmtime, 372×372, 20 frames after a warm-up (`decode_cost_through_the_component`):
+
+| build | per frame |
+|---|---:|
+| without wasm-opt | 26.88 ms |
+| with wasm-opt | **23.01 ms** |
+
+14% **faster**, not slower — which is the difference between changing rustc's codegen and
+running a post-pass over it. Measured under wasmtime rather than jco, so read the ratio.
+
+**Two things about how it is wired.**
+
+* **On the core module, before `wasm-tools component new`.** Binaryen does not read
+  component-model binaries.
+* **Exactly the features rustc emits — `--enable-bulk-memory --enable-sign-ext
+  --enable-mutable-globals --enable-nontrapping-float-to-int` — and not `-all`.** With
+  `-all`, binaryen optimised into instructions wasmtime rejects by default and every
+  component failed to parse at load. `wasm-tools validate --features=component-model`
+  **passed that broken artifact**; what caught it was `cargo test -p lc-wasm`, which
+  instantiates what is actually shipped. The lesson is about the gate, not the flag.
+
+**Optional by design.** Without binaryen on `PATH` the build prints a note and carries on, so
+a contributor without it still builds; with it, a failure is a hard failure rather than a
+silently unoptimised artifact. The budget figures above and in D19 assume it is present,
+which is worth remembering if CI ever runs somewhere it is not.
+
 ## Pinned — filling holes the draft left open
 
 | # | Spec item | Pinned as | Where |

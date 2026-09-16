@@ -242,7 +242,10 @@ function tick() {
 $('start').onclick = async () => {
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+      // 1920: ~1.5x the working distance of 1280 for ~1.5x the decode time. Held back
+      // until D16 lifted the pitch ceiling — before that, more resolution pushed close-range
+      // captures past ~22 px/module and nothing decoded. Not higher: 4K costs ~4x per frame.
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } },
       audio: false,
     });
   } catch (e) {

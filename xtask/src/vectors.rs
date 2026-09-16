@@ -36,6 +36,11 @@
 //! boundary. The wire format is the arrangement of palette slots; which sRGB triples fill
 //! them is a rendering concern.
 //!
+//! Since D19 a symbol also carries payload on the ring's inner cells, which are outside
+//! that grid: `ring` lists their palette indices in `border::payload_cells` order. It is
+//! part of the wire format for the same reason the grid is — two encoders that disagree
+//! about it produce symbols that decode differently.
+//!
 //! `crc32` is CRC-32/ISO-HDLC over that byte array — change detection, not cryptography,
 //! and already in `lc-core` for the §9.1 extended frame, so no new dependency and no
 //! ambiguity about which CRC-32 is meant.
@@ -129,7 +134,6 @@ fn opts(
         compression: Some(Compression::None),
         reference_border: border,
         mask,
-        ..Default::default()
     }
 }
 
@@ -278,12 +282,12 @@ pub fn report() -> String {
     let mut s = String::new();
     s.push_str("{\n");
     s.push_str("  \"format\": \"lc-code-golden-vectors\",\n");
-    s.push_str("  \"schema\": 1,\n");
+    s.push_str("  \"schema\": 2,\n");
     s.push_str("  \"spec\": \"v0.4\",\n");
     s.push_str(
         "  \"note\": \"Canonical form is side*side palette indices, row-major, one byte \
          each, quiet zone excluded. An index is l*k + h, so these are independent of the \
-         palette's sRGB values. crc32 is CRC-32/ISO-HDLC over that array. Regenerate with \
+         palette's sRGB values. crc32 is CRC-32/ISO-HDLC over that array. `ring` is one palette index per ring          payload cell (D19), in border::payload_cells order, and is wire format too.          Regenerate with \
          `just vectors`; a change here is a wire-format change.\",\n",
     );
     s.push_str("  \"vectors\": [\n");
@@ -310,11 +314,11 @@ pub fn report() -> String {
             r,
             "      \"input\": \"{kind}\",\n      \"payload\": {payload},\n"
         );
-        let _ = write!(
+        let _ = writeln!(
             r,
             "      \"options\": {{ \"profile\": \"{}\", \"version\": {}, \"ecc_luma\": {}, \
              \"ecc_chroma\": {}, \"mask\": {}, \"compression\": \"{}\", \
-             \"reference_border\": {} }},\n",
+             \"reference_border\": {} }},",
             profile_name(case.opts.profile),
             case.opts
                 .version
@@ -325,9 +329,9 @@ pub fn report() -> String {
             compression_name(case.opts.compression),
             case.opts.reference_border,
         );
-        let _ = write!(
+        let _ = writeln!(
             r,
-            "      \"resolved\": {{ \"version\": {}, \"mask\": {}, \"side\": {} }},\n",
+            "      \"resolved\": {{ \"version\": {}, \"mask\": {}, \"side\": {} }},",
             sym.format.version.get(),
             sym.format.mask,
             side,
@@ -335,6 +339,9 @@ pub fn report() -> String {
         let _ = write!(r, "      \"crc32\": \"{crc:08x}\"");
         if side <= FULL_GRID_MAX_SIDE {
             let _ = write!(r, ",\n      \"modules\": \"{}\"", hex(cells));
+        }
+        if !sym.ring.is_empty() {
+            let _ = write!(r, ",\n      \"ring\": \"{}\"", hex(&sym.ring));
         }
         r.push_str("\n    }");
         rows.push(r);

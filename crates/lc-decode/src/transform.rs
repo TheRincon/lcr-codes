@@ -100,6 +100,35 @@ impl Transform {
         let dy = ((d.0 - c.0).powi(2) + (d.1 - c.1).powi(2)).sqrt();
         0.5 * (dx + dy)
     }
+
+    /// Module pitch at the extremes of a `side`×`side` symbol, as `(min, max)`.
+    ///
+    /// Two facts about a capture fall out of this pair, and neither needs the camera
+    /// intrinsics — which a browser does not expose and a phone does not report:
+    ///
+    /// * **Range** is the pitch itself. A symbol drawn at a fixed size on a screen
+    ///   subtends fewer sensor pixels the further away it is, so the pitch *is* the
+    ///   distance, measured in the unit §13.1 actually constrains.
+    /// * **Obliquity** is `max / min`. A projective map compresses the far edge more than
+    ///   the near one, so a fronto-parallel view gives a ratio of 1 and the ratio climbs
+    ///   with viewing angle. Converting it to degrees would need the focal length; the
+    ///   ratio needs nothing and is the honest measurement.
+    ///
+    /// Corners are sampled inset by two modules so [`Transform::local_pitch`]'s forward
+    /// difference stays inside the grid rather than extrapolating past its edge.
+    pub fn pitch_range(&self, side: u16) -> (f32, f32) {
+        let far = side.saturating_sub(2);
+        let mut lo = f32::INFINITY;
+        let mut hi = 0.0f32;
+        // Under a projective map the pitch is monotone along the gradient direction, so
+        // the extremes over the grid are attained at its corners.
+        for (x, y) in [(0, 0), (far, 0), (0, far), (far, far)] {
+            let p = self.local_pitch(x, y);
+            lo = lo.min(p);
+            hi = hi.max(p);
+        }
+        (lo, hi)
+    }
 }
 
 #[cfg(test)]
@@ -150,6 +179,38 @@ mod tests {
         for (s, d) in src.iter().zip(dst.iter()) {
             assert!(close(t.apply(s.0, s.1), *d, 1e-3));
         }
+    }
+
+    #[test]
+    fn pitch_range_is_flat_when_the_view_is_fronto_parallel() {
+        let src = [(0.0, 0.0), (21.0, 0.0), (0.0, 21.0), (21.0, 21.0)];
+        let dst = [(0.0, 0.0), (210.0, 0.0), (0.0, 210.0), (210.0, 210.0)];
+        let t = Transform::from_quad(src, dst).unwrap();
+        let (lo, hi) = t.pitch_range(21);
+        assert!((lo - 10.0).abs() < 1e-3, "min pitch {lo}");
+        assert!((hi / lo - 1.0).abs() < 1e-3, "obliquity {}", hi / lo);
+    }
+
+    /// The measurement the capture sweep rests on: obliquity has to *increase* with the
+    /// viewing angle, or the logged ratio says nothing about how the phone was held.
+    #[test]
+    fn pitch_range_obliquity_grows_with_foreshortening() {
+        let src = [(0.0, 0.0), (20.0, 0.0), (0.0, 20.0), (20.0, 20.0)];
+        let ratio = |far_width: f32| {
+            let inset = (200.0 - far_width) / 2.0;
+            let dst = [
+                (0.0, 0.0),
+                (200.0, 0.0),
+                (inset, 200.0),
+                (200.0 - inset, 200.0),
+            ];
+            let t = Transform::from_quad(src, dst).unwrap();
+            let (lo, hi) = t.pitch_range(20);
+            hi / lo
+        };
+        let (mild, steep) = (ratio(160.0), ratio(90.0));
+        assert!(mild > 1.0, "a foreshortened view is not flat: {mild}");
+        assert!(steep > mild, "steeper must read higher: {steep} vs {mild}");
     }
 
     #[test]

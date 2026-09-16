@@ -102,11 +102,37 @@ interface types {
     format-margin: f32,
     /// Whether a full homography was fitted rather than an affine fallback.
     alignment-found: bool,
+    /// Module pitch as **captured**, in sensor pixels, at the symbol's finest corner.
+    ///
+    /// Distinct from §13.1's device-pixels-per-module, which describes how the display
+    /// drew the symbol. This is what survived the optical path, and it is what a working
+    /// range is a measurement of: a symbol of fixed size subtends fewer sensor pixels the
+    /// further away the camera is.
+    capture-pitch-min: f32,
+    /// Module pitch as captured at the symbol's coarsest corner. The ratio against
+    /// `capture-pitch-min` measures viewing obliquity without needing camera intrinsics.
+    capture-pitch-max: f32,
   }
 
   record decode-result {
     packet: packet,
     diagnostics: diagnostics,
+  }
+
+  /// Where a symbol is and how it was captured, established without decoding it.
+  ///
+  /// Every field also appears in `diagnostics`. The point of the separate record is that
+  /// these are the fields that survive a decode failure: they come from §12.1–§12.3,
+  /// which run before any payload is touched.
+  record probe-result {
+    version: u8,
+    profile: profile,
+    format-margin: f32,
+    alignment-found: bool,
+    illum-residual-rms: f32,
+    references-rejected: u8,
+    capture-pitch-min: f32,
+    capture-pitch-max: f32,
   }
 
   /// A captured frame.
@@ -122,10 +148,19 @@ interface types {
 
 /// Reading symbols (§12).
 interface decoder {
-  use types.{image, decode-result};
+  use types.{image, decode-result, probe-result};
 
   /// Decode a single frame.
   decode: func(img: image) -> result<decode-result, string>;
+
+  /// Locate a symbol and measure the capture geometry, without decoding it.
+  ///
+  /// §12.1–§12.3 only. A failed `decode` returns a string, which cannot tell a host
+  /// whether there was no symbol in the frame or a symbol whose payload was marginal —
+  /// opposite instructions to give a user, and §14.3 keeps diagnostics precisely so a
+  /// host can give the right one. Succeeding here means the symbol was found and its
+  /// format region read, and says nothing about the payload.
+  probe: func(img: image) -> result<probe-result, string>;
 
   /// Multi-frame LLR combining (§12.4), which the spec calls "the single best use of a
   /// live camera preview": banding and glare move between frames, so accumulating soft
@@ -155,6 +190,14 @@ interface codec {
   /// CBOR". A decoded `payload` whose `ctype` is `cbor` is bytes; this is the inverse of
   /// the conversion the encoder performed.
   cbor-to-json: func(body: list<u8>) -> result<string, string>;
+
+  /// The write side: the exact bytes `encoder.encode-json` puts on the wire.
+  ///
+  /// Exposed because a caller sometimes needs the payload itself and not just a symbol
+  /// containing it — measuring what §9.4's "author in JSON, transmit CBOR" actually saves,
+  /// or handing the identical bytes to something else so a comparison is of the carrier
+  /// rather than of the container.
+  json-to-cbor: func(json: string) -> result<list<u8>, string>;
 }
 
 /// Writing symbols (§8).
@@ -201,15 +244,66 @@ interface encoder {
   encode-json-svg: func(json: string, opts: options, module-px: u32) -> result<string, string>;
 }
 
+/// QR generation, for the density comparison in `web/display.html`.
+///
+/// **Not part of the symbology.** It exists so the README's density claim can be looked at
+/// side by side rather than taken on trust, and it is exported only by the
+/// `lc-code-compare` world — neither shipped artifact has it.
+///
+/// Generation is the `qrcodegen` crate rather than code written here: a comparison is
+/// worth what the thing it compares against is worth, and a hand-rolled QR encoder would
+/// make the density figure rest on that encoder's masking and interleaving being right.
+interface compare {
+  /// QR error-correction level, named as ISO/IEC 18004 names them. Deliberately not
+  /// mapped onto LC Code's 0–3 scale: the two do not correspond, and pretending they do
+  /// is the easiest way to publish an unfair comparison.
+  enum qr-ecc { low, medium, quartile, high }
+
+  /// A generated QR symbol as a module grid.
+  ///
+  /// Modules rather than pixels so the caller rasterises both symbologies through one
+  /// path at one pitch — an area comparison whose two sides were drawn by different code
+  /// is measuring the drawing.
+  record qr-symbol {
+    /// Row-major, one byte per module, 1 = dark.
+    modules: list<u8>,
+    /// Grid side in modules, excluding the quiet zone.
+    size: u32,
+    /// QR version, 1..=40.
+    version: u8,
+    /// Quiet zone the standard requires per side, in modules. Four, against LC Code's two
+    /// (§6.1) — which is why a bare-grid area comparison flatters QR.
+    quiet-zone: u32,
+    payload-bytes: u32,
+  }
+
+  /// Encode bytes in QR byte mode.
+  ///
+  /// Byte mode is the fair choice: LC Code carries arbitrary bytes natively and §9.6
+  /// refuses a text-safe encoding layer precisely because QR's alphanumeric restriction
+  /// forces one on comparable systems. An alphanumeric payload would measure a
+  /// restriction LC Code does not have.
+  qr-encode: func(data: list<u8>, ecl: qr-ecc) -> result<qr-symbol, string>;
+}
+
 /// Decode only — the scanner build. §14.1 keeps the encoder out so a scanner cannot
 /// acquire it by accident.
 world scanner {
   export decoder;
 }
 
-/// Decode and encode.
+/// Decode and encode. One of the two shipped artifacts; carries no QR.
 world lc-code {
   export decoder;
   export encoder;
   export codec;
+}
+
+/// The demo build: everything above plus QR generation. Built only by `just web`, never
+/// shipped, so a competing symbology cannot reach an artifact anyone embeds.
+world lc-code-compare {
+  export decoder;
+  export encoder;
+  export codec;
+  export compare;
 }

@@ -448,6 +448,36 @@ pub fn binarize(gray: &[u8], width: u32, height: u32) -> Binary {
     }
 }
 
+/// Box-filter downscale of a greyscale buffer by an integer factor.
+///
+/// Averaging rather than point sampling, deliberately. The §15 harness was once wrong for
+/// exactly this reason — its `perspective` op took a single bilinear tap per output pixel
+/// and measured its own resampler instead of the tilt it was sweeping. A point-sampled
+/// reduction here would alias the module grid against the sampling grid and produce the
+/// same class of artefact, at the one stage whose whole job is to find that grid.
+pub fn downscale(gray: &[u8], width: u32, height: u32, factor: u32) -> (Vec<u8>, u32, u32) {
+    debug_assert!(factor >= 1);
+    if factor <= 1 {
+        return (gray.to_vec(), width, height);
+    }
+    let (w, h) = (width / factor, height / factor);
+    let mut out = vec![0u8; (w * h) as usize];
+    let n = factor * factor;
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = 0u32;
+            for dy in 0..factor {
+                let row = ((y * factor + dy) * width) as usize;
+                for dx in 0..factor {
+                    sum += gray[row + (x * factor + dx) as usize] as u32;
+                }
+            }
+            out[(y * w + x) as usize] = (sum / n) as u8;
+        }
+    }
+    (out, w, h)
+}
+
 #[cfg(test)]
 mod tests {
     /// Adversarial dimensions must be rejected, not overflow.

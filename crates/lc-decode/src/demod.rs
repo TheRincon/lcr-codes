@@ -193,7 +193,7 @@ pub fn collect_references(
     t: &Transform,
     layout: &Layout,
     palette: &Palette,
-    reference_border: bool,
+    ring: Option<border::RingMode>,
 ) -> Vec<crate::illum::Reference> {
     let mut out = Vec::new();
     let mut push = |x: f32, y: f32, observed: Linear, nominal: Linear| {
@@ -225,11 +225,22 @@ pub fn collect_references(
         }
     }
 
-    if reference_border {
+    // `None` is a symbol without the §6.4 ring. With one, the mode says what its colour
+    // choices carry — and so what colour every ring cell should be (D17).
+    if let Some(mode) = ring {
         for (bx, by) in border::cells(layout.side) {
-            let Some(nominal) = border::cell_color(bx, by, layout.side, palette) else {
+            let Some(nominal) = border::cell_color_in(bx, by, layout.side, palette, mode) else {
                 continue;
             };
+            // A data position's inner cell carries payload (D19), so its colour is not
+            // known a priori. Reference positions stay 2-deep and still count twice.
+            if layout.ring_cells > 0
+                && let Some(p) = border::position(bx, by, layout.side)
+                && !border::is_two_deep(p)
+                && (bx, by) != border::outer_cell(p, layout.side)
+            {
+                continue;
+            }
             push(
                 bx as f32 + 0.5,
                 by as f32 + 0.5,
@@ -357,11 +368,37 @@ pub fn demodulate(
             let lab = color::linear_to_lab(illum.correct(centre_x, centre_y, raw));
             let weight = stats.reliability(lab, palette);
             stats.hue_log_likelihoods(lab, palette, &mut hue_ll);
-            chroma_bit_llrs(&hue_ll, cx, cy, palette.hues, &mut bits);
+            chroma_bit_llrs(&hue_ll, Some((cx, cy)), palette.hues, &mut bits);
             chroma.extend(
                 bits.iter()
                     .map(|v| (v * weight).clamp(-LLR_CLAMP, LLR_CLAMP)),
             );
+        }
+    }
+
+    // The ring's payload cells (D19): ordinary payload modules, sampled through the same
+    // kernel and appended to the tail of each layer, exactly where `modulate` put them.
+    if layout.ring_cells > 0 {
+        let ring_chroma = with_chroma && bpc > 0 && layout.profile.chroma_cell() == 1;
+        let mut hue_ll = Vec::with_capacity(palette.hues);
+        let mut bits = Vec::with_capacity(bpc);
+        for (x, y) in border::payload_cells(layout.side) {
+            let raw = sample_module(img, t, x, y);
+            let lab = color::linear_to_lab(illum.correct(x as f32 + 0.5, y as f32 + 0.5, raw));
+            let weight = if with_chroma {
+                stats.reliability(lab, palette)
+            } else {
+                1.0
+            };
+            luma.push(stats.luma_llr(lab.l) * weight);
+            if ring_chroma {
+                stats.hue_log_likelihoods(lab, palette, &mut hue_ll);
+                chroma_bit_llrs(&hue_ll, None, palette.hues, &mut bits);
+                chroma.extend(
+                    bits.iter()
+                        .map(|v| (v * weight).clamp(-LLR_CLAMP, LLR_CLAMP)),
+                );
+            }
         }
     }
 

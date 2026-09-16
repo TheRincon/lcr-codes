@@ -168,8 +168,12 @@ fn monochrome_capture_decodes_the_m_profile() {
 #[test]
 fn monochrome_capture_of_a_colour_symbol_yields_a_partial() {
     let data = vec![0x33u8; 120];
+    // Border off: the classic, finder-bearing layout, whose format region is luma-only and
+    // so survives a monochrome sensor. A finder-less symbol cannot do this — see
+    // `finderless_symbol_through_a_grey_sensor_fails_closed`.
     let opts = EncodeOptions {
         compression: Some(Compression::None),
+        reference_border: false,
         ..Default::default()
     };
     let sym = lc_encode::encode_bytes(&data, &opts).unwrap();
@@ -331,4 +335,248 @@ fn decodes_at_the_normative_minimum_module_pitch() {
             }
         }
     }
+}
+
+/// Ground-truth for the measurement the capture sweep rests on.
+///
+/// `Decoder::probe` reports a captured module pitch, and the sweep uses it as its
+/// distance axis — so it has to agree with reality where reality is known. On a clean
+/// fronto-parallel render the pitch is exactly the `module_px` the renderer drew at, and
+/// the obliquity ratio is 1. If this drifts, every working-range figure measured through
+/// the rig is off by the same factor, silently.
+#[test]
+fn probe_measures_the_pitch_the_renderer_drew_at() {
+    let data: Vec<u8> = (0..60u8)
+        .map(|i| i.wrapping_mul(13).wrapping_add(7))
+        .collect();
+    for profile in [Profile::C1, Profile::C3] {
+        for module_px in [8u32, 12, 20] {
+            let opts = EncodeOptions {
+                profile,
+                compression: Some(Compression::None),
+                ..Default::default()
+            };
+            let sym = lc_encode::encode_bytes(&data, &opts).unwrap();
+            let raster = render_rgb(
+                &sym,
+                &RenderOptions {
+                    module_px,
+                    ..RenderOptions::screen()
+                },
+            );
+            let view = lc_decode::image::ImageView::new(
+                &raster.data,
+                raster.width,
+                raster.height,
+                raster.width * 3,
+                lc_decode::image::PixelFormat::Rgb8,
+            )
+            .unwrap();
+            let p = Decoder::new().probe(&view).unwrap();
+
+            let want = module_px as f32;
+            assert!(
+                (p.capture_pitch_min - want).abs() < 0.5,
+                "{profile:?} @ {module_px}px: measured {} want {want}",
+                p.capture_pitch_min,
+            );
+            let obliquity = p.capture_pitch_max / p.capture_pitch_min;
+            assert!(
+                (obliquity - 1.0).abs() < 0.02,
+                "{profile:?} @ {module_px}px: fronto-parallel read as oblique ({obliquity})",
+            );
+        }
+    }
+}
+
+/// The distinction `probe` exists to draw: it must fail where there is no symbol, so a
+/// host can tell "nothing in frame" from "found it, payload marginal". A probe that
+/// succeeded on noise would make every failed decode look like a marginal one.
+#[test]
+fn probe_finds_nothing_in_a_frame_with_no_symbol() {
+    let (w, h) = (320u32, 240u32);
+    let noise: Vec<u8> = (0..(w * h * 3))
+        .map(|i| (i.wrapping_mul(2654435761) >> 16) as u8)
+        .collect();
+    let view =
+        lc_decode::image::ImageView::new(&noise, w, h, w * 3, lc_decode::image::PixelFormat::Rgb8)
+            .unwrap();
+    assert!(Decoder::new().probe(&view).is_err());
+}
+
+/// Two symbols in one frame must not defeat each other.
+///
+/// §6.2 adopts QR's 1:1:3:1:1 finder deliberately (Appendix B), and the finder carries no
+/// identity — so a frame holding two codes presents six finder-like patterns, and when
+/// both are at the same module pitch the module-spread filter cannot separate them. A
+/// triple straddling the two symbols can score *better* on right-angleness than either
+/// real triple, and detection used to commit to the single best-scoring triple with no
+/// way back: the format region then failed and the whole decode returned
+/// `FormatUndecodable` on a frame containing two perfectly good symbols.
+///
+/// Found while building §17.2 dual-render, where an LC symbol sits beside a QR — but the
+/// pure-LC case here is the general one, and a poster with two codes on it is an ordinary
+/// thing to point a camera at.
+#[test]
+fn a_frame_holding_two_symbols_still_decodes_one() {
+    const PX: u32 = 10;
+    const GAP: u32 = 8 * PX;
+
+    let render = |data: &[u8]| {
+        let sym = lc_encode::encode_bytes(
+            data,
+            &EncodeOptions {
+                profile: Profile::C1,
+                compression: Some(Compression::None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        render_rgb(
+            &sym,
+            &RenderOptions {
+                module_px: PX,
+                ..RenderOptions::screen()
+            },
+        )
+    };
+
+    let left = render(b"left-hand symbol payload");
+    let right = render(b"right-hand symbol payload");
+
+    // Compose side by side on white, both at the same pitch — the case the module-spread
+    // filter is blind to.
+    let w = left.width + GAP + right.width;
+    let h = left.height.max(right.height);
+    let mut data = vec![255u8; (w * h * 3) as usize];
+    let mut blit = |src: &lc_render::Raster, at_x: u32| {
+        for y in 0..src.height {
+            let s = ((y * src.width) * 3) as usize;
+            let d = ((y * w + at_x) * 3) as usize;
+            let n = (src.width * 3) as usize;
+            data[d..d + n].copy_from_slice(&src.data[s..s + n]);
+        }
+    };
+    blit(&left, 0);
+    blit(&right, left.width + GAP);
+
+    let out = Decoder::new()
+        .decode_rgb(&data, w, h, w * 3)
+        .expect("one of the two symbols must decode");
+    match out.packet {
+        Packet::Unsigned { body, .. } => {
+            let got = core::str::from_utf8(&body).unwrap();
+            assert!(
+                got == "left-hand symbol payload" || got == "right-hand symbol payload",
+                "decoded something that was in neither symbol: {got:?}",
+            );
+        }
+        other => panic!("unexpected packet {other:?}"),
+    }
+}
+
+/// Detection has an **upper** limit on module pitch, not only §13.1's lower one.
+///
+/// Found on 2026-09-14 by raising the capture rig to 4K: the captured pitch tripled and
+/// nothing decoded at any distance. Measured on clean renders, the run-ratio scan worked
+/// from 8 to ~22 px/module and then stopped — with extra failures at exactly 16 and 24,
+/// `2·BLOCK` and `3·BLOCK`, where the binariser's fixed 8-pixel grid aligns with the module
+/// grid. That is D6's mechanism recurring at multiples D6 never tested.
+///
+/// It matters because range is bought with sensor pixels per module, so the ceiling capped
+/// the working distance: every attempt to buy range by raising capture resolution walked
+/// straight into it.
+///
+/// `PYRAMID_LEVELS` (D16) fixes it by retrying the finder search on a halved image, which divides
+/// the pitch back into the band that works. Guarded here across the whole range because the
+/// failure was silent — a symbol that is too *large* looks exactly like no symbol at all.
+#[test]
+fn decodes_across_the_full_module_pitch_range() {
+    let data = b"pitch ceiling regression";
+    let opts = EncodeOptions {
+        profile: Profile::C1,
+        compression: Some(Compression::None),
+        ..Default::default()
+    };
+    let sym = lc_encode::encode_bytes(data, &opts).unwrap();
+
+    // 8..=24 at both phases, then the large pitches at a non-aligned phase only.
+    //
+    // **Known residual**: at pitch 32 and up *with the grids exactly in phase* (offset 0,
+    // pitch an exact multiple of `BLOCK`), detection now succeeds but the format region
+    // fails its BCH decode — the same alignment fault, one stage later. The pyramid lifted
+    // the detection ceiling, which is what capped working range; this remainder is
+    // recorded rather than hidden, and wants the binariser's fixed block grid fixing
+    // properly rather than another retry bolted on.
+    for module_px in [8u32, 10, 12, 16, 20, 24, 32, 40, 64] {
+        let phases: &[u32] = if module_px >= 32 { &[1] } else { &[0, 1] };
+        let r = render_rgb(
+            &sym,
+            &RenderOptions {
+                module_px,
+                ..RenderOptions::screen()
+            },
+        );
+        // Offset by one pixel: at 16 and 24 the bug appeared *only* when the binarisation
+        // grid and the module grid were in phase, so a zero-offset render alone would have
+        // missed half of it.
+        for &offset in phases {
+            let (w, h) = (r.width + offset, r.height + offset);
+            let mut buf = vec![255u8; (w * h * 3) as usize];
+            for y in 0..r.height {
+                let s = (y * r.width * 3) as usize;
+                let d = (((y + offset) * w + offset) * 3) as usize;
+                let n = (r.width * 3) as usize;
+                buf[d..d + n].copy_from_slice(&r.data[s..s + n]);
+            }
+            match Decoder::new().decode_rgb(&buf, w, h, w * 3) {
+                Ok(out) => match out.packet {
+                    Packet::Unsigned { body, .. } => {
+                        assert_eq!(body, data, "{module_px} px/module, offset {offset}")
+                    }
+                    other => panic!("{module_px} px/module, offset {offset}: {other:?}"),
+                },
+                Err(e) => panic!("{module_px} px/module, offset {offset}: {e}"),
+            }
+        }
+    }
+}
+
+/// The trade D17 makes, pinned so it cannot slip by silently.
+///
+/// A finder-less symbol carries its format on the ring's *hue* choices, because the ring's
+/// luma is spent on the position sequence. So a greyscale capture cannot read the format,
+/// and without the format there is no layout, mask or ECC level to decode even a luma prefix
+/// against. §1.1 goal 3's graceful degradation is lost for finder-less symbols — print, and
+/// profile `M`, keep it. What must hold is that it fails *closed*: an error, never a payload.
+#[test]
+fn finderless_symbol_through_a_grey_sensor_fails_closed() {
+    let data = vec![0x33u8; 120];
+    let opts = EncodeOptions {
+        compression: Some(Compression::None),
+        ..Default::default()
+    };
+    assert!(lc_core::layout::Layout::is_finderless(
+        opts.profile,
+        opts.reference_border
+    ));
+    let sym = lc_encode::encode_bytes(&data, &opts).unwrap();
+    let raster = render_rgb(&sym, &RenderOptions::screen());
+    let gray: Vec<u8> = raster
+        .data
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|p| ((54 * p[0] as u32 + 183 * p[1] as u32 + 19 * p[2] as u32) >> 8) as u8)
+        .collect();
+    let lenient = Decoder::new().with_options(DecodeOptions {
+        allow_partial: true,
+        ..Default::default()
+    });
+    assert!(
+        lenient
+            .decode_gray(&gray, raster.width, raster.height, raster.width)
+            .is_err(),
+        "a finder-less symbol must not decode, even partially, from a greyscale capture"
+    );
 }

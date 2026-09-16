@@ -28,6 +28,14 @@ lc-render = { path = "crates/lc-render", version = "0.4.0", default-features = f
 lc-verify = { path = "crates/lc-verify", version = "0.4.0", default-features = false }
 
 miniz_oxide   = { version = "0.9", default-features = false, features = ["with-alloc"] }
+# QR generation for §17.2 dual-render, behind `lc-render/qr`. Pure Rust, zero
+# dependencies. A library rather than something written here: LC Code has no business
+# implementing a second symbology, and a hand-rolled QR encoder's masking and interleaving
+# are not provable without a decoder.
+qrcodegen     = { version = "1.8" }
+# QR decoder. Tests only, so a dual-render is verified rather than asserted.
+# `default-features = false` drops `image`, which §14.2 gates out of the wasm path.
+rqrr          = { version = "0.11", default-features = false }
 p256          = { version = "0.13", default-features = false, features = ["ecdsa", "sha256"] }
 ed25519-dalek = { version = "2",    default-features = false }
 

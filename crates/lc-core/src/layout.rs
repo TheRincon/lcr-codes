@@ -117,6 +117,8 @@ pub struct Layout {
     pub chroma_of: ModuleGrid<u32>,
     /// Centres of every alignment marker.
     pub alignment_centers: Vec<(u16, u16)>,
+    /// Ring cells carrying payload (D19). Zero unless the layout is finder-less.
+    pub ring_cells: usize,
 }
 
 impl Layout {
@@ -206,28 +208,10 @@ impl Layout {
         }
 
         // 6. Scattered references (§6.3), cycling the palette in raster order of tile.
-        let tiles_per_row = side.div_ceil(16) as usize;
-        for y in 0..side {
-            for x in 0..side {
-                let sub = match (x % 16, y % 16) {
-                    (3, 3) => Some(0usize),
-                    (11, 3) => Some(1),
-                    (3, 11) => Some(2),
-                    (11, 11) => Some(3),
-                    _ => None,
-                };
-                let Some(sub) = sub else { continue };
-                if *roles.at(x, y) != ModuleRole::Payload {
-                    continue;
-                }
-                let tile = (y / 16) as usize * tiles_per_row + (x / 16) as usize;
-                roles.set(x, y, ModuleRole::Reference);
-                ref_color.set(x, y, ((tile * 4 + sub) % n_colors) as u8);
-            }
-        }
+        place_references(&mut roles, &mut ref_color, side, n_colors);
 
         // 7. Payload walk and chroma cells.
-        let payload = payload_walk(&roles, side);
+        let payload = payload_walk(&roles, side, true);
         let (chroma_cells, chroma_of) = chroma_layout(&roles, side, profile, &payload);
 
         Layout {
@@ -242,14 +226,81 @@ impl Layout {
             chroma_cells,
             chroma_of,
             alignment_centers,
+            ring_cells: 0,
+        }
+    }
+
+    /// Whether a symbol with this profile and border uses the finder-less layout (D17).
+    ///
+    /// Finder-less needs the ring, because the ring is what a decoder finds it by, and it
+    /// needs hues, because the format codeword rides on the ring's colour choices. So: a
+    /// ring, and not profile `M`. Print has no ring (§6.4) and keeps [`Layout::new`].
+    #[inline]
+    pub fn is_finderless(profile: Profile, reference_border: bool) -> bool {
+        reference_border && profile != Profile::M
+    }
+
+    /// The layout a symbol with this format actually uses.
+    pub fn for_symbol(version: Version, profile: Profile, reference_border: bool) -> Layout {
+        if Layout::is_finderless(profile, reference_border) {
+            Layout::finderless(version, profile)
+        } else {
+            Layout::new(version, profile)
+        }
+    }
+
+    /// The finder-less layout (D17): payload and scattered references, nothing else.
+    ///
+    /// Finders, separators, palette anchors, alignment markers, timing patterns and the
+    /// format region are all gone. Their jobs move to the §6.4 ring, which already sits
+    /// outside the grid: the position sequence gives location, orientation, mirror and the
+    /// homography; the ring's size gives the version; its colour choices carry the format
+    /// codeword; and its reference positions feed §12.3. That returns the fixed 204 modules
+    /// of detection furniture — 46% of a v1 symbol — to payload.
+    ///
+    /// Scattered references stay. They cost ~1.6% and are the only known-colour samples in
+    /// the *interior*, where a glare gradient the ring cannot see still has to be corrected.
+    pub fn finderless(version: Version, profile: Profile) -> Layout {
+        let side = version.side();
+        let n_colors = profile.colors();
+        let mut roles = ModuleGrid::new(side, ModuleRole::Payload);
+        let fixed = ModuleGrid::new(side, None::<bool>);
+        let mut ref_color = ModuleGrid::new(side, u8::MAX);
+        place_references(&mut roles, &mut ref_color, side, n_colors);
+        // No timing column, so column 6 is payload like any other.
+        let payload = payload_walk(&roles, side, false);
+        let (chroma_cells, chroma_of) = chroma_layout(&roles, side, profile, &payload);
+        Layout {
+            version,
+            profile,
+            side,
+            roles,
+            fixed,
+            ref_color,
+            format_cells: [Vec::new(), Vec::new()],
+            payload,
+            chroma_cells,
+            chroma_of,
+            alignment_centers: Vec::new(),
+            ring_cells: crate::border::payload_cells(side).count(),
         }
     }
 
     /// Bits available to each layer before ECC (§8.1).
+    ///
+    /// The ring's payload cells (D19) are ordinary payload modules and count here: one luma
+    /// bit each, plus chroma where the profile's chroma cell is a single module. `C2`'s 2×2
+    /// cells cannot be formed in a 1-module-deep band, so it takes luma only.
     pub fn capacity(&self) -> Capacity {
+        let bpc = self.profile.chroma_bits_per_cell();
+        let ring_chroma = if self.profile.chroma_cell() == 1 {
+            self.ring_cells * bpc
+        } else {
+            0
+        };
         Capacity {
-            luma_bits: self.payload.len(),
-            chroma_bits: self.chroma_cells.len() * self.profile.chroma_bits_per_cell(),
+            luma_bits: self.payload.len() + self.ring_cells,
+            chroma_bits: self.chroma_cells.len() * bpc + ring_chroma,
         }
     }
 
@@ -370,21 +421,55 @@ fn claim(
     got
 }
 
+/// Scattered references (§6.3), cycling the palette in raster order of tile.
+fn place_references(
+    roles: &mut ModuleGrid<ModuleRole>,
+    ref_color: &mut ModuleGrid<u8>,
+    side: u16,
+    n_colors: usize,
+) {
+    let tiles_per_row = side.div_ceil(16) as usize;
+    for y in 0..side {
+        for x in 0..side {
+            let sub = match (x % 16, y % 16) {
+                (3, 3) => Some(0usize),
+                (11, 3) => Some(1),
+                (3, 11) => Some(2),
+                (11, 11) => Some(3),
+                _ => None,
+            };
+            let Some(sub) = sub else { continue };
+            if *roles.at(x, y) != ModuleRole::Payload {
+                continue;
+            }
+            let tile = (y / 16) as usize * tiles_per_row + (x / 16) as usize;
+            roles.set(x, y, ModuleRole::Reference);
+            ref_color.set(x, y, ((tile * 4 + sub) % n_colors) as u8);
+        }
+    }
+}
+
 /// Boustrophedon column-pair walk from bottom-right upward (§8.4).
 ///
 /// Column 6 is skipped wholesale: it is timing or finder along its entire length and
 /// never carries payload, and stepping over it keeps the column pairing aligned.
-fn payload_walk(roles: &ModuleGrid<ModuleRole>, side: u16) -> Vec<(u16, u16)> {
+/// `skip_col6` is the classic layout's rule: column 6 is timing or finder along its whole
+/// length there. The finder-less layout has no timing column and walks every column.
+fn payload_walk(roles: &ModuleGrid<ModuleRole>, side: u16, skip_col6: bool) -> Vec<(u16, u16)> {
     let mut out = Vec::new();
     let mut x = side - 1;
     let mut upward = true;
     loop {
-        if x == 6 {
+        if skip_col6 && x == 6 {
             x -= 1;
         }
         for i in 0..side {
             let y = if upward { side - 1 - i } else { i };
             for dx in 0..2u16 {
+                // Without the column-6 skip the pairing ends on column 0 alone.
+                if dx > x {
+                    break;
+                }
                 let cx = x - dx;
                 if roles.at(cx, y).is_payload() {
                     out.push((cx, y));
@@ -704,5 +789,57 @@ mod tests {
         let l = Layout::new(Version::new(10).unwrap(), Profile::M);
         assert_eq!(l.capacity().chroma_bits, 0);
         assert!(l.chroma_cells.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod finderless_tests {
+    use super::*;
+
+    #[test]
+    fn finderless_has_only_payload_and_references() {
+        for v in [1u8, 2, 5, 14, 32] {
+            for profile in [Profile::C1, Profile::C2, Profile::C3] {
+                let l = Layout::finderless(Version::new(v).unwrap(), profile);
+                let (mut pay, mut refs) = (0usize, 0usize);
+                for y in 0..l.side {
+                    for x in 0..l.side {
+                        match l.roles.at(x, y) {
+                            ModuleRole::Payload => pay += 1,
+                            ModuleRole::Reference => refs += 1,
+                            other => panic!("v{v} {profile:?}: unexpected role {other:?}"),
+                        }
+                    }
+                }
+                assert_eq!(pay + refs, l.side as usize * l.side as usize);
+                // The walk must visit every payload module exactly once — column 6 included.
+                assert_eq!(l.payload.len(), pay, "v{v} {profile:?}");
+                let mut seen = alloc::vec![false; l.side as usize * l.side as usize];
+                for &(x, y) in &l.payload {
+                    let i = y as usize * l.side as usize + x as usize;
+                    assert!(!seen[i], "v{v}: ({x},{y}) walked twice");
+                    seen[i] = true;
+                }
+                assert!(l.format_cells.iter().all(Vec::is_empty));
+                assert!(l.alignment_centers.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn finderless_reclaims_capacity_at_every_version() {
+        for v in Version::all() {
+            let classic = Layout::new(v, Profile::C1).capacity();
+            let free = Layout::finderless(v, Profile::C1).capacity();
+            assert!(free.luma_bits > classic.luma_bits, "v{}", v.get());
+        }
+    }
+
+    #[test]
+    fn selector_keeps_m_and_borderless_on_the_classic_layout() {
+        assert!(Layout::is_finderless(Profile::C1, true));
+        assert!(Layout::is_finderless(Profile::C3, true));
+        assert!(!Layout::is_finderless(Profile::M, true));
+        assert!(!Layout::is_finderless(Profile::C1, false));
     }
 }

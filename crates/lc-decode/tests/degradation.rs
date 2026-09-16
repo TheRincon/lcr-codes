@@ -91,10 +91,14 @@ fn encode(profile: Profile) -> lc_core::Symbol {
 /// 10–12, and the degradations below are meant to test the decoder, not to test what
 /// happens when a conforming display app is ignored.
 fn render(sym: &lc_core::Symbol) -> Raster {
+    render_at(sym, 12)
+}
+
+fn render_at(sym: &lc_core::Symbol, module_px: u32) -> Raster {
     render_rgb(
         sym,
         &RenderOptions {
-            module_px: 12,
+            module_px,
             ..RenderOptions::screen()
         },
     )
@@ -235,6 +239,17 @@ fn survives_defocus() {
     for radius in [1u32, 2, 3, 4] {
         assert_decodes(&blur(&base, radius), &format!("blur r={radius}"));
     }
+
+    // The envelope is the blur's size *in modules*, measured across 12–20 px/module by
+    // `ring_diag::defocus_and_glare_envelope`. On this fixture it is ~0.42: radius 5 at the
+    // 12 px/module rendered here decodes and radius 6 (0.50) does not.
+    //
+    // D18 cost this a step — narrowing the ring-to-grid gap shrank the square the homography
+    // is fitted from, and radius 4 stopped decoding. D19 handed it back, for a reason worth
+    // stating: the ring's payload cells moved this 96-byte payload from v3 into v2, so it now
+    // sits in a shorter code with more redundancy. The number is a property of the fixture as
+    // much as of the format.
+    assert_decodes(&blur(&base, 5), "blur r=5 (0.42 modules)");
 }
 
 /// §1.4's whole premise: chroma is the low-bandwidth channel, and 4:2:0 is why. Splitting
@@ -259,21 +274,35 @@ fn survives_an_occluding_finger() {
 
 /// §12.4: "Banding and glare move between frames, so this is very effective and much
 /// cheaper than tightening the code rate."
+///
+/// Moving glare rather than noise, which is what this used to test. The ring detector (D17)
+/// put the single-frame noise limit at σ ≈ 0.36, up from ≈ 0.06, and between there and
+/// where detection itself gives out there is under 0.02 of σ in which accumulation wins — a
+/// test pinned inside that window would measure seed luck. A saturating highlight wandering
+/// across the symbol is the impairment §12.4 names: it defeats every frame here on its own,
+/// and each frame loses a different part of the symbol.
 #[test]
 fn multi_frame_beats_single_frame() {
     let base = render(&encode(Profile::C1));
-    // Noise well past the single-frame limit of σ ≈ 0.06.
-    let sigma = 0.10;
-    let single = noise(&base, sigma, 1);
-    assert!(
-        try_decode(&single).is_err(),
-        "single frame should fail at σ={sigma}"
-    );
+    let glared = |k: u64| {
+        // Golden-angle steps put each frame's highlight somewhere new.
+        let a = k as f32 * 2.399;
+        // Radius 0.35 at strength 1.2. Both have had to grow as the symbol shrank: D18's
+        // canvas and then D19's smaller version leave a fixed-fraction blob covering less of
+        // the symbol. Measured by `ring_diag::defocus_and_glare_envelope`.
+        specular(&base, 0.5 + 0.25 * a.cos(), 0.5 + 0.25 * a.sin(), 0.35, 1.2)
+    };
+    for k in 1..=12u64 {
+        assert!(
+            try_decode(&glared(k)).is_err(),
+            "frame {k} should fail on its own"
+        );
+    }
 
     let mut acc = FrameAccumulator::new();
     let mut pushed = 0;
-    for seed in 1..=12u64 {
-        let frame = noise(&base, sigma, seed * 7919);
+    for k in 1..=12u64 {
+        let frame = glared(k);
         let view = ImageView::new(
             &frame.data,
             frame.width,

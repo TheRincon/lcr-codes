@@ -17,6 +17,14 @@ crate-type = ["cdylib", "rlib"]
 default = ["decode", "encode"]
 decode = []
 encode = ["dep:lc-encode", "dep:lc-render"]
+# QR generation, for the side-by-side comparison in `web/display.html` only.
+#
+# **Off by default, and neither shipped artifact has it.** `just component` builds the
+# scanner and the full build without it; only `just web` turns it on, into a separate
+# `dist/lc-code-compare.wasm`. A symbology crate has no business carrying a competing
+# symbology, and the density claim in the README is the one thing that needs QR present —
+# so it is present exactly there and nowhere else.
+compare = ["encode", "lc-render/qr"]
 
 [dependencies]
 # `std` is on, deliberately. §14.2's bans are C dependencies and `getrandom`, not the

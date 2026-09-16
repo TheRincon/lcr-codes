@@ -32,6 +32,11 @@ use lc_decode::{Decoder, FrameAccumulator};
 #[cfg(target_arch = "wasm32")]
 mod component;
 
+// QR generation for the density comparison. Off by default and in neither shipped
+// artifact — see the `compare` feature in Cargo.toml.
+#[cfg(feature = "compare")]
+pub mod compare;
+
 /// Crate version.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -48,6 +53,10 @@ pub enum WasmError {
     NoFrames,
     /// A module pitch below §13.1's normative floor of 8 device pixels per module.
     ModulePitchTooSmall(u32),
+    /// A payload too large for any QR version, from the `compare` feature. Carries the
+    /// byte count that did not fit.
+    #[cfg(feature = "compare")]
+    QrTooLong(u32),
 }
 
 impl core::fmt::Display for WasmError {
@@ -57,6 +66,13 @@ impl core::fmt::Display for WasmError {
             WasmError::NoFrames => write!(f, "no frames pushed"),
             WasmError::ModulePitchTooSmall(n) => {
                 write!(f, "module-px must be at least 8 (§13.1), got {n}")
+            }
+            #[cfg(feature = "compare")]
+            WasmError::QrTooLong(n) => {
+                write!(
+                    f,
+                    "{n} bytes exceeds the largest QR version at this ECC level"
+                )
             }
         }
     }
@@ -135,6 +151,8 @@ pub struct DecodedDiagnostics {
     pub profile: Profile,
     pub format_margin: f32,
     pub alignment_found: bool,
+    pub capture_pitch_min: f32,
+    pub capture_pitch_max: f32,
 }
 
 /// A successful decode.
@@ -172,6 +190,8 @@ fn convert(out: lc_decode::DecodeOutput) -> Decoded {
             profile: d.format.profile,
             format_margin: d.format_margin,
             alignment_found: d.alignment_found,
+            capture_pitch_min: d.capture_pitch_min,
+            capture_pitch_max: d.capture_pitch_max,
         },
     }
 }
@@ -190,6 +210,46 @@ pub fn decode(
     Ok(convert(Decoder::new().decode(&view)?))
 }
 
+/// Locate a symbol and measure how it was captured, without decoding it.
+///
+/// Succeeds whenever detection and the format region do, so it reports geometry for
+/// frames whose payload does not decode — which is what separates "nothing in frame"
+/// from "found it, move closer" in a scanning UI, and what lets a measurement bin its
+/// failures.
+pub fn probe(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    stride: u32,
+    format: PixelFormat,
+) -> Result<Probed, WasmError> {
+    let view = ImageView::new(pixels, width, height, stride, format)?;
+    let p = Decoder::new().probe(&view)?;
+    Ok(Probed {
+        version: p.format.version.get(),
+        profile: p.format.profile,
+        format_margin: p.format_margin,
+        alignment_found: p.alignment_found,
+        illum_residual_rms: p.illum_residual_rms,
+        references_rejected: p.references_rejected,
+        capture_pitch_min: p.capture_pitch_min,
+        capture_pitch_max: p.capture_pitch_max,
+    })
+}
+
+/// What [`probe`] establishes about a capture.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Probed {
+    pub version: u8,
+    pub profile: Profile,
+    pub format_margin: f32,
+    pub alignment_found: bool,
+    pub illum_residual_rms: f32,
+    pub references_rejected: u8,
+    pub capture_pitch_min: f32,
+    pub capture_pitch_max: f32,
+}
+
 /// Render a CBOR body as JSON text — the read side of §9.4.
 ///
 /// The encoder converts JSON to CBOR because CBOR is 20–33% smaller on these shapes; a
@@ -198,6 +258,16 @@ pub fn decode(
 pub fn cbor_to_json(body: &[u8]) -> Result<String, WasmError> {
     let value = lc_core::cbor::Value::from_slice(body)?;
     Ok(lc_core::json::to_json(&value))
+}
+
+/// The exact bytes [`encode_json`] puts on the wire — §9.4's write side.
+///
+/// This is the same two steps `lc_encode::encode_json` performs before framing, so a
+/// caller measuring what CBOR saves, or handing the wire bytes to another carrier for
+/// comparison, gets what LC Code would really have transmitted rather than an
+/// approximation of it.
+pub fn json_to_cbor(json: &str) -> Result<Vec<u8>, WasmError> {
+    Ok(lc_core::json::parse(json)?.to_vec())
 }
 
 /// Multi-frame LLR combining (§12.4), which the spec calls "the single best use of a live

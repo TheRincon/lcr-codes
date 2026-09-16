@@ -46,8 +46,25 @@
 
   .stage {
     background: #fff; border-radius: 6px; padding: 1rem;
-    display: grid; place-items: center; min-height: 18rem;
+    display: flex; flex-wrap: wrap; gap: 1.5rem;
+    align-items: center; justify-content: center; min-height: 18rem;
     overflow: hidden;   /* a tilted symbol can reach past its box */
+  }
+
+  /* The comparison readout. Kept out of `.meta` because it is a table of measurements
+     rather than a caption, and because presentation mode hides it along with everything
+     else that is not the symbol. */
+  .cmp {
+    width: 100%; border-collapse: collapse; margin-top: .8rem;
+    font: .78rem ui-monospace, Menlo, monospace;
+  }
+  .cmp th, .cmp td { text-align: right; padding: .3rem .4rem; border-bottom: 1px solid var(--line); }
+  .cmp th:first-child, .cmp td:first-child { text-align: left; color: var(--dim); }
+  .cmp thead th { color: var(--dim); font-weight: 600; }
+  .cmp .win { color: var(--ok); font-weight: 600; }
+  .cmp caption {
+    caption-side: bottom; text-align: left; color: var(--dim);
+    font: .75rem/1.5 ui-sans-serif, system-ui, sans-serif; padding-top: .5rem;
   }
 
   /* The symbol plus its impairment overlays, tilted as one object.
@@ -94,6 +111,7 @@
   body.present .sub,
   body.present .tips,
   body.present .meta,
+  body.present .cmp,
   body.present .err,
   body.present .panel { display: none; }
   body.present .cols { grid-template-columns: 1fr; gap: 0; }
@@ -132,10 +150,44 @@
         </div>
       </div>
 
-      <label class="f"><input type="checkbox" id="border" checked> Reference border (§6.4)</label>
+      <label class="f"><input type="checkbox" id="border" checked> Reference border (§6.4) —
+        <em>on is the conforming screen default</em></label>
+      <p class="why" style="margin:.2rem 0 0">Mandatory on screen as of D14: the ring now
+        carries the position sequence, so turning it off produces a symbol that is missing
+        something a decoder is entitled to. Left togglable because what the border is
+        <em>worth</em> under real glare has never been measured, and that is an A/B the
+        capture sweep can run.</p>
 
       <button id="go">Encode and display</button>
       <button id="present" class="ghost">Present full screen</button>
+
+      <div class="imp">
+        <h2>Compare against QR</h2>
+        <p class="why">Same payload, same module pitch, drawn by the same code. Generated
+          by the <code>qrcodegen</code> crate and read back by an independent decoder in
+          the test suite, so this is a measurement rather than a claim.</p>
+
+        <label class="f"><input type="checkbox" id="qr"> Show a QR of the same payload</label>
+
+        <div class="row">
+          <div>
+            <label class="f" for="qrecc">QR error correction</label>
+            <select id="qrecc">
+              <option value="low">L — ~7%</option>
+              <option value="medium" selected>M — ~15%</option>
+              <option value="quartile">Q — ~25%</option>
+              <option value="high">H — ~30%</option>
+            </select>
+          </div>
+          <div>
+            <label class="f" for="qrpayload">QR carries</label>
+            <select id="qrpayload">
+              <option value="cbor" selected>The same CBOR bytes</option>
+              <option value="json">The raw JSON text</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
       <div class="imp">
         <h2>Impairments</h2>
@@ -165,14 +217,18 @@
     </div>
 
     <div class="stagewrap">
-      <div class="stage">
+      <div class="stage" id="stage">
         <div class="symbol" id="symbol">
           <canvas id="out" width="10" height="10"></canvas>
           <div class="layer glare" id="glareLayer"></div>
           <div class="layer shade" id="shadeLayer"></div>
         </div>
+        <div class="symbol" id="qrSymbol" hidden>
+          <canvas id="qrOut" width="10" height="10"></canvas>
+        </div>
       </div>
       <div class="meta" id="meta"></div>
+      <table class="cmp" id="cmp" hidden></table>
       <div class="err" id="err"></div>
     </div>
   </div>
@@ -196,10 +252,11 @@
 </div>
 
 <script type="module">
-import { encoder } from './lc/lc-code.js';
+import { encoder, codec, compare } from './lc/lc-code.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('out'), ctx = canvas.getContext('2d');
+const qrCanvas = $('qrOut'), qrCtx = qrCanvas.getContext('2d');
 
 function draw() {
   $('err').textContent = '';
@@ -235,12 +292,113 @@ function draw() {
   $('meta').innerHTML =
     `<b>v${r.version}</b> · ${r.side}×${r.side} modules · <b>${r.width}×${r.height}</b> px · ` +
     `${modulePx} px/module · ${bytes} B of JSON`;
+
+  drawComparison(r, modulePx);
+}
+
+/// The QR side of the comparison.
+///
+/// Drawn here rather than by the QR library so both symbologies go through one
+/// rasteriser at one pitch — an area comparison whose two sides were drawn by different
+/// code is measuring the drawing. §6.1's quiet zone is 2 modules against QR's required 4,
+/// and the table below reports the footprint both ways because that difference is real
+/// and is the easiest place for a comparison like this to quietly cheat.
+function drawComparison(lc, modulePx) {
+  const on = $('qr').checked;
+  $('qrSymbol').hidden = !on;
+  $('cmp').hidden = !on;
+  if (!on) return;
+
+  // Give QR the bytes LC Code actually transmits, so the comparison is of the carrier and
+  // not of §9.4's JSON-to-CBOR win — which is a container decision either symbology could
+  // make. The raw-JSON option is the honest "what a QR deployment would really send".
+  const json = $('json').value;
+  let payload, payloadLabel;
+  try {
+    payload = $('qrpayload').value === 'cbor'
+      ? codec.jsonToCbor(json)
+      : new TextEncoder().encode(json);
+    payloadLabel = $('qrpayload').value === 'cbor' ? 'CBOR' : 'JSON';
+  } catch (e) {
+    $('err').textContent = 'Payload conversion failed: ' + String(e.payload ?? e.message ?? e);
+    return;
+  }
+
+  let qr;
+  try {
+    qr = compare.qrEncode(payload, $('qrecc').value);
+  } catch (e) {
+    $('qrSymbol').hidden = true;
+    $('cmp').hidden = true;
+    $('err').textContent = 'QR encode failed: ' + String(e.payload ?? e.message ?? e);
+    return;
+  }
+
+  // Draw at the same pitch as the LC symbol, with QR's own 4-module quiet zone so what is
+  // on screen is a scannable symbol rather than a bare grid.
+  const q = qr.quietZone;
+  const side = qr.size + 2 * q;
+  qrCanvas.width = side * modulePx;
+  qrCanvas.height = side * modulePx;
+  qrCtx.fillStyle = '#fff';
+  qrCtx.fillRect(0, 0, qrCanvas.width, qrCanvas.height);
+  qrCtx.fillStyle = '#000';
+  for (let y = 0; y < qr.size; y++) {
+    for (let x = 0; x < qr.size; x++) {
+      if (qr.modules[y * qr.size + x]) {
+        qrCtx.fillRect((x + q) * modulePx, (y + q) * modulePx, modulePx, modulePx);
+      }
+    }
+  }
+
+  renderTable(lc, qr, payload.length, payloadLabel);
+}
+
+function renderTable(lc, qr, payloadBytes, payloadLabel) {
+  // LC Code's quiet zone is 2 per side (§6.1); QR's is 4 (ISO/IEC 18004 §6.3.8).
+  const lcOuter = lc.side + 4, qrOuter = qr.size + 8;
+  const areaRatio = (qr.size ** 2) / (lc.side ** 2);
+  const outerRatio = (qrOuter ** 2) / (lcOuter ** 2);
+  const bitsPerModule = (n, side) => (n * 8) / (side ** 2);
+
+  const cell = (a, b, better) => {
+    const aWins = better === 'lc';
+    return `<td class="${aWins ? 'win' : ''}">${a}</td><td class="${aWins ? '' : 'win'}">${b}</td>`;
+  };
+  const plain = (a, b) => `<td>${a}</td><td>${b}</td>`;
+
+  $('cmp').innerHTML = `
+    <thead><tr><th></th><th>LC Code</th><th>QR</th></tr></thead>
+    <tbody>
+      <tr><th>version</th>${plain(`v${lc.version} ${$('profile').value.toUpperCase()}`,
+                                  `v${qr.version}-${$('qrecc').value[0].toUpperCase()}`)}</tr>
+      <tr><th>payload</th>${plain(`${payloadBytes} B`, `${payloadBytes} B ${payloadLabel}`)}</tr>
+      <tr><th>grid</th>${cell(`${lc.side}×${lc.side}`, `${qr.size}×${qr.size}`,
+                              lc.side <= qr.size ? 'lc' : 'qr')}</tr>
+      <tr><th>modules</th>${cell(lc.side ** 2, qr.size ** 2,
+                                 lc.side <= qr.size ? 'lc' : 'qr')}</tr>
+      <tr><th>bits/module</th>${cell(bitsPerModule(payloadBytes, lc.side).toFixed(2),
+                                     bitsPerModule(payloadBytes, qr.size).toFixed(2),
+                                     lc.side <= qr.size ? 'lc' : 'qr')}</tr>
+      <tr><th>+ quiet zone</th>${cell(`${lcOuter}×${lcOuter}`, `${qrOuter}×${qrOuter}`,
+                                      lcOuter <= qrOuter ? 'lc' : 'qr')}</tr>
+    </tbody>
+    <caption>
+      QR needs <b>${areaRatio.toFixed(2)}×</b> the symbol area for the same payload,
+      or <b>${outerRatio.toFixed(2)}×</b> counting each symbology's required quiet zone
+      (2 modules for LC Code per §6.1, 4 for QR).
+      Error correction is <em>not</em> matched — LC Code is at level
+      ${$('profile').value === 'mono' ? '1' : '1'} and QR at
+      ${$('qrecc').value.toUpperCase()}, and the two scales do not correspond, so read this
+      as a density figure and not as an equal-robustness one.
+    </caption>`;
 }
 
 $('go').onclick = draw;
 $('profile').onchange = draw;
 $('border').onchange = draw;
 $('px').onchange = draw;
+for (const id of ['qr', 'qrecc', 'qrpayload']) $(id).onchange = draw;
 
 // Scale the symbol up by a whole number of pixels, never a fraction.
 //
@@ -251,17 +409,29 @@ $('px').onchange = draw;
 // captured*, so a bigger symbol is a longer working distance.
 function fitPresent() {
   const presenting = document.body.classList.contains('present');
+  const withQr = !$('qrSymbol').hidden;
   if (!presenting || !canvas.width) {
     canvas.style.width = canvas.style.height = '';
+    qrCanvas.style.width = qrCanvas.style.height = '';
     return;
   }
+  // Both symbols take the *same* integer scale. A different factor for each would change
+  // their relative module pitch, which is the one thing the comparison depends on.
   const set = (s) => {
     canvas.style.width = `${canvas.width * s}px`;
     canvas.style.height = `${canvas.height * s}px`;
+    if (withQr) {
+      qrCanvas.style.width = `${qrCanvas.width * s}px`;
+      qrCanvas.style.height = `${qrCanvas.height * s}px`;
+    }
   };
+  // The pair sits side by side with a gap, so the width budget is shared.
+  const GAP = 24;
+  const totalW = canvas.width + (withQr ? qrCanvas.width + GAP : 0);
+  const maxH = Math.max(canvas.height, withQr ? qrCanvas.height : 0);
   let scale = Math.max(1, Math.floor(Math.min(
-    (window.innerWidth - 32) / canvas.width,
-    (window.innerHeight - 32) / canvas.height,
+    (window.innerWidth - 32) / totalW,
+    (window.innerHeight - 32) / maxH,
   )));
   // Tilt projects the symbol into a larger box than the canvas occupies, and by an amount
   // that depends on the perspective divide rather than anything convenient to compute.
@@ -269,8 +439,13 @@ function fitPresent() {
   // until the transformed box fits, so §13.1's whole-pixel rule survives the fit.
   for (; scale > 1; scale--) {
     set(scale);
-    const r = $('symbol').getBoundingClientRect();
-    if (r.width <= window.innerWidth && r.height <= window.innerHeight) break;
+    // Measure the whole stage, not just the LC symbol: with a QR alongside, the pair is
+    // what has to fit, and under tilt the projected box is not something to compute.
+    const r = $('stage').getBoundingClientRect();
+    const a = $('symbol').getBoundingClientRect();
+    const w = withQr ? r.width : a.width;
+    const h = withQr ? r.height : a.height;
+    if (w <= window.innerWidth && h <= window.innerHeight) break;
   }
   set(scale);
 }

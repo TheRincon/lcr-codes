@@ -4,18 +4,25 @@ Reference implementation of [`lc-code-spec-v0.4.md`](lc-code-spec-v0.4.md).
 
 **State:** encode and decode are both complete and round-trip end to end through a
 rendered image — and, as of 2026-09-04, **through a real iPhone camera pointed at a real
-laptop screen** (see "First real-world decode") — detection, illumination fit, soft demodulation, LDPC, framing, CRC. The
-§15 degradation harness is built and the operating envelope is mapped — as a pass/fail
-grid, not yet as the success *rate* §15 asks for. `lc-wasm` ships
+laptop screen** (see "First real-world decode") — detection, illumination fit, soft
+demodulation, LDPC, framing, CRC. The §15 degradation harness is built and the operating
+envelope is mapped as the success *rate* §15 asks for (`just envelope`). `lc-wasm` ships
 both paths as a **WebAssembly component** with a WIT interface (D8), in two builds:
 decode-only and full.
+
+**The capture sweep has been run** (2026-09-14, `docs/sweep1.json` + `docs/sweep2.json`,
+4,207 trials). Its headline is that **holding the phone face-on, not distance, was the
+dominant failure mode** — see "First measured envelope" below. Every *other* envelope figure
+in this file still comes from the §15 harness, which is code.
 
 **Provisional, pending review:** the palette (D1/D2) and illumination-model (D3) changes in
 [`docs/decisions.md`](docs/decisions.md) are being carried forward so work can continue,
 not signed off. Both are cheap to unwind — see "Unwinding the provisional decisions" below.
 
-**265 tests, all passing, zero warnings.** `just test` (plus `just test-debug`, 217 unit
-tests unoptimised — see below).
+**291 tests, all passing, zero warnings.** `just test` (plus `just test-debug`, unit tests
+unoptimised — see below). Three more are `#[ignore]`d on purpose: the ring detector's
+diagnostic probes in `tests/ring_diag.rs`, which print rather than assert. *(Recounted
+2026-09-16 with `just ci` green.)*
 
 ---
 
@@ -33,8 +40,8 @@ gallery. `just test` and `just test-debug` are both green. Nothing needs unwindi
 
 ```bash
 just component     # rebuild dist/ — gitignored, so it will be missing
-just test          # 265 tests; depends on `component`
-just test-debug    # 217 unit tests unoptimised, exercising debug_assert!
+just test          # 277 tests; depends on `component`
+just test-debug    # unit tests unoptimised, exercising debug_assert!
 just c-host        # the C trial, needs the Go module cache (see below)
 ```
 
@@ -47,6 +54,23 @@ just c-host        # the C trial, needs the Go module cache (see below)
   unpacked wasmtime-c-api release.
 
 ### What to pick up next
+
+**Run a capture sweep on finder-less symbols (D17).** Screen symbols no longer have finders,
+and the ring detector that replaces them has only been tested on the §15 harness. It treats
+each connected region of ink as one symbol, which a real scene may not honour, and its cost
+per frame is untimed. The sweep is the measurement.
+
+**Earlier: run the capture sweep again, with the rig's two faults fixed.** The first run
+(2026-09-14) found that face-on capture, not distance, was the dominant failure mode — and
+also found two defects in the rig itself: it asked the camera for 1280px video when the
+phone can do 4K, and it offered the operator no guidance. Both are fixed. A second run
+should therefore measure a materially different envelope, and this time wants the session
+panel filled in and each protocol run separately labelled.
+
+See "First measured envelope" for what came back, and
+[`docs/capture-sweep.md`](docs/capture-sweep.md) for the procedure.
+
+---
 
 **§8.2 ECC rate tuning is done, and the rates did not move.** The full argument is D10 in
 [`docs/decisions.md`](docs/decisions.md); the short version is that the table was right and
@@ -74,8 +98,53 @@ sharpened D10: whether chroma is "the noisier channel" turns out to be a propert
 palette's hue spacing, not of chroma, and it is false for `C1` while true for `C3`.
 
 Second, smaller: `just ci` runs locally via the pre-push hook but nothing runs it on a
-fork. The scanner sits at **93% of its size budget** measured raw (D8), so that gate wants
-to be automatic rather than trusted to a hook someone can `--no-verify` past.
+fork, so that gate wants to be automatic rather than trusted to a hook someone can
+`--no-verify` past. The scanner's size is no longer the pressure it was — see below.
+
+### The size budget, 2026-09-14
+
+**§14.2's "200 KB" was being read 2.5× too strictly, and the scanner had 20 KB of free
+savings in it.** Both fixed; D15 has the argument.
+
+| | before | after | budget | |
+|---|---:|---:|---:|---:|
+| scanner raw | 199,453 | **178,720** | 204,800 | 87% |
+| scanner gzip | 79,341 | **74,641** | 102,400 | 72% |
+
+- **`wasm-tools strip --all` saves 20,733 bytes, free.** Plain `strip` saves 1,753 — it
+  leaves the 19 KB `name` section, 10% of the artifact, that no shipped decoder reads. Now
+  part of every component build; the core module keeps its names for debugging.
+- **The gate measured raw only**, at 97%, while the gzipped figure sat at 38% unmentioned.
+  §14.2 says "gzipped"; D8 made the artifact a disk-loaded component. Both readings are
+  defensible and **both are now gated**. The compressed limit is a proposal, not a
+  measurement — #16 still wants it justified against a real embedder.
+
+**`opt-level = "z"` measured and declined.** The `wasm-min` profile had been defined and
+never exercised since the project started. It gives another 17 KB raw but costs **11%
+median and 22% p90 decode time**, and at ~80 ms for one 492×492 frame on a laptop, frame
+rate is closer to binding than size is at 87% (§1.1 goal 5).
+
+Worth saying plainly: `probe` (D12) and the sequence table (D14) were never the problem.
+The headroom was.
+
+---
+
+`ci` is `fmt-check clippy test test-debug wasm-size check-compare`. **Clippy was added on 2026-09-08 and
+was not there before**, which is how six lints accumulated in untouched code while this
+file claimed zero warnings — `is_multiple_of` and friends arrived with a newer toolchain
+and nothing was looking.
+
+**The toolchain is pinned to 1.98.0** in `rust-toolchain.toml`, added the same day and for
+the same reason. Under `-D warnings` a floating toolchain makes a green tree go red on
+somebody's *upgrade* rather than on somebody's *change*; pinning makes an upgrade a
+deliberate commit that fixes the new lints in the same breath. The file also declares the
+`wasm32-unknown-unknown` target and the rustfmt/clippy components, so a fresh clone
+acquires them automatically instead of discovering the gap one failing recipe at a time.
+
+Two things that pin does *not* do. It has no `>=` form — it selects exactly 1.98.0, and
+the supported floor for consumers stays `rust-version = "1.94"` in `Cargo.toml`. **Nothing
+verifies that floor**, because CI now only ever builds with the pin; if the MSRV claim
+matters, it wants its own job.
 
 ---
 
@@ -83,17 +152,18 @@ to be automatic rather than trusted to a hook someone can `--no-verify` past.
 
 | Crate | State | Tests | Notes |
 |---|---|---|---|
-| `lc-core` | ✅ Complete | 139 | Geometry, palette, ECC, container, masking, modulation |
+| `lc-core` | ✅ Complete | 140 | Geometry, palette, ECC, container, masking, modulation |
 | `lc-encode` | ✅ Complete | 11 | Full §8 pipeline; auto version, auto compression, mask search |
-| `lc-render` | ✅ Complete | 12 | SVG, RGB raster, PNG, ANSI terminal preview |
-| `lc-decode` | ✅ Complete | 79 | §12 pipeline end to end, plus the §15 harness |
+| `lc-render` | ✅ Complete | 16 | SVG, RGB raster, PNG, ANSI preview; §17.2 dual-render behind `qr` |
+| `lc-decode` | ✅ Complete | 88 | §12 pipeline end to end, plus the §15 harness |
 | `lc-verify` | ⬜ Stub | — | §10 signing, entirely untouched |
-| `lc-wasm` | ✅ Complete | 22 | Component Model surface over `wit/lc.wit` (D8) |
+| `lc-wasm` | ✅ Complete | 24 | Component Model surface over `wit/lc.wit` (D8) |
 | `lc-ffi` | ⬜ Stub | — | |
 | `lc-cli` | ⬜ Stub | — | |
-| `xtask` | ✅ Working | — | `ldpc` regenerates base graphs, `capacity` recomputes §6.1 |
+| `xtask` | ✅ Working | — | `ldpc`, `capacity`, `palette`, `thresholds`, `vectors`, `sweep` |
 
-`lc-decode`'s 79 are 55 unit, 12 round-trip, 12 degradation.
+`lc-decode`'s 88 are 62 unit, 14 round-trip, 12 degradation. `lc-wasm`'s 24 are 5 component
+and 19 surface.
 
 Automation is split: `just --list` is the front door, and `xtask` holds the two tasks
 that must call into the crates (`ldpc`, `capacity`). See the note atop the justfile.
@@ -113,6 +183,7 @@ just gallery         # regenerate examples/
 just payload-sizes   # JSON payloads, end to end
 just envelope        # degradation sweep
 just diagnose        # detection internals
+just sweep log.json  # reduce a real-camera capture log to §15's metric
 ```
 
 The full path — `encode → render → decode` — round-trips across every profile, every
@@ -248,6 +319,11 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
       that brotli ships no trainer; `zstd --train` is the usual way to *discover* the
       substrings, which are then used as brotli dictionary bytes.
 - [ ] Remaining §15 screen impairments: PWM banding, subpixel geometry, a moiré sweep.
+      The moiré sweep is also what closes open #14, and note the capture sweep will *not*
+      close it — a walk backwards varies pitch, not the fractional device-pixel ratio.
+- [ ] **Run the capture sweep.** The rig is built; see below. This is the outstanding
+      item with the best ratio of value to effort, and the only one that produces a number
+      the §15 harness did not.
 
 ---
 
@@ -267,10 +343,397 @@ meaningless.
 
 **What this does not yet establish.** One successful scan is not an envelope. The capture
 conditions were not recorded, so there is no measured distance, angle, or profile behind
-it. The obvious next step is cheap now the rig exists: sweep distance and angle by hand,
-try `C1` against `C3`, and write down where it stops working. That is the first data in
-this project that is not self-referential, and it is worth having before the wire format
-freezes.
+it.
+
+**The rig to fix that was built on 2026-09-08 and first run on 2026-09-14** — see "First
+measured envelope".
+
+---
+
+## The ring carries payload — 2026-09-16 (D19, D20)
+
+**A data position's inner ring cell is now an ordinary payload module.** The §6.4 ring was
+two modules deep with both layers painted the same colour; that depth is kept only where it
+earns its place — the every-third reference positions and the four corners — and the rest is
+payload. Worth **+15–18% at v1–v2** and ~2% at v32. In `examples/`, `membership` went v3 → v1
+and `event-admission` v3 → v2. D19 has the full account.
+
+**The detector cost was probed before the feature was built**, by repainting those cells with
+unrelated colours and reading data positions from the outer layer only: clean, blur and noise
+cases still correlate at 1.000, and the realistic combination falls to 0.941 against an accept
+threshold of 0.85. Cushion, not function — but cushion on the hardest case, and still
+synthetic.
+
+**The wire format changed**: the grid array no longer describes a whole symbol, so the golden
+vectors are schema 2 and carry a `ring` array.
+
+**`wasm-opt` is now part of the component build** (D20), which took the scanner from 101% of
+its size budget to 89% and made decoding 14% *faster*. It is optional: without binaryen the
+build prints a note and carries on.
+
+---
+
+## Finder-less symbols — 2026-09-15 (D17)
+
+**The finders are gone from screen symbols.** A colour symbol that carries the §6.4 ring has
+no finders, separators, anchors, alignment marker, timing or format region; the ring locates
+it, names its version and orientation, and carries its format. The full account is D17 in
+[`docs/decisions.md`](docs/decisions.md).
+
+Every ringed colour symbol in `examples/` shrank one or two versions — `contact` v2 → v1,
+`allergen-profile` v3 → v1, `event-admission` v4 → v3 — and each border-less twin sits beside
+its ringed one for comparison. Profile `M` and border-less symbols keep the classic layout.
+
+**The trade** is that a greyscale capture cannot read a finder-less symbol, because its
+format rides on hue.
+
+**The gap between ring and grid is now one module, not two** (D18, 2026-09-16). It buys area
+— 11.8% of a v1 symbol, 10.5% of a v2 — or, at a fixed size on screen, ~6% more pixels per
+module, which is range. It costs ~10% of the defocus envelope: blur radius ~0.30 modules
+where it was ~0.33, and the reason is geometric, not optical (D18 has the table). Every
+version's ring got shorter, so all 32 position sequences were regenerated.
+
+**The scanner is at 99% of its raw budget** (203,741 / 204,800; 82% compressed), after
+cutting 34 KB back out of a detector that first landed at 116%. That leaves 1,059 bytes, so
+the next feature needs a saving first. The best lead is about 11 KB of float formatting that
+some runtime-reachable `Debug` impl pulls in — see D17.
+
+**What to check first on a real capture.** The ring detector treats each connected region of
+ink as one symbol. On a clean display stage that holds; in a real scene it is untested.
+`cargo test -p lc-decode --release --test ring_diag -- --ignored --nocapture` traces every
+detection stage and is the place to start when a capture fails.
+
+---
+
+## Reclaiming the finder area — groundwork, 2026-09-13
+
+*Superseded 2026-09-15 by D17 and the section above: the removal this section describes as
+still needed is done.*
+
+The three 7×7 finders plus separators cost a **fixed 192 modules**, and the palette anchors
+another 12, at every version. Measured from the real layout:
+
+| v | side | finders+sep | anchors | payload | fixed detection cost |
+|---|---:|---:|---:|---:|---:|
+| 1 | 21 | 192 | 12 | 167 | **46.3%** |
+| 3 | 29 | 192 | 12 | 526 | 24.3% |
+| 5 | 37 | 192 | 12 | 1038 | 14.9% |
+| 12 | 65 | 192 | 12 | 3838 | 4.8% |
+| 32 | 145 | 192 | 12 | 19718 | **1.0%** |
+
+At v1, 62% of the symbol is fixed overhead once the 60-module format region is counted.
+By v12 it is noise. **So this is a small-symbol problem**, and any redesign should be
+judged on v1–v5.
+
+**The §6.4 border can carry detection, and the objection I expected doesn't hold.** §12.1
+requires detection from luma alone, and §4.1 makes hue states iso-luminant by design — so
+a palette-cycling ring ought to be invisible in luma. It isn't, because P12 puts white and
+black in the cycle and the two luma levels are far apart: `C1` binarises to `DDLLLD` with
+full 0–255 contrast, `C3` to `DDDDLLLLLD`.
+
+`just debruijn` writes [`docs/border-sequence.md`](docs/border-sequence.md): a cyclic
+sequence per version in which **every window of `k` cells is unique**, so the same cells
+become an absolute position reference — orientation, which edge, how far along — for no
+extra modules. Verified by brute force over the extracted cyclic windows rather than
+trusted to the construction. Max run capped at 4 so the ring still carries module pitch;
+balance ~50%; colour rides on top with all six border colours still evenly present
+(`[37, 36, 36, 36, 35, 36]` at v1).
+
+**Why a distributed sequence rather than a gap or a marked corner.** §3 makes specular
+glare the dominant screen impairment and §12.3 already discards border references a
+highlight has ruined. A localised asymmetry is a single point of failure at exactly the
+wrong scale; a gap is worse still, because occlusion *produces* gaps — it signals with the
+same alphabet the channel uses for damage.
+
+**Minimum window Hamming distance is 1, and that is not the number to judge it on.**
+Separating `p` windows by distance 3 is sphere-packing-bound at `p·(1+k) ≤ 2^k`, needing a
+12-cell window at v1 and 15 at v32. But a decoder correlates whatever arc is unobscured
+against all rotations rather than looking up exactly `k` cells. Measured that way:
+
+| v | ring cells | clean | 1 misread | 2 misreads | worst case as % of ring |
+|---|---:|---:|---:|---:|---:|
+| 1 | 216 | 9 | 17 | 21 | 9.7% |
+| 5 | 344 | 10 | 20 | 21 | 6.1% |
+| 12 | 568 | 11 | 19 | 23 | 4.0% |
+| 32 | 1208 | 12 | 20 | 25 | 2.1% |
+
+So even with two misread cells, **2–10% of the ring surviving is enough to localise**.
+
+**The sequence is now live, and the border is mandatory on screen** (D14). `cell_color`
+reads the committed table, so renderer and decoder inherit it from one definition;
+`just gallery` shows the irregular ring in `examples/`. Golden vectors were unaffected,
+confirming the border sits outside the canonical wire form. Scanner cost: 197,663 →
+199,453 bytes, **97% of budget**, leaving 5,347.
+
+**The finders are still there.** This is the groundwork, not the removal — detection is
+still the 1:1:3:1:1 run-ratio scan, so nothing can localise from the ring yet and a
+finder-less symbol would decode nowhere. What is still needed: a ring detector (initial
+*location* wants quad detection rather than the 1-D scan, which is where Data Matrix is
+reckoned weaker than QR at low resolution), and a decision on whether to keep one finder as
+a cheap locator — which reclaims 128 of 192 modules without replacing the detection
+primitive at all.
+
+**Why the ring might beat QR at low resolution, and it is a real argument.** QR's finder is
+a ~7-module local signature; the ring is a 112–608 position *known* sequence. Matched
+filtering integrates over all of it, which is 12–19 dB more integration than a bullseye
+offers. That is the mechanism by which a sequenced border should out-detect a finder as
+resolution falls — you are correlating against far more known structure. The cost is search
+space (position × scale × rotation), and the mitigation is a cheap 1-D pre-filter: a scan
+line running *along* a border band produces a long stretch of runs in 1..4 at consistent
+pitch, which almost nothing else in a natural scene does. **Untested, and stated as a
+hypothesis** — QR's advantage is also twenty years of tuned implementations.
+
+**Sequenced after the capture sweep, deliberately.** Changing detection before the sweep
+runs would leave the new detector comparable only against simulator numbers.
+
+---
+
+## Dual-render, and a detector bug it uncovered — 2026-09-10
+
+**§17.2 dual-render is implemented**, in `lc-render` behind a default-off `qr` feature:
+`render_dual_rgb` / `render_dual_png` compose an LC symbol and a QR carrying a fallback URL
+at **one shared module pitch**, so the fallback does not stop working before the thing it
+backs up. Off by default because `lc-render` is in the wasm full build (~23 KB), and
+because §17.2 itself calls this "a bridge, not an answer" — it trades the offline property
+for reach, which a deployment should choose rather than inherit. `lc-wasm/compare` is now
+the same code behind a second flag, so the density comparison and a rendered dual share one
+encoder and one set of round-trip tests. Full argument in D13.
+
+**Writing it found a real decoder bug.** §6.2 adopts QR's 1:1:3:1:1 finder deliberately, and
+a finder carries no identity — so a frame with two codes offers six finder-like patterns,
+and at a shared module pitch a triple *straddling* them can outscore either real triple.
+Detection committed to the single best-scoring triple with no way back, so a dual-render —
+or two LC symbols on one poster — returned `FormatUndecodable` on a frame containing two
+good symbols.
+
+`Decoder::decode` now walks candidates and **the CRC decides**, per §9.1. The first attempt
+accepted on the format region instead, which looked reasonable and immediately broke
+noise rejection: BCH(30,15) corrects three errors, so a random 30-bit word decodes ~14% of
+the time and six candidates turn "found nothing" into "found something". `probe` and
+`FrameAccumulator` therefore still use the best candidate only — neither has a CRC to check
+a guess against. Six candidates also doubled the §15 suite (33.5 s → 67.2 s) on failing
+frames; three recover all of it and still fix the case.
+
+Known limitation, recorded rather than fixed: `FrameAccumulator` can still lock onto a
+straddling triple in a two-code frame until reset.
+
+---
+
+## QR comparison — added 2026-09-09
+
+`display.html` now draws a QR of the same payload beside the LC symbol, at the same module
+pitch, through the same rasteriser. Generation is the **`qrcodegen`** crate; the test suite
+reads the output back with **`rqrr`**, an independent decoder, at every ECC level and
+across a multi-block symbol — so the comparison rests on a verified QR rather than on a
+hand-rolled one. `codec.json-to-cbor` was added alongside it so QR can be handed the exact
+bytes LC Code puts on the wire, which keeps §9.4's container win out of a carrier
+comparison.
+
+**Neither shipped artifact carries QR.** It is a third build,
+`dist/lc-code-compare.wasm`, produced only by `just web`, and
+`the_shipped_components_export_no_qr` asserts the scanner and the full build stayed clean —
+so "off by default" is a fact rather than a comment.
+
+**The result is more equivocal than the README claimed, and the README now says so.** On a
+50-byte CBOR payload against `C1` at ECC level 1, the area ratio runs 1.00× at QR-L, 1.29×
+at QR-M, 1.63× at Q and 2.00× at H. LC Code is level with QR at its weakest error
+correction and pulls ahead as QR's strengthens. The 1.73× bits/module figure is a different
+measurement and was never the area figure a user sees.
+
+---
+
+## The decoder had an upper pitch limit — found 2026-09-14, fixed 2026-09-15 (D16)
+
+**Captured module pitch above ~22 does not decode at all**, and this is the ceiling on
+working range. Found by raising the sweep rig's capture width to 4K, which tripled the
+captured pitch and broke decoding completely at every distance.
+
+Reproducible on clean renders, identical at v2/v4/v8 (so it is pitch, not version):
+
+```
+  px   8 10 12 14 16 18 20 22 24 26 28 30 32 34 36 38 40
+       +  +  +  +  .  +  +  +  .  .  .  .  .  .  .  .  .
+```
+
+Shifting the image by a single pixel — same pitch, different alignment between the 8 px
+binarisation grid and the module grid — separates it into **two distinct faults**:
+
+```
+pitch | pixel offset 0..7
+   16 |  .  +  +  +  +  +  +  +     <- alignment only
+   24 |  .  +  +  +  +  +  +  +     <- alignment only
+   30 |  .  .  .  .  .  .  .  .     <- hard wall
+```
+
+1. **Grid alignment, at exact multiples of `BLOCK`.** 16 = 2×8 and 24 = 3×8 fail only when
+   the grids coincide, and a one-pixel shift fixes them. **This is D6's mechanism
+   recurring**: D6 diagnosed and fixed it at 1×`BLOCK`, and 2× and 3× were never tested.
+2. **A hard wall above ~24**, which no offset rescues. At pitch 30, `find_finders` locates
+   two of the three finders and reports a module estimate of 26 against a true 30. Cause
+   not yet established; the binariser's dark fraction stays healthy at ~34%, so this is
+   detection rather than thresholding.
+
+**Why it matters more than the 2-foot range figure.** Range is set by how many sensor
+pixels span a module, so more capture resolution is the obvious lever — and it is currently
+unusable, because raising it walks straight through this ceiling. Fixing it is what turns
+resolution back into a range control.
+
+**Fixed by retrying the finder search on a halved image** — two levels, each built from the
+last. Only the finder search sees the reduced image; the alignment search, transform and
+sampling all stay at full resolution. On clean renders, 11 pitches × 8 grid phases, **80 of
+88 cells decode** across 8–80 px/module, where every pitch from ~24 up used to decode at none.
+
+Two residuals, recorded rather than hidden: pitch 30 decodes at only 4 of 8 phases, and at
+pitch ≥ 32 *with the grids exactly in phase* detection now succeeds but the format region
+fails its BCH decode — the same alignment fault one stage later. The regression test says
+exactly which cells it covers.
+
+**Cost, timed interleaved at 1280×720:** nothing on a successful capture (it returns at
+full resolution) and nothing on a noisy empty frame (spurious finders end the scan early);
+**+8.5 ms (+38%) on a clean empty frame**, where every level has to fail. Scanner +1,550
+bytes, now 88% raw / 73% gzip.
+
+**Resolution is a range lever again.** `sweep.html` re-enables 1920/2560/3840 with their
+decode cost on the label. **2560 is the one to try** — ~2× range for ~1.8× decode time —
+but it is unmeasured on a real capture, so run it as its own labelled run.
+
+**Found on the way, and larger than the pyramid:** on a noisy frame with no symbol,
+`Decoder::decode` spends 41 ms beyond the scan walking D13's candidates through format
+reads on a spurious triple. That is the better target for live-preview speed. Not
+addressed.
+
+---
+
+## First measured envelope — 2026-09-14
+
+`docs/sweep1.json` and `docs/sweep2.json`, 4,207 trials, single-frame, `C1` and `C3`, one
+iPhone against one laptop panel. **The first numbers in this project that did not come from
+the §15 harness.** Read with `just sweep docs/sweep2.json`.
+
+### The tilt target is obliquity 1.30–1.50, and an angle is the wrong way to say it
+
+Pooled over **1,549 `C1` trials** from sweeps 1–4 (`docs/sweep{1,2,3,4}.json`):
+
+| obliquity | 1.00–1.05 | 1.05–1.10 | 1.10–1.20 | 1.20–1.25 | 1.25–1.40 | **1.40–1.60** | 2.00+ |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| n | 451 | 437 | 230 | 67 | 225 | 116 | 12 |
+| decoded | 5% | 37% | ~40% | 58% | ~71% | **84%** | 0% |
+
+The shape survives restricting to a single pitch band (7–9 px/module: 2% → 78%), so it is
+tilt and not distance. Past 2.00 it collapses — foreshortening eventually costs more than
+the reflection did.
+
+**Sweep 4 is the evidence that an angle is the wrong instruction.** The operator held a
+careful 10° as §13.2 recommends, landed at obliquity 1.05–1.18, and decoded *worse* than
+sweep 3 — no `C1` bin reached 50% with enough trials to count. A fixed angle produces
+different obliquity at different distances, so the number to aim at is the one the page
+already measures. `sweep.html` now guides to 1.30–1.50 and warns past 1.90.
+
+### Face-on capture was the dominant failure mode, not distance
+
+At **matched pitch**, so this is not distance in disguise (`C1`, sweep2):
+
+| px/module | face-on (<1.15 obliquity) | tilted (≥1.35) | difference |
+|---|---:|---:|---:|
+| 6–7 | 5% (42) | 88% (17) | **+83 pts** |
+| 7–8 | 4% (74) | 93% (14) | **+89 pts** |
+| 8–9 | 22% (142) | 80% (35) | **+58 pts** |
+| 9–10 | 37% (103) | 86% (36) | **+49 pts** |
+| 10–11 | 29% (49) | 100% (9) | **+71 pts** |
+
+Checked for a time confound: in sweep2's final quarter — same minutes, same conditions —
+tilted decoded **92.7%** against face-on's **15.4%**.
+
+**This is §13.2 being right.** It already recommends 10–20° off-axis so the phone's own
+reflection lands away from the symbol; held flat at a glossy laptop panel, the phone
+photographs itself. The operator's impression that "glare did not work at all" and the
+face-on data are the same finding: **the face-on dataset _is_ the glare result.**
+
+Tilted, `C1` decodes at **6–7 px/module** — below §13.1's floor of 8. The reported ~2-foot
+limit was mostly a glare limit, not a resolution one.
+
+### `C3` is materially worse, exactly as predicted
+
+`C3` needs ~14 px/module against `C1`'s 6–7. **D10 and D11 jointly predicted this** —
+chroma's handicap is spatial bandwidth, and D11 put 60% of `C3`'s payload there. Real optics
+agree with the simulator on this one, which is the first independent support either decision
+has had.
+
+### What was wrong with the rig, and is now fixed
+
+- **The page asked the camera for 1280px-wide video.** Captured pitch scales linearly with
+  sensor pixels spanning the symbol, so that alone cost ~3× of working distance before
+  anything else. Capture width is now selectable to 3840 and defaults to 1920; every trial
+  records `frameW`/`frameH` so a log says what it actually measured.
+- **The scanner gave no guidance.** It now uses `probe`'s obliquity to say *"tilt the phone
+  10–20° off-axis — your own reflection is on the symbol"*, which is what §14.3 keeps
+  diagnostics for and, on this evidence, the most valuable thing on the page.
+- **`just sweep` now prints the face-on/tilted split** at matched pitch, so the effect
+  cannot hide behind a distance average again.
+
+### Caveats, which are not small
+
+- **Session metadata was left blank in sweeps 1–3** — sweep 4 records it properly (iPhone 17
+  main camera, MacBook Air M1 at maximum brightness, warm indoor light at night).
+- **Sweep 3 captured 720 px across, not 1280.** The control said 1280 and the camera
+  delivered `720×1280` — the portrait form of that mode, with the symbol spanning the
+  *short* axis. Held upright, a phone throws away 1.78× of the captured pitch and nothing
+  on screen said so. `frameW`/`frameH` are now recorded and shown live, with a warning that
+  fires on any portrait frame; sweep 4 was 491/563 landscape as a result.
+- **The landscape gain is not visible in the logs, and cannot be.** Sweeps 3 and 4 have
+  near-identical pitch distributions (median 8.2 both) because the operator naturally
+  stands where it works — the gain shows up as *more distance at the same pitch*, and
+  distance is not recorded. Confirming it needs a fixed-position A/B: stand still, rotate
+  the phone between portrait and landscape, and read the pitch off the live display. The
+  ratio should be ~1.78.
+- **All four protocol runs were recorded under one label**, so glare and angle were never
+  isolated. The geometry still separates them, but by luck rather than design.
+- 57–64% of frames located no symbol at all, and those carry no geometry, so they cannot be
+  binned. The `not found` share is a floor on how much was simply out of range.
+
+---
+
+## The capture sweep — rig built 2026-09-08, first run 2026-09-14
+
+Everything needed to turn the single scan above into an envelope exists, and **it has now
+been run once** — see "First measured envelope" for what came back. What follows describes
+the rig itself.
+
+[`docs/capture-sweep.md`](docs/capture-sweep.md) is the procedure: four runs — `C1` by
+distance, `C3` by distance, `C1` by angle, `C1` under glare — with the display and capture
+settings §13.1 and §13.2 require.
+
+**The rig measures itself, which is what makes it cheap to run.** Distance is recorded as
+*captured module pitch*, sensor pixels per module, read off the fitted homography; angle as
+*obliquity*, the ratio of coarsest to finest pitch across the symbol. Neither needs a tape
+measure, a protractor, or the camera intrinsics a browser will not give you, and both are
+the units the decoder actually experiences — so the figures transfer between phones and
+panels in a way centimetres do not.
+
+- `web/sweep.html` — served by `just web`. Records one trial per frame with its geometry,
+  bins them live so the operator can see which bins are still thin, and exports JSON.
+  Frame combining is **off** by default: it would make success a function of how long you
+  lingered rather than of where you stood.
+- `just sweep <log.json>` — reduces a log to §15's metric: success rate against captured
+  pitch and against obliquity, per run and per profile, with a stated working range.
+- `decoder.probe` (D12) — the piece that makes failures analysable. A failed decode
+  returns a string, so a failed trial could not be binned by the conditions it failed
+  under; `probe` runs §12.1–§12.3 and stops, so a frame that was *found but not decoded*
+  still reports its geometry. "Not found" and "found, marginal" are different limits and
+  the report keeps them apart.
+
+**What it should settle.** The captured-pitch floor (open #14 asks for it, and only the
+*display*-side figure has ever been measured); whether `C3` gives up before `C1` as pitch
+falls, which is what D10 and D11 jointly predict; whether tilt tolerance really is
+azimuth-dependent through real optics as it is in the harness; and what the §6.4 reference
+border is worth against real glare, which nothing has measured.
+
+Where the result disagrees with `just envelope`, the harness is what is wrong — it is the
+model, and this is the measurement.
+
+**Cost paid up front:** `probe` took the scanner from 93% to **95%** of §14.2's size
+budget (192,876 → 196,104 bytes raw). D12 argues that is the right call and names it as
+the first candidate to move if the budget later binds.
 
 ---
 
@@ -435,7 +898,10 @@ individually and the rest as an aggregate, per §15. Guarded by
 
 ## Notes on the build
 
-- **Edition 2024** throughout, `rust-version = 1.94`.
+- **Edition 2024** throughout. `rust-version = "1.94"` is the MSRV — the floor claimed for
+  consumers — while `rust-toolchain.toml` pins the toolchain the repo itself builds and
+  gates with to **1.98.0**. Two different things: the first is a promise, the second is
+  what CI actually runs, and only the second is enforced.
 - `lc-core`, `lc-decode`, `lc-verify` are `no_std + alloc`; `lc-encode`, `lc-render`,
   `lc-cli` are `std`. This is the §14.1 split, and it is what keeps the scanner bundle
   from accidentally acquiring the encoder.

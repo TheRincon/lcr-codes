@@ -140,14 +140,20 @@ handle without disposing leaks it inside the wasm instance for the life of the p
 
 ## 3a. Laptop displays, phone scans
 
-`just web` serves two pages:
+`just web` serves three pages:
 
 | page | device | needs |
 |---|---|---|
 | `/display.html` | laptop | encodes JSON to a symbol and draws it at exact device pixels |
 | `/` | phone | camera, decode, and the payload rendered back as JSON |
+| `/sweep.html` | phone | the same decode, but **recording** every trial against the geometry it was attempted at |
 
-Both load the **full** component rather than the scanner build. `display.html` obviously
+`sweep.html` is the measurement rig, not a demo: it logs a trial per frame, bins them live,
+and exports JSON for `just sweep`. See [`docs/capture-sweep.md`](docs/capture-sweep.md).
+It additionally uses `decoder.probe`, so that a frame the decoder *found* but could not
+decode still contributes its geometry rather than vanishing into an error string.
+
+All three load the **full** component rather than the scanner build. `display.html` obviously
 needs `encoder`; `index.html` needs `codec.cbor-to-json`, because §9.4 puts CBOR on the
 wire and a phone showing a payload wants the JSON the sender authored. That function is
 kept out of the minimal scanner deliberately: §9.4's JSON writer and the CBOR value tree

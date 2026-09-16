@@ -8,7 +8,16 @@
 
 // Two worlds, selected by feature. §14.1 keeps the encoder out of a scanner build so it
 // cannot be acquired by accident; `scanner` exports only `decoder` to match.
-#[cfg(feature = "encode")]
+// Three worlds now. `compare` adds QR generation for the demo build and is checked first,
+// because it is a superset of `lc-code` and both would otherwise match.
+#[cfg(feature = "compare")]
+wit_bindgen::generate!({
+    world: "lc-code-compare",
+    path: "wit",
+    generate_all,
+});
+
+#[cfg(all(feature = "encode", not(feature = "compare")))]
 wit_bindgen::generate!({
     world: "lc-code",
     path: "wit",
@@ -28,7 +37,7 @@ use crate::{DecodedPacket, WasmError};
 use exports::lc::code::decoder::{Guest as DecoderGuest, GuestAccumulator};
 use lc::code::types::{
     ContentType as WitContentType, DecodeResult, Diagnostics as WitDiagnostics, Image,
-    Packet as WitPacket, Payload, PixelFormat as WitFormat, Profile as WitProfile,
+    Packet as WitPacket, Payload, PixelFormat as WitFormat, ProbeResult, Profile as WitProfile,
 };
 
 struct Component;
@@ -93,6 +102,8 @@ fn decoded_out(d: crate::Decoded) -> DecodeResult {
             profile: profile_out(g.profile),
             format_margin: g.format_margin,
             alignment_found: g.alignment_found,
+            capture_pitch_min: g.capture_pitch_min,
+            capture_pitch_max: g.capture_pitch_max,
         },
     }
 }
@@ -115,6 +126,27 @@ impl DecoderGuest for Component {
             format(img.format),
         )
         .map(decoded_out)
+        .map_err(err)
+    }
+
+    fn probe(img: Image) -> Result<ProbeResult, String> {
+        crate::probe(
+            &img.pixels,
+            img.width,
+            img.height,
+            img.stride,
+            format(img.format),
+        )
+        .map(|p| ProbeResult {
+            version: p.version,
+            profile: profile_out(p.profile),
+            format_margin: p.format_margin,
+            alignment_found: p.alignment_found,
+            illum_residual_rms: p.illum_residual_rms,
+            references_rejected: p.references_rejected,
+            capture_pitch_min: p.capture_pitch_min,
+            capture_pitch_max: p.capture_pitch_max,
+        })
         .map_err(err)
     }
 }
@@ -166,6 +198,10 @@ mod codec_impl {
     use exports::lc::code::codec::Guest as CodecGuest;
 
     impl CodecGuest for Component {
+        fn json_to_cbor(json: String) -> Result<Vec<u8>, String> {
+            crate::json_to_cbor(&json).map_err(err)
+        }
+
         fn cbor_to_json(body: Vec<u8>) -> Result<String, String> {
             crate::cbor_to_json(&body).map_err(err)
         }
@@ -246,6 +282,44 @@ mod encoder_impl {
 
         fn encode_json_svg(json: String, opts: Options, module_px: u32) -> Result<String, String> {
             crate::encode_json_svg(&json, &options_in(opts), module_px).map_err(err)
+        }
+    }
+}
+
+// ---------------------------------------------------------------- compare
+
+/// QR generation, demo build only. See the `compare` interface in wit/lc.wit.
+#[cfg(feature = "compare")]
+mod cmp {
+    use super::{Component, err};
+    use crate::compare::QrEcc;
+    use exports::lc::code::compare::{Guest as CompareGuest, QrEcc as WitQrEcc, QrSymbol};
+
+    use super::*;
+
+    fn ecc_in(e: WitQrEcc) -> QrEcc {
+        match e {
+            WitQrEcc::Low => QrEcc::Low,
+            WitQrEcc::Medium => QrEcc::Medium,
+            WitQrEcc::Quartile => QrEcc::Quartile,
+            WitQrEcc::High => QrEcc::High,
+        }
+    }
+
+    impl CompareGuest for Component {
+        fn qr_encode(data: Vec<u8>, ecl: WitQrEcc) -> Result<QrSymbol, String> {
+            let payload_bytes = data.len() as u32;
+            crate::compare::qr_encode(&data, ecc_in(ecl))
+                .map(|s| QrSymbol {
+                    modules: s.modules,
+                    size: s.size,
+                    version: s.version,
+                    // A constant in `lc-render`, since ISO/IEC 18004 §6.3.8 fixes it at 4
+                    // and a QR decoder in the wild genuinely fails without it.
+                    quiet_zone: lc_render::qr::QR_QUIET,
+                    payload_bytes,
+                })
+                .map_err(err)
         }
     }
 }

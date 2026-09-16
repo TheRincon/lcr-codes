@@ -59,6 +59,8 @@ struct Row {
     version: u8,
     side: u16,
     profile: &'static str,
+    /// How the symbol is found: "Ring" (finder-less, D17) or "Finders" (classic).
+    layout: &'static str,
 }
 
 fn main() {
@@ -101,16 +103,16 @@ fn main() {
         ));
     }
 
-    // The §6.4 border is optional, signalled by format bit 14. Two payloads without it,
-    // matching `contact` and `event-admission` above so the pair can be compared directly.
+    // Without the §6.4 ring a symbol keeps its finders (D17). Two payloads without it,
+    // matching `contact` and `event-admission` above so each pair can be compared directly.
     for (i, name) in [(0usize, "contact"), (6, "event-admission")] {
         let (_, json, _) = PAYLOADS[i];
         rows.push(write_one(
             &dir,
             &format!("{name}-no-border"),
             json,
-            "No §6.4 reference border. Same payload, same version — the ring is outside the \
-             symbol grid, so dropping it changes nothing about what is encoded.",
+            "No §6.4 ring, so the classic layout: finders, alignment and format region. \
+             Readable from a greyscale capture.",
             Profile::C1,
             false,
         ));
@@ -155,11 +157,12 @@ fn write_one(dir: &str, name: &str, json: &str, what: &str, profile: Profile, bo
     std::fs::write(format!("{dir}/{name}.json"), json).unwrap();
 
     println!(
-        "{name:<20} v{:<2} {}×{}  {:?}  {} B json → {} B cbor",
+        "{name:<24} v{:<2} {}×{}  {:?}  {:<7}  {} B json → {} B cbor",
         sym.format.version.get(),
         sym.format.version.side(),
         sym.format.version.side(),
         profile,
+        layout(profile, border),
         json.len(),
         cbor.len()
     );
@@ -177,6 +180,15 @@ fn write_one(dir: &str, name: &str, json: &str, what: &str, profile: Profile, bo
             Profile::C2 => "C2",
             Profile::C3 => "C3",
         },
+        layout: layout(profile, border),
+    }
+}
+
+fn layout(profile: Profile, border: bool) -> &'static str {
+    if lc_core::layout::Layout::is_finderless(profile, border) {
+        "Ring"
+    } else {
+        "Finders"
     }
 }
 
@@ -185,37 +197,48 @@ fn write_index(dir: &str, rows: &[Row]) {
     s.push_str("# LC Code example symbols\n\n");
     s.push_str(
         "Generated, not hand-made. Regenerate with:\n\n\
-         ```\ncargo run -p lc-render --release --example gallery -- examples\n```\n\n\
+         ```\njust gallery\n```\n\n\
          Each entry is a `.png` (12 device pixels per module, §13.1's preferred range), \
          the same symbol as `.svg`, and the source `.json`. Every one is decoded before \
          it is written, so anything here reads back to the JSON beside it.\n\n\
          Payloads travel as CBOR, not JSON — §9.4's \"author in JSON, transmit CBOR\". \
-         The two size columns are that conversion.\n\n",
+         The two size columns are that conversion. **Layout** is how a symbol is found: \
+         **Ring** is finder-less (D17), located and described entirely by its §6.4 ring; \
+         **Finders** is the classic layout.\n\n",
+    );
+    s.push_str(
+        "**New to the format?** [`anatomy-c3.png`](anatomy-c3.png) boxes and explains every \
+         part of a C3 symbol: corners, sequence, version and format bits, references and \
+         payload. Regenerate it with `just anatomy`.\n\n",
     );
 
     s.push_str("## Payloads\n\n");
-    s.push_str("| Symbol | Profile | Version | Side | JSON | CBOR | What it is |\n");
-    s.push_str("|---|---|---|---|---|---|---|\n");
+    s.push_str("| Symbol | Profile | Layout | Version | Side | JSON | CBOR | What it is |\n");
+    s.push_str("|---|---|---|---|---|---|---|---|\n");
     for r in rows.iter().take(PAYLOADS.len()) {
         s.push_str(&format!(
-            "| [`{}`]({}.png) | {} | v{} | {}×{} | {} B | {} B | {} |\n",
-            r.file, r.file, r.profile, r.version, r.side, r.side, r.json, r.cbor, r.what
+            "| [`{}`]({}.png) | {} | {} | v{} | {}×{} | {} B | {} B | {} |\n",
+            r.file, r.file, r.profile, r.layout, r.version, r.side, r.side, r.json, r.cbor, r.what
         ));
     }
 
     s.push_str("\n## The same payload at every profile\n\n");
     s.push_str(
         "`event-admission`, encoded four ways. This is §5's density trade made visible: \
-         the monochrome fallback needs a visibly bigger symbol for the same bytes.\n\n",
+         the monochrome fallback needs a visibly bigger symbol for the same bytes — partly \
+         because it carries one bit per module where C1 carries two, and partly because M \
+         keeps its finders even with the ring. Its format cannot ride on hue, because it \
+         has none.\n\n",
     );
-    s.push_str("| Symbol | Profile | Version | Side | Modules | What it is |\n");
-    s.push_str("|---|---|---|---|---|---|\n");
+    s.push_str("| Symbol | Profile | Layout | Version | Side | Modules | What it is |\n");
+    s.push_str("|---|---|---|---|---|---|---|\n");
     for r in rows.iter().skip(PAYLOADS.len()).take(4) {
         s.push_str(&format!(
-            "| [`{}`]({}.png) | {} | v{} | {}×{} | {} | {} |\n",
+            "| [`{}`]({}.png) | {} | {} | v{} | {}×{} | {} | {} |\n",
             r.file,
             r.file,
             r.profile,
+            r.layout,
             r.version,
             r.side,
             r.side,
@@ -224,25 +247,32 @@ fn write_index(dir: &str, rows: &[Row]) {
         ));
     }
 
-    s.push_str("\n## Without the reference border\n\n");
+    s.push_str("\n## With the ring, and without\n\n");
     s.push_str(
-        "The §6.4 ring is **optional** — signalled by format bit 14, and these two decode \
-         without it. It lives outside the symbol grid, so removing it changes nothing about \
-         what is encoded: same payload, same version, same module pattern. Compare each \
-         against its bordered twin above.\n\n\
-         It is not free to drop, though. Measured over a 120-case tilt × glare grid, \
-         decoding succeeds in 65 cases with the border and 53 without — the ring gives the \
-         §12.3 illumination fit known-colour samples at the geometric outside of the \
-         symbol, which is where a global fit is weakest and where glare gradients are \
-         strongest. §6.4's own note is that on screen it costs pixels nobody was using; in \
-         print the area would not be worth it.\n\n",
+        "A colour symbol that carries the §6.4 ring has **no finders, separators, palette \
+         anchors, alignment marker, timing or format region** (D17). The ring's four \
+         forced-dark corners give the homography; its luma position sequence names the \
+         version, the rotation and the mirror; and the format codeword rides on the colour \
+         choices of the ring positions between its fixed-colour references. Those structures \
+         were 204 modules at every version — 46% of a v1 — and all of them go back to \
+         payload.\n\n\
+         Without the ring a symbol keeps the classic layout, and that is still the right \
+         choice wherever a capture might be greyscale: a finder-less symbol's format is \
+         carried in hue, so a mono sensor can locate one but cannot read it.\n\n\
+         These are the same payloads as their ringed twins above.\n\n",
     );
-    s.push_str("| Symbol | Profile | Version | Side | JSON | CBOR |\n");
-    s.push_str("|---|---|---|---|---|---|\n");
+    s.push_str("| Symbol | Profile | Layout | Version | Side | Ringed twin | JSON | CBOR |\n");
+    s.push_str("|---|---|---|---|---|---|---|---|\n");
     for r in rows.iter().skip(PAYLOADS.len() + 4) {
+        let twin = rows
+            .iter()
+            .find(|t| format!("{}-no-border", t.file) == r.file)
+            .map_or("—".to_string(), |t| {
+                format!("[v{} {}×{}]({}.png)", t.version, t.side, t.side, t.file)
+            });
         s.push_str(&format!(
-            "| [`{}`]({}.png) | {} | v{} | {}×{} | {} B | {} B |\n",
-            r.file, r.file, r.profile, r.version, r.side, r.side, r.json, r.cbor
+            "| [`{}`]({}.png) | {} | {} | v{} | {}×{} | {} | {} B | {} B |\n",
+            r.file, r.file, r.profile, r.layout, r.version, r.side, r.side, twin, r.json, r.cbor
         ));
     }
 

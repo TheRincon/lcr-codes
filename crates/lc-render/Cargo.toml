@@ -11,11 +11,22 @@ repository.workspace = true
 default = ["std", "png"]
 std = ["lc-core/std"]
 png = ["dep:miniz_oxide"]
+# §17.2 dual-render: an LC symbol beside a QR carrying a fallback URL, composed into one
+# image at a shared module pitch.
+#
+# **Off by default, deliberately.** `lc-render` is in the wasm full build, and QR costs
+# ~23 KB there for a capability most callers do not want. It is also, in §17.2's own words,
+# "a bridge, not an answer" — it reintroduces the network dependency the format exists to
+# remove — so it should be something a deployment opts into rather than something it gets
+# for linking the renderer.
+qr = ["dep:qrcodegen"]
 
 [dependencies]
 lc-core = { workspace = true }
 miniz_oxide = { workspace = true, optional = true }
+qrcodegen = { workspace = true, optional = true }
 
 [dev-dependencies]
 lc-encode = { workspace = true }
 lc-decode = { workspace = true }
+rqrr = { workspace = true }

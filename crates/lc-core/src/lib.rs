@@ -43,6 +43,7 @@ extern crate alloc;
 pub mod bch;
 pub mod bits;
 pub mod border;
+pub mod border_seq;
 pub mod capacity;
 pub mod cbor;
 pub mod color;

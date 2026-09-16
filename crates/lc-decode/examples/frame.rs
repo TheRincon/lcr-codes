@@ -41,7 +41,7 @@ fn main() {
     let mut buf = Vec::with_capacity(8 + (r.width * r.height * 4) as usize);
     buf.extend_from_slice(&r.width.to_le_bytes());
     buf.extend_from_slice(&r.height.to_le_bytes());
-    for px in r.data.chunks_exact(3) {
+    for px in r.data.as_chunks::<3>().0 {
         buf.extend_from_slice(&[px[0], px[1], px[2], 255]);
     }
 

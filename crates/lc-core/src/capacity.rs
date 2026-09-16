@@ -95,6 +95,30 @@ pub fn smallest_version(
         .ok_or(LcError::TooLarge(body_len))
 }
 
+/// Capacity of a symbol with or without the §6.4 ring — which decides between the classic
+/// and finder-less layouts (D17). [`capacity`] is the classic layout, kept for callers
+/// sizing border-less (print) symbols.
+pub fn capacity_for_symbol(
+    version: Version,
+    profile: Profile,
+    ecc: EccLevel,
+    reference_border: bool,
+) -> SymbolCapacity {
+    capacity_for(&Layout::for_symbol(version, profile, reference_border), ecc)
+}
+
+/// Smallest version that holds `body_len` bytes, for the layout the symbol will use.
+pub fn smallest_version_for_symbol(
+    body_len: usize,
+    profile: Profile,
+    ecc: EccLevel,
+    reference_border: bool,
+) -> Result<Version, LcError> {
+    Version::all()
+        .find(|&v| capacity_for_symbol(v, profile, ecc, reference_border).body_bytes >= body_len)
+        .ok_or(LcError::TooLarge(body_len))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

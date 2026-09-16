@@ -18,6 +18,9 @@ pub struct Symbol {
     pub format: FormatInfo,
     /// Palette index of every module, `index(l, h) = l·k + h`.
     pub modules: ModuleGrid<u8>,
+    /// Palette index of each ring payload cell (D19), in `border::payload_cells` order.
+    /// Empty for a symbol without the §6.4 ring, and for the classic layout.
+    pub ring: alloc::vec::Vec<u8>,
 }
 
 impl Symbol {
@@ -34,7 +37,11 @@ impl Symbol {
 
     /// Rebuild the geometry. Deterministic from [`Symbol::format`].
     pub fn layout(&self) -> Layout {
-        Layout::new(self.format.version, self.format.profile)
+        Layout::for_symbol(
+            self.format.version,
+            self.format.profile,
+            self.format.reference_border,
+        )
     }
 
     /// Colour of a module.

@@ -75,6 +75,29 @@ pub fn modulate(
         modules.set(x, y, l as u8 * hues_u8 + h as u8);
     }
 
+    // The ring's payload cells (D19), taking the tail of each layer's codeword. No mask:
+    // `mask::luma_mask` is defined over grid coordinates and these cells sit outside it.
+    let ring_len = layout.ring_cells;
+    let ring_chroma = layout.profile.chroma_cell() == 1 && bpc > 0;
+    let mut ring = Vec::with_capacity(ring_len);
+    for i in 0..ring_len {
+        let l = luma_cw
+            .get(layout.payload.len() + i)
+            .copied()
+            .unwrap_or(false);
+        let h = if ring_chroma {
+            let base = layout.chroma_cells.len() * bpc + i * bpc;
+            let mut symbol = 0usize;
+            for b in 0..bpc {
+                symbol = (symbol << 1) | chroma_cw.get(base + b).copied().unwrap_or(false) as usize;
+            }
+            chroma_symbol_to_hue(symbol, hues)
+        } else {
+            0
+        };
+        ring.push(l as u8 * hues_u8 + h as u8);
+    }
+
     // Format region: both copies of the same BCH codeword, luma-only.
     let cw = format.to_codeword();
     for copy in &layout.format_cells {
@@ -84,7 +107,11 @@ pub fn modulate(
         }
     }
 
-    Symbol { format, modules }
+    Symbol {
+        format,
+        modules,
+        ring,
+    }
 }
 
 /// Recover both layer codewords from a symbol, hard-decision.
@@ -116,6 +143,18 @@ pub fn demodulate(layout: &Layout, symbol: &Symbol) -> (Vec<bool>, Vec<bool>) {
             chroma[cell as usize * bpc + b] = (s >> (bpc - 1 - b)) & 1 == 1;
         }
     }
+
+    // The ring's payload cells (D19) are the tail of each layer, unmasked.
+    let ring_chroma = layout.profile.chroma_cell() == 1 && bpc > 0;
+    for &idx in &symbol.ring {
+        luma.push(idx as usize >= hues);
+        if ring_chroma {
+            let s = hue_to_chroma_symbol(idx as usize % hues, hues);
+            for b in 0..bpc {
+                chroma.push((s >> (bpc - 1 - b)) & 1 == 1);
+            }
+        }
+    }
     (luma, chroma)
 }
 
@@ -139,17 +178,22 @@ pub fn read_format_copies(layout: &Layout, luma: &ModuleGrid<bool>) -> [u32; 2] 
 /// Two format details are folded in here rather than left to the caller, because getting
 /// either wrong produces a decoder that half-works:
 ///
-/// * the §8.5 mask rotation, removed before labelling;
+/// * the §8.5 mask rotation, removed before labelling — `cell` is the chroma cell it is
+///   keyed on, or `None` for the ring's payload cells (D19), which sit outside the grid the
+///   mask is defined over and are written unrotated;
 /// * the Gray labelling of hue states, so a confusion between two hues adjacent on the
 ///   colour wheel costs one bit rather than two.
-pub fn chroma_bit_llrs(hue_ll: &[f32], cx: u16, cy: u16, hues: usize, out: &mut Vec<f32>) {
+pub fn chroma_bit_llrs(hue_ll: &[f32], cell: Option<(u16, u16)>, hues: usize, out: &mut Vec<f32>) {
     let bits = hues.trailing_zeros() as usize;
     out.clear();
     for b in 0..bits {
         // max-log approximation: LLR = max{ll : bit b == 0} − max{ll : bit b == 1}.
         let mut best = [f32::NEG_INFINITY; 2];
         for (h_observed, &ll) in hue_ll.iter().enumerate().take(hues) {
-            let h = mask::chroma_mask_remove(h_observed, cx, cy, hues);
+            let h = match cell {
+                Some((cx, cy)) => mask::chroma_mask_remove(h_observed, cx, cy, hues),
+                None => h_observed,
+            };
             let s = hue_to_chroma_symbol(h, hues);
             let bit = (s >> (bits - 1 - b)) & 1;
             best[bit] = best[bit].max(ll);
@@ -303,7 +347,7 @@ mod tests {
                             .map(|i| if i == h { 0.0 } else { -12.0 })
                             .collect();
                         let mut out = Vec::new();
-                        chroma_bit_llrs(&ll, cx, cy, hues, &mut out);
+                        chroma_bit_llrs(&ll, Some((cx, cy)), hues, &mut out);
                         assert_eq!(out.len(), bits);
                         let got: usize = out
                             .iter()
@@ -322,7 +366,7 @@ mod tests {
         let hues = 4;
         let ll: Vec<f32> = alloc::vec![0.0, 0.0, -12.0, -12.0];
         let mut out = Vec::new();
-        chroma_bit_llrs(&ll, 0, 0, hues, &mut out);
+        chroma_bit_llrs(&ll, Some((0, 0)), hues, &mut out);
         let ambiguous = out.iter().filter(|l| l.abs() < 1e-6).count();
         assert_eq!(ambiguous, 1, "{out:?}");
     }

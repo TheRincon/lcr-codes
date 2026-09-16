@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LC Code capture sweep</title>
+<style>
+  :root {
+    --bg: #0e120d; --panel: #171d15; --line: #2a3326;
+    --ink: #e9eee4; --dim: #97a291; --ok: #8bd377; --bad: #e0a070; --accent: #78297c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    padding: max(1rem, env(safe-area-inset-top)) 1rem 3rem;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.15rem; font-weight: 600; letter-spacing: -.01em; margin: 0 0 .25rem; }
+  .sub { color: var(--dim); font-size: .85rem; margin: 0 0 1.1rem; }
+
+  details {
+    border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); padding: .6rem .8rem; margin-bottom: .85rem;
+  }
+  summary { cursor: pointer; font-size: .88rem; font-weight: 600; }
+  label.f { display: block; font-size: .75rem; color: var(--dim); margin: .7rem 0 .25rem; }
+  input[type=text], input[type=number], select {
+    font: inherit; font-size: .85rem; width: 100%;
+    background: #0b0f0a; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; padding: .4rem .5rem;
+  }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+
+  .stage {
+    position: relative; background: #000; border: 1px solid var(--line);
+    border-radius: 6px; overflow: hidden; aspect-ratio: 4 / 3;
+    display: grid; place-items: center;
+  }
+  video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .idle { color: var(--dim); font-size: .9rem; padding: 2rem; text-align: center; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; margin: .85rem 0; }
+  button {
+    font: inherit; font-size: .88rem; padding: .5rem .9rem; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+  label.toggle { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--dim); }
+
+  /* The live readout is the thing the operator actually watches while walking backwards,
+     so it is large enough to read at arm's length and never reflows. */
+  .live {
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+    padding: .8rem 1rem; margin-bottom: .85rem;
+  }
+  .verdict { font-weight: 600; font-size: 1rem; margin-bottom: .5rem; }
+  /* Guidance, not decoration: sweeps 1 and 2 found face-on capture 5–20× worse than a
+     10–20° tilt at the same range, so this is the highest-value thing on the page. */
+  .guide {
+    margin-top: .6rem; font-size: .85rem; color: var(--bad);
+    min-height: 1.2em;   /* never reflow the layout under the operator */
+  }
+  .verdict.ok { color: var(--ok); }
+  .verdict.bad { color: var(--bad); }
+  /* Four now: the delivered frame size earns a slot after sweep 3 ran at 720 across
+     while the control said 1280. */
+  .nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem .9rem; }
+  .nums div { font: .72rem/1.3 ui-monospace, Menlo, monospace; color: var(--dim); }
+  .nums b {
+    display: block; color: var(--ink); font-weight: 600; font-size: 1.1rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  table { width: 100%; border-collapse: collapse; font: .78rem ui-monospace, Menlo, monospace; }
+  th, td { text-align: right; padding: .25rem .35rem; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--dim); font-weight: 600; }
+  td.rate { font-weight: 600; }
+  .thin { color: var(--dim); }        /* too few trials to mean anything yet */
+  caption {
+    caption-side: top; text-align: left; color: var(--dim);
+    font: .75rem/1.5 ui-sans-serif, system-ui, sans-serif; padding-bottom: .4rem;
+  }
+
+  textarea {
+    width: 100%; min-height: 7rem; margin-top: .6rem;
+    font: .7rem/1.4 ui-monospace, Menlo, monospace;
+    color: var(--ink); background: #0b0f0a;
+    border: 1px solid var(--line); border-radius: 5px; padding: .5rem;
+  }
+  .note { color: var(--dim); font-size: .8rem; margin-top: 1rem; }
+  .note code, .note b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LC Code capture sweep</h1>
+  <p class="sub">Records every decode attempt against the geometry it was attempted at, so
+    the working range comes out as measured data rather than an impression.</p>
+
+  <details id="sess">
+    <summary>Session — fill in once</summary>
+    <label class="f" for="operator">Operator</label>
+    <input type="text" id="operator" autocomplete="off">
+    <label class="f" for="phone">Capture device</label>
+    <input type="text" id="phone" placeholder="iPhone 15 Pro, main camera" autocomplete="off">
+    <label class="f" for="panel">Display panel</label>
+    <input type="text" id="panel" placeholder="MacBook Pro 14&quot; M3, brightness max, True Tone off" autocomplete="off">
+    <label class="f" for="ambient">Ambient light</label>
+    <input type="text" id="ambient" placeholder="office overheads, blinds down" autocomplete="off">
+    <div class="row2">
+      <div>
+        <label class="f" for="modulePx">Display px/module</label>
+        <input type="number" id="modulePx" value="12" min="1" max="64">
+      </div>
+      <div>
+        <label class="f" for="payload">Payload bytes (JSON)</label>
+        <input type="number" id="payload" value="54" min="1">
+      </div>
+    </div>
+
+    <label class="f" for="capw">Capture width</label>
+    <select id="capw">
+      <option value="1280" selected>1280 — the measured baseline, sweeps 1–4</option>
+      <option value="1920">1920 · ~1.5× range · ~1.5× decode time</option>
+      <option value="2560">2560 · ~2× range · ~1.8× decode time — try this next</option>
+      <option value="3840">3840 (4K) · ~3× range · ~4× decode time, likely too slow</option>
+    </select>
+    <p class="note"><b>The pitch ceiling is lifted</b> (D16): detection used to stop above
+      ~22 captured px/module, which is why a 4K capture decoded nothing. It now retries on a
+      reduced image and holds to ~80. So resolution is a range lever again — but
+      <b>unmeasured on a real capture</b>, so run 2560 as its own labelled run rather than
+      trusting the arithmetic. 4K costs ~4× the decode time and will outrun the 120 ms tick
+      on a phone.</p>
+    <p class="note">Profile and version are read from the symbol itself, so they are not
+      asked for here. These two are not — record them, because a working range is only
+      comparable against the pitch the display drew at.</p>
+  </details>
+
+  <div class="live">
+    <div class="verdict" id="verdict">Idle</div>
+    <div class="nums">
+      <div><b id="nPitch">—</b>px / module</div>
+      <div><b id="nObliq">—</b>obliquity</div>
+      <div><b id="nSnr">—</b>luma SNR</div>
+      <div><b id="nFrame">—</b>frame</div>
+    </div>
+    <div class="guide" id="guide"></div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="idle" id="idle">Point at a presented symbol and start.</div>
+    <video id="video" playsinline muted hidden></video>
+  </div>
+
+  <div class="controls">
+    <button id="start" class="primary">Start recording</button>
+    <button id="stop" disabled>Stop</button>
+    <label class="toggle" title="Off is the honest envelope: one frame, one trial.">
+      <input type="checkbox" id="accumulate"> Combine frames (§12.4)
+    </label>
+  </div>
+
+  <label class="f" for="run">Run label — name what you are sweeping</label>
+  <div class="row2">
+    <input type="text" id="run" value="distance" autocomplete="off">
+    <button id="newrun">Start a new run</button>
+  </div>
+
+  <div class="live" style="margin-top:.85rem">
+    <table id="bins">
+      <caption>Success rate by captured module pitch. Bins under 10 trials are dimmed —
+        they are not yet evidence.</caption>
+      <thead><tr><th>px/module</th><th>trials</th><th>decoded</th><th>rate</th><th>found</th></tr></thead>
+      <tbody id="binsBody"><tr><td colspan="5" class="thin">No trials yet.</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="controls">
+    <button id="export">Copy JSON</button>
+    <button id="download">Download</button>
+    <button id="clear">Discard all</button>
+  </div>
+  <textarea id="out" spellcheck="false" placeholder="Exported JSON appears here — select and copy if the button is refused." hidden></textarea>
+
+  <p class="note">
+    <b>Why single frames.</b> Frame combining is left off by default because it makes
+    success a function of how long you lingered rather than of where you stood. §12.4's
+    accumulator is the right thing for a real scanner and the wrong thing for a
+    measurement, so turn it on only for a run that is deliberately about it — the mode is
+    recorded either way.
+  </p>
+  <p class="note">
+    <b>What the rig measures for you.</b> Distance is recorded as <b>captured module
+    pitch</b> — sensor pixels per module — not centimetres, because that is the quantity
+    decoding actually depends on and it needs no tape measure. Angle is recorded as
+    <b>obliquity</b>, the ratio of the coarsest module pitch to the finest across the
+    symbol: 1.0 face-on, climbing as you tilt. Turning it into degrees would need the
+    camera's focal length, which a browser does not expose, so the raw ratio is what gets
+    written down.
+  </p>
+  <p class="note">
+    <b>Failures are measured too.</b> When a decode fails the page falls back to
+    <code>decoder.probe</code>, which runs detection and the format read only. So a frame
+    that was found but not decoded still contributes its geometry, and only a frame where
+    nothing was found at all is logged without one. That distinction is the whole point:
+    <em>not found</em> and <em>found but marginal</em> are different limits.
+  </p>
+</div>
+
+<canvas id="work" hidden></canvas>
+
+<script type="module">
+import { decoder } from './lc/lc-code.js';
+
+// Tilt target, measured over 1,549 pooled C1 trials from sweeps 1–4. Decode rate by
+// obliquity: 5% below 1.05, 37% to 1.10, ~40% to 1.20, 58% at 1.20–1.25, 72% at
+// 1.25–1.30, 70% at 1.30–1.40, **84% at 1.40–1.60**, and 0% past 2.00 where
+// foreshortening starts costing more than the reflection did. The shape survives holding
+// pitch constant, so it is tilt and not distance.
+const TILT_LO = 1.30, TILT_HI = 1.50, TILT_MAX = 1.90;
+
+const $ = (id) => document.getElementById(id);
+const video = $('video'), work = $('work');
+const ctx = work.getContext('2d', { willReadFrequently: true });
+
+let stream = null, timer = null, acc = null;
+let attempts = [];
+const started = new Date().toISOString();
+
+// ---------------------------------------------------------------- capture
+
+function grab(source, w, h) {
+  work.width = w; work.height = h;
+  ctx.drawImage(source, 0, 0, w, h);
+  const img = ctx.getImageData(0, 0, w, h);
+  return { pixels: new Uint8Array(img.data.buffer), width: w, height: h,
+           stride: w * 4, format: 'rgba8' };
+}
+
+/// One trial. Returns a record that always carries an outcome, and carries geometry
+/// whenever the symbol was located at all — including when the payload failed, which is
+/// the case the sweep most needs and the one a bare decode error throws away.
+function trial(image) {
+  const t0 = performance.now();
+  let res = null, error = null;
+  try {
+    res = acc ? (acc.push(image), acc.tryDecode()) : decoder.decode(image);
+  } catch (e) {
+    error = String(e.payload ?? e.message ?? e);
+  }
+  const ms = performance.now() - t0;
+
+  const rec = {
+    t: Date.now(),
+    run: $('run').value.trim() || 'unlabelled',
+    mode: acc ? 'accumulated' : 'single',
+    ms: Math.round(ms),
+    // What the camera actually gave, which is not always what was asked for.
+    frameW: image.width,
+    frameH: image.height,
+  };
+
+  if (res) {
+    const d = res.diagnostics, p = res.packet;
+    rec.outcome = (p.tag === 'unsigned' || p.tag === 'verified') ? 'decoded'
+                : p.tag === 'partial' ? 'partial' : 'unverified';
+    rec.pitchMin = round(d.capturePitchMin);
+    rec.pitchMax = round(d.capturePitchMax);
+    rec.version = d.version;
+    rec.profile = d.profile;
+    rec.snrDb = round(d.snrDb);
+    rec.chromaRecovered = d.chromaRecovered;
+    rec.alignmentFound = d.alignmentFound;
+    rec.formatMargin = round(d.formatMargin);
+    rec.illumResidualRms = round(d.illumResidualRms, 4);
+    rec.referencesRejected = d.referencesRejected;
+    rec.frames = d.framesCombined;
+    rec.lumaIterations = d.lumaIterations;
+    rec.chromaIterations = d.chromaIterations;
+  } else {
+    rec.outcome = 'failed';
+    rec.error = error;
+    // The decode failed; ask whether the symbol was even there. `probe` stops after
+    // §12.1–§12.3, so it answers for exactly the frames `decode` gives up on.
+    try {
+      const p = decoder.probe(image);
+      rec.found = true;
+      rec.pitchMin = round(p.capturePitchMin);
+      rec.pitchMax = round(p.capturePitchMax);
+      rec.version = p.version;
+      rec.profile = p.profile;
+      rec.alignmentFound = p.alignmentFound;
+      rec.formatMargin = round(p.formatMargin);
+      rec.illumResidualRms = round(p.illumResidualRms, 4);
+      rec.referencesRejected = p.referencesRejected;
+    } catch {
+      rec.found = false;      // nothing in frame — a different limit entirely
+    }
+  }
+  if (rec.pitchMin != null) rec.obliquity = round(rec.pitchMax / rec.pitchMin, 3);
+  return rec;
+}
+
+const round = (x, dp = 2) => Number.isFinite(x) ? Number(x.toFixed(dp)) : null;
+
+// ---------------------------------------------------------------- display
+
+function showLive(rec) {
+  const v = $('verdict');
+  if (rec.outcome === 'decoded') {
+    v.className = 'verdict ok';
+    v.textContent = `Decoded · v${rec.version} ${String(rec.profile).toUpperCase()}`;
+  } else if (rec.found === false) {
+    v.className = 'verdict bad';
+    v.textContent = 'Not found — no symbol located';
+  } else {
+    v.className = 'verdict bad';
+    v.textContent = `Found, not decoded — ${rec.error ?? rec.outcome}`;
+  }
+  $('nPitch').textContent = rec.pitchMin?.toFixed(1) ?? '—';
+  $('nObliq').textContent = rec.obliquity?.toFixed(2) ?? '—';
+  $('nSnr').textContent = rec.snrDb?.toFixed(1) ?? '—';
+  $('nFrame').textContent = rec.frameW ? `${rec.frameW}×${rec.frameH}` : '—';
+  $('guide').textContent = guidance(rec);
+}
+
+/// What to tell the operator, from the diagnostics §14.3 keeps for exactly this.
+///
+/// Sweeps 1 and 2 found that holding the phone **face-on is the dominant failure mode**,
+/// not distance: at 7–8 captured px/module, face-on decoded 4% of the time and a 10–20°
+/// tilt decoded 93%, in the same minutes at the same range. §13.2 already recommends the
+/// tilt — to move the phone's own reflection off the glass — and the measurement says it
+/// is worth more than anything else the operator controls.
+function guidance(rec) {
+  // Checked first, and even on success: sweep 3 ran entirely at 720 across while the
+  // control said 1280, because the phone was held upright. The symbol spans the *short*
+  // axis of the frame, so portrait throws away 1.78x of the captured pitch — which is
+  // 1.78x of the working range — and nothing on screen said so.
+  if (rec.frameW && rec.frameH && rec.frameW < rec.frameH) {
+    return `Rotate the phone to landscape — capturing ${rec.frameW} across, not ${rec.frameH}.`;
+  }
+  // Aim by the *obliquity readout*, not by an angle. A fixed tilt produces different
+  // obliquity at different distances, and sweep 4 showed the cost of the confusion: the
+  // operator held a careful 10° and landed at 1.05–1.18, which is the worst band there is.
+  if (rec.obliquity != null && rec.obliquity > TILT_MAX) {
+    return `Too steep at ${rec.obliquity.toFixed(2)} — ease back toward ${TILT_LO}–${TILT_HI}.`;
+  }
+  if (rec.outcome === 'decoded') return '';
+  if (rec.found === false) return 'Nothing found — fill more of the frame with the symbol.';
+  if (rec.obliquity != null && rec.obliquity < TILT_LO) {
+    return `Tilt more — obliquity ${rec.obliquity.toFixed(2)}, aim for ${TILT_LO}–${TILT_HI}.`;
+  }
+  if (rec.pitchMin != null && rec.pitchMin < 7) return 'Found it, but too small — move closer.';
+  return 'Found it, payload marginal — hold steadier, or reduce glare.';
+}
+
+/// Live binning exists so the operator can see which bins are still thin and stand there
+/// a moment longer, rather than discovering the gap in analysis afterwards.
+function renderBins() {
+  const run = $('run').value.trim() || 'unlabelled';
+  const bins = new Map();
+  for (const r of attempts) {
+    if (r.run !== run) continue;
+    // Frames where nothing was found have no pitch to bin by. They are still counted, as
+    // a separate row, because "how often was there nothing at all" is a real quantity.
+    const key = r.pitchMin == null ? -1 : Math.floor(r.pitchMin);
+    const b = bins.get(key) ?? { n: 0, ok: 0, found: 0 };
+    b.n++;
+    if (r.outcome === 'decoded') b.ok++;
+    if (r.found !== false) b.found++;
+    bins.set(key, b);
+  }
+  const rows = [...bins.entries()].sort((a, b) => a[0] - b[0]).map(([k, b]) => {
+    const label = k < 0 ? 'not found' : `${k}–${k + 1}`;
+    const rate = (100 * b.ok / b.n).toFixed(0) + '%';
+    const found = (100 * b.found / b.n).toFixed(0) + '%';
+    const cls = b.n < 10 ? ' class="thin"' : '';
+    return `<tr${cls}><td>${label}</td><td>${b.n}</td><td>${b.ok}</td>` +
+           `<td class="rate">${rate}</td><td>${found}</td></tr>`;
+  });
+  $('binsBody').innerHTML = rows.length ? rows.join('')
+    : '<tr><td colspan="5" class="thin">No trials in this run yet.</td></tr>';
+}
+
+// ---------------------------------------------------------------- loop
+
+function tick() {
+  if (!stream) return;
+  const w = video.videoWidth, h = video.videoHeight;
+  if (w && h) {
+    const rec = trial(grab(video, w, h));
+    attempts.push(rec);
+    showLive(rec);
+    renderBins();
+    // A successful accumulated decode has consumed its frames; keep going from empty so
+    // the next trial is independent of it.
+    if (acc && rec.outcome === 'decoded') acc.reset();
+  }
+  timer = setTimeout(tick, 120);
+}
+
+$('start').onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        // `ideal`, not `exact`: a camera that cannot do the asked-for width should give
+        // its best rather than refuse, and what it actually delivered is recorded per
+        // trial so the log is self-describing.
+        width: { ideal: Number($('capw').value) },
+      },
+      audio: false,
+    });
+  } catch (e) {
+    $('verdict').className = 'verdict bad';
+    $('verdict').textContent = 'Camera unavailable: ' + (e.message || e);
+    return;
+  }
+  video.srcObject = stream;
+  video.hidden = false;
+  $('idle').hidden = true;
+  await video.play();
+  acc = $('accumulate').checked ? new decoder.Accumulator() : null;
+  $('start').disabled = true; $('stop').disabled = false;
+  $('sess').open = false;
+  tick();
+};
+
+$('stop').onclick = () => {
+  clearTimeout(timer); timer = null;
+  stream?.getTracks().forEach((t) => t.stop());
+  stream = null;
+  video.hidden = true; $('idle').hidden = false;
+  acc?.[Symbol.dispose]?.(); acc = null;
+  $('start').disabled = false; $('stop').disabled = true;
+  $('verdict').className = 'verdict';
+  $('verdict').textContent = `Stopped · ${attempts.length} trials recorded`;
+};
+
+$('accumulate').onchange = () => {
+  acc?.[Symbol.dispose]?.();
+  acc = stream && $('accumulate').checked ? new decoder.Accumulator() : null;
+};
+
+$('newrun').onclick = () => {
+  const name = prompt('Name this run', $('run').value);
+  if (name) { $('run').value = name.trim(); renderBins(); }
+};
+$('run').onchange = renderBins;
+
+// ---------------------------------------------------------------- export
+
+function report() {
+  return JSON.stringify({
+    session: {
+      started,
+      operator: $('operator').value,
+      phone: $('phone').value,
+      panel: $('panel').value,
+      ambient: $('ambient').value,
+    },
+    display: {
+      modulePx: Number($('modulePx').value),
+      payloadBytes: Number($('payload').value),
+    },
+    attempts,
+  }, null, 1);
+}
+
+$('export').onclick = async () => {
+  const text = report();
+  $('out').hidden = false;
+  $('out').value = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    $('export').textContent = `Copied ${attempts.length} trials`;
+    setTimeout(() => ($('export').textContent = 'Copy JSON'), 2000);
+  } catch {
+    // iOS refuses the clipboard outside some gestures; the textarea is the fallback and
+    // is already populated.
+    $('export').textContent = 'Select below and copy';
+  }
+};
+
+$('download').onclick = () => {
+  const blob = new Blob([report()], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `sweep-${started.slice(0, 19).replace(/[:T]/g, '')}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+$('clear').onclick = () => {
+  if (attempts.length && !confirm(`Discard ${attempts.length} recorded trials?`)) return;
+  attempts = [];
+  $('out').hidden = true;
+  renderBins();
+  $('verdict').textContent = 'Cleared';
+};
+</script>
+</body>
+</html>

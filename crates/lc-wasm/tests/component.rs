@@ -163,7 +163,11 @@ fn encodes_and_decodes_through_the_canonical_abi() {
     enc_json.post_return(&mut store).unwrap();
 
     let (pixels, width, height, version) = rendered_parts(&out[0]);
-    assert_eq!(version, 2, "the §6.1 worked example is a v2 symbol");
+    // v2 with finders; the ring's reclaimed modules (D17) fit it in v1.
+    assert_eq!(
+        version, 1,
+        "the §6.1 worked example is a v1 finder-less symbol"
+    );
     assert_eq!(pixels.len(), (width * height * 3) as usize);
 
     // --- decode what we just encoded
@@ -243,7 +247,8 @@ fn encodes_and_decodes_through_the_canonical_abi() {
             .unwrap()
             .clone()
     };
-    assert_eq!(get("version"), Val::U8(2));
+    // v1: finder-less (D17), as asserted at encode above.
+    assert_eq!(get("version"), Val::U8(1));
     assert_eq!(get("profile"), Val::Enum("c1".into()));
     assert_eq!(get("chroma-recovered"), Val::Bool(true));
     let Val::Float32(snr) = get("snr-db") else {
@@ -386,6 +391,31 @@ fn the_scanner_component_exports_no_encoder() {
     let _ = &instance;
 }
 
+/// Neither shipped artifact may carry QR.
+///
+/// The `compare` feature exists so `display.html` can put the two symbologies side by side
+/// and let the README's density claim be checked. That is a demo, and a symbology crate
+/// has no business shipping a competing symbology — so the QR build is a third artifact
+/// (`dist/lc-code-compare.wasm`, built only by `just web`) and this asserts the other two
+/// stayed clean. Without it, "off by default" is a comment rather than a fact.
+#[test]
+fn the_shipped_components_export_no_qr() {
+    for path in [SCANNER, FULL] {
+        let (engine, component) = load(path);
+        let linker: Linker<()> = Linker::new(&engine);
+        let mut store = Store::new(&engine, ());
+        let instance = linker
+            .instantiate(&mut store, &component)
+            .expect("instantiate");
+        assert!(
+            instance
+                .get_export(&mut store, None, "lc:code/compare@0.4.0")
+                .is_none(),
+            "{path} must not carry QR generation",
+        );
+    }
+}
+
 /// Errors cross the boundary as `result::err`, not as a trap.
 ///
 /// A trap would tear down the instance and give the host nothing to report; §14.2 asks for
@@ -422,4 +452,56 @@ fn a_blank_frame_returns_an_error_not_a_trap() {
         }
         other => panic!("expected err(string), got {other:?}"),
     }
+}
+
+/// What the build's size pass costs at run time (D20).
+///
+/// D15 declined `opt-level = "z"` because it cost 11% median decode time, so a size win has
+/// to be priced the same way. Run it against `dist/` as built, then against a `dist/` built
+/// without wasm-opt, and compare. Under wasmtime rather than jco, so read the ratio, not the
+/// absolute milliseconds.
+#[test]
+#[ignore]
+fn decode_cost_through_the_component() {
+    let (engine, component) = load(FULL);
+    let linker: Linker<()> = Linker::new(&engine);
+    let mut store = Store::new(&engine, ());
+    let instance = linker
+        .instantiate(&mut store, &component)
+        .expect("instantiate");
+
+    let enc = export(&instance, &mut store, None, "lc:code/encoder@0.4.0");
+    let enc_json = func(&instance, &mut store, &enc, "encode-json");
+    let mut out = [Val::Bool(false)];
+    enc_json
+        .call(
+            &mut store,
+            &[Val::String(JSON.into()), options_val("c1"), Val::U32(12)],
+            &mut out,
+        )
+        .expect("encode-json call");
+    enc_json.post_return(&mut store).unwrap();
+    let (pixels, width, height, _) = rendered_parts(&out[0]);
+
+    let dec = export(&instance, &mut store, None, "lc:code/decoder@0.4.0");
+    let decode = func(&instance, &mut store, &dec, "decode");
+    let frame = image_val(&pixels, width, height, width * 3, "rgb8");
+
+    // One warm-up, then time the rest.
+    let mut out = [Val::Bool(false)];
+    decode
+        .call(&mut store, std::slice::from_ref(&frame), &mut out)
+        .unwrap();
+    decode.post_return(&mut store).unwrap();
+
+    const N: u32 = 20;
+    let t0 = std::time::Instant::now();
+    for _ in 0..N {
+        decode
+            .call(&mut store, std::slice::from_ref(&frame), &mut out)
+            .unwrap();
+        decode.post_return(&mut store).unwrap();
+    }
+    let each = t0.elapsed() / N;
+    println!("decode {width}x{height}: {each:?} per frame over {N} frames");
 }

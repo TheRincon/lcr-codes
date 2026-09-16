@@ -1,0 +1,24 @@
+# Pin the toolchain so the CI gate is reproducible.
+#
+# `just ci` runs clippy under `-D warnings`, and clippy's lint set moves with the compiler.
+# On a floating toolchain that makes a green tree go red on somebody's upgrade rather than
+# on somebody's change — which is exactly what happened before clippy was added to the
+# gate: six lints had accumulated in untouched code because a newer clippy learned new
+# ones and nothing was looking. Pinning turns a toolchain upgrade into a deliberate commit
+# that fixes any new lints in the same breath.
+#
+# Note this file selects **one exact toolchain**; rustup has no ">= 1.98" form. The
+# supported floor for consumers of the crates is a different thing and lives in
+# `Cargo.toml` as `rust-version` (the MSRV, currently 1.94). Nothing verifies that floor
+# today — CI only ever builds with the pin below.
+#
+# To move it: bump `channel`, run `just ci`, and fix whatever new lints appear.
+
+[toolchain]
+channel = "1.98.0"
+
+# Declared so rustup installs them on first use rather than a fresh clone discovering the
+# gap one failing recipe at a time. `just ci` needs rustfmt and clippy; `just component`
+# cross-compiles both wasm artifacts
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

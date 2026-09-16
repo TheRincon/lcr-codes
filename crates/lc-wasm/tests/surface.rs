@@ -104,7 +104,10 @@ fn diagnostics_describe_a_clean_capture() {
     let out = lc_wasm::decode(&r.data, r.width, r.height, r.width * 3, PixelFormat::Rgb8).unwrap();
     let d = &out.diagnostics;
 
-    assert_eq!(d.version, 2, "the §6.1 worked example is a v2 symbol");
+    assert_eq!(
+        d.version, 1,
+        "the §6.1 worked example is a v1 finder-less symbol (D17)"
+    );
     assert_eq!(d.profile, Profile::C1);
     assert!(d.chroma_recovered);
     assert!(d.alignment_found);
@@ -188,8 +191,9 @@ fn accumulator_with_no_frames_is_an_error_not_a_panic() {
 #[test]
 fn encodes_json_and_decodes_it_back() {
     let out = lc_wasm::encode_json(JSON, &EncodeOptions::default(), 10).expect("encode");
-    assert_eq!(out.version, 2);
-    assert_eq!(out.side, 25);
+    // v2 25×25 with finders; the ring's reclaimed modules (D17) fit it in v1.
+    assert_eq!(out.version, 1);
+    assert_eq!(out.side, 21);
     assert_eq!(out.pixels.len(), (out.width * out.height * 3) as usize);
 
     let back = lc_wasm::decode(

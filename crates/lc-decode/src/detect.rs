@@ -253,7 +253,16 @@ pub fn find_finders(bin: &Binary) -> Vec<Finder> {
         );
     }
     found.retain(|f| f.confirmations >= 2);
-    found.sort_by_key(|f| core::cmp::Reverse(f.confirmations));
+    // Most-confirmed first, ties kept in discovery order. A hand-written insertion sort rather
+    // than `sort_by_key`: identical order, and the stable sort that call instantiated for
+    // `Finder` was 3.4 KB of scanner.
+    for i in 1..found.len() {
+        let mut j = i;
+        while j > 0 && found[j - 1].confirmations < found[j].confirmations {
+            found.swap(j - 1, j);
+            j -= 1;
+        }
+    }
     found
 }
 
@@ -597,18 +606,50 @@ pub fn build_transform(
 /// Full detection: locate finders, order them, estimate the version, find the alignment
 /// marker, and fit the transform.
 pub fn detect(bin: &Binary) -> Option<Detection> {
-    let candidates = find_finders(bin);
+    detect_candidates(bin).into_iter().next()
+}
+
+/// Every plausible symbol in the frame, best-scoring first.
+///
+/// [`detect`] returns only the winner, which is wrong whenever the frame holds **more than
+/// one code**. The geometry cannot settle it alone: §6.2 adopts QR's 1:1:3:1:1 finder
+/// deliberately (Appendix B), so an LC symbol beside a QR — a §17.2 dual-render, say —
+/// presents six finder-like patterns at one module pitch, and a triple straddling the two
+/// symbols can score better on right-angleness than either real triple. The same happens
+/// with two LC symbols in one frame, which is an ordinary thing to point a camera at.
+///
+/// So candidate selection is not the place to decide. The **format region is**: it is BCH
+/// protected, so a wrong triple almost never yields a format word that decodes, and the
+/// caller can walk this list until one does. See `prepare` in `lib.rs`.
+pub fn detect_candidates(bin: &Binary) -> Vec<Detection> {
+    candidates_from(bin, find_finders(bin))
+}
+
+/// Build candidate detections from an already-located set of finders.
+///
+/// Split out from [`detect_candidates`] so the finder search can run on a **downscaled**
+/// image while everything after it — the alignment search, the transform — runs at full
+/// resolution against `bin`. See `PYRAMID_LEVELS` in `lib.rs` for why that matters: the
+/// run-ratio scan has an upper limit on module pitch, and reducing the image is what
+/// brings an over-large symbol back into the band where it works.
+pub fn candidates_from(bin: &Binary, candidates: Vec<Finder>) -> Vec<Detection> {
     if candidates.len() < 3 {
-        return None;
+        return Vec::new();
     }
-    // The three best-confirmed candidates whose module estimates agree; a false positive
-    // in payload noise almost never matches the real finders' pitch.
-    let mut best: Option<(f32, [Finder; 3])> = None;
+
+    // Keep the best few by insertion into a fixed array, rather than collecting every
+    // triple and sorting. Not premature: the obvious `Vec` + `sort_by` + iterator-chain
+    // version cost **10.4 KB** in the scanner and pushed it over §14.2's budget, which
+    // `just wasm-size` duly failed on. A bounded insertion needs no sort, no growth and no
+    // iterator machinery, and the array is three entries long.
+    let mut best: [Option<(f32, [Finder; 3])>; MAX_CANDIDATES] = [None; MAX_CANDIDATES];
     let n = candidates.len().min(8);
     for i in 0..n {
         for j in (i + 1)..n {
             for k in (j + 1)..n {
                 let (a, b, c) = (candidates[i], candidates[j], candidates[k]);
+                // A false positive in payload noise almost never matches the real
+                // finders' pitch.
                 let mean = (a.module + b.module + c.module) / 3.0;
                 let spread = [a, b, c]
                     .iter()
@@ -621,13 +662,54 @@ pub fn detect(bin: &Binary) -> Option<Detection> {
                 let Some(score) = right_angle_score(&ordered) else {
                     continue;
                 };
-                if best.is_none_or(|(s, _)| score < s) {
-                    best = Some((score, ordered));
-                }
+                insert_ranked(&mut best, score, ordered);
             }
         }
     }
-    let (_, finders) = best?;
+
+    let mut out = Vec::new();
+    for entry in best.iter() {
+        let Some((_, finders)) = entry else { continue };
+        if let Some(d) = build_detection(bin, *finders) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// Cap on candidates carried forward.
+///
+/// Every one costs an alignment search here and, for `Decoder::decode`, a format read and
+/// possibly a full LDPC pass — and that cost lands on frames that *fail*, which in a live
+/// preview is every frame the user is still aiming. Six doubled the §15 degradation
+/// suite's runtime, 33.5 s → 67.2 s; three recovers all of it and still fixes the
+/// two-symbol case, because a dual-render's two real triples both score well and a
+/// straddling triple rarely outranks both.
+const MAX_CANDIDATES: usize = 3;
+
+/// Insert into a descending-quality fixed array, dropping the worst. Lower score is better.
+fn insert_ranked(
+    best: &mut [Option<(f32, [Finder; 3])>; MAX_CANDIDATES],
+    score: f32,
+    f: [Finder; 3],
+) {
+    for idx in 0..MAX_CANDIDATES {
+        if let Some((existing, _)) = best[idx]
+            && score >= existing
+        {
+            continue;
+        }
+        let mut back = MAX_CANDIDATES - 1;
+        while back > idx {
+            best[back] = best[back - 1];
+            back -= 1;
+        }
+        best[idx] = Some((score, f));
+        return;
+    }
+}
+
+fn build_detection(bin: &Binary, finders: [Finder; 3]) -> Option<Detection> {
     let version = estimate_version(&finders)?;
     let module = (finders[0].module + finders[1].module + finders[2].module) / 3.0;
 

@@ -54,7 +54,7 @@ fn boolean(map: &Value, key: &str) -> bool {
 }
 
 fn unhex(s: &str) -> Vec<u8> {
-    assert!(s.len() % 2 == 0, "hex string of odd length");
+    assert!(s.len().is_multiple_of(2), "hex string of odd length");
     (0..s.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
@@ -94,7 +94,6 @@ fn encode_vector(v: &Value) -> Result<Symbol, LcError> {
         compression: compression(text(o, "compression")),
         reference_border: boolean(o, "reference_border"),
         mask: uint(o, "mask").map(|n| n as u8),
-        ..Default::default()
     };
 
     let payload = text(v, "payload");
@@ -109,7 +108,7 @@ fn encode_vector(v: &Value) -> Result<Symbol, LcError> {
 #[test]
 fn golden_vectors_still_match() {
     let doc = lc_core::json::parse(VECTORS).expect("vector file parses");
-    assert_eq!(uint(&doc, "schema"), Some(1), "unexpected vector schema");
+    assert_eq!(uint(&doc, "schema"), Some(2), "unexpected vector schema");
 
     let vectors = match field(&doc, "vectors") {
         Some(Value::Array(v)) => v,
@@ -183,6 +182,28 @@ fn golden_vectors_still_match() {
             drifted.push(format!(
                 "{name}: crc {want_crc:08x} -> {got_crc:08x}{detail}"
             ));
+        }
+
+        // The ring's payload cells are wire format too (D19): a symbol whose grid matches
+        // but whose ring does not is a different symbol.
+        match field(v, "ring") {
+            Some(Value::Text(hexed)) => {
+                let want = unhex(hexed);
+                if want.len() != sym.ring.len() {
+                    drifted.push(format!(
+                        "{name}: ring {} -> {} cells",
+                        want.len(),
+                        sym.ring.len()
+                    ));
+                } else if want != sym.ring {
+                    let n = (0..want.len()).filter(|&i| want[i] != sym.ring[i]).count();
+                    drifted.push(format!("{name}: {n} of {} ring cells differ", want.len()));
+                }
+            }
+            _ if !sym.ring.is_empty() => {
+                drifted.push(format!("{name}: gained {} ring cells", sym.ring.len()));
+            }
+            _ => {}
         }
         checked += 1;
     }
