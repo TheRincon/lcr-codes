@@ -108,7 +108,7 @@ fn encode_vector(v: &Value) -> Result<Symbol, LcError> {
 #[test]
 fn golden_vectors_still_match() {
     let doc = lc_core::json::parse(VECTORS).expect("vector file parses");
-    assert_eq!(uint(&doc, "schema"), Some(2), "unexpected vector schema");
+    assert_eq!(uint(&doc, "schema"), Some(3), "unexpected vector schema");
 
     let vectors = match field(&doc, "vectors") {
         Some(Value::Array(v)) => v,
@@ -181,6 +181,22 @@ fn golden_vectors_still_match() {
             };
             drifted.push(format!(
                 "{name}: crc {want_crc:08x} -> {got_crc:08x}{detail}"
+            ));
+        }
+
+        // The format codeword the symbol carries, which differs by layout since D21.
+        let want_format = u32::from_str_radix(text(v, "format"), 16).expect("format hex");
+        let got_format = if lc_core::layout::Layout::is_finderless(
+            sym.format.profile,
+            sym.format.reference_border,
+        ) {
+            sym.format.to_ring_codeword()
+        } else {
+            sym.format.to_codeword()
+        };
+        if got_format != want_format {
+            drifted.push(format!(
+                "{name}: format codeword {want_format:08x} -> {got_format:08x}"
             ));
         }
 

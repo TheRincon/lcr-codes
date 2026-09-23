@@ -643,7 +643,7 @@ fn prepare_ring(img: &ImageView, gray: &[u8]) -> Result<Prepared, DecodeError> {
 
     // With the format known, every ring colour is known too, so the whole ring joins the
     // §12.3 fit rather than only its reference positions.
-    let ring_mode = Some(border::RingMode::Data(format.to_codeword()));
+    let ring_mode = Some(border::RingMode::Data(format.to_ring_codeword()));
     let refs = demod::collect_references(img, &fix.transform, &layout, &palette, ring_mode);
     let illum = if with_chroma {
         IlluminationModel::fit(&refs, layout.side, format.version.get())
@@ -682,7 +682,7 @@ fn prepare_from(
     // §12.3.
     let ring_mode = format.reference_border.then(|| {
         if Layout::is_finderless(format.profile, true) {
-            border::RingMode::Data(format.to_codeword())
+            border::RingMode::Data(format.to_ring_codeword())
         } else {
             border::RingMode::Plain
         }

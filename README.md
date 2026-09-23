@@ -16,8 +16,10 @@ shipped as a **WebAssembly component**.
 
 <img src="examples/profile-c3.png" width="360" alt="An LC Code symbol">
 
-Three finder bullseyes and an alignment marker do the geometry — rendered at the two luma
-levels of a single hue state, so detection works before any colour processing exists. On
+The geometry of the symbol is in flux. There is a version with 3 finders and an alignment "bullseye" and one without. 
+
+### "Old Style"
+Three finder bullseyes and an alignment marker mark the geometry, using the 2 luma levels of a single hue. This means detection works before any colour processing exists. On
 a colour profile that means one hue's dark/light pair rather than black and white: a
 four-colour palette has no neutral pair to use, and borrowing black and white would put
 the fixed patterns outside the palette, giving the detector luma centroids that do not
@@ -51,9 +53,8 @@ Density, and graceful failure. LC Code targets **1.5–2.0 bits/module** against
 1.0 — measured at **1.73×** on this implementation — so payloads that would need an
 unreasonably large QR code fit in a scannable symbol.
 
-**You can now check this rather than take it on trust.** `just web` opens
-`display.html`, which draws a QR of the same payload beside the LC symbol at the same
-module pitch and reports the ratio. QR generation is the `qrcodegen` crate and the test
+**You can now check this claim yourself** run `just web` and open
+`http://localhost:8000/display.html`, which draws a QR of the same payload beside the LC symbol at the same module pitch and reports the ratio. QR generation is the `qrcodegen` crate and the test
 suite reads the result back with `rqrr`, an independent decoder, so the thing being
 compared against is a real QR symbol.
 
@@ -90,6 +91,7 @@ just              # list every recipe
 just test         # the whole suite
 just component    # build both wasm components into dist/
 just gallery      # regenerate examples/
+just web          # run the illustrative example, needs a concurrent "cloudflared tunnel --url http://localhost:8000" for full example.
 ```
 
 Requires a Rust toolchain, plus [`just`](https://github.com/casey/just),

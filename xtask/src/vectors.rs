@@ -46,6 +46,7 @@
 //! ambiguity about which CRC-32 is meant.
 
 use lc_core::crc::crc32_iso_hdlc;
+use lc_core::layout::Layout;
 use lc_core::version::{EccLevel, Profile, Version};
 use lc_core::{Compression, Symbol};
 use lc_encode::EncodeOptions;
@@ -282,7 +283,7 @@ pub fn report() -> String {
     let mut s = String::new();
     s.push_str("{\n");
     s.push_str("  \"format\": \"lc-code-golden-vectors\",\n");
-    s.push_str("  \"schema\": 2,\n");
+    s.push_str("  \"schema\": 3,\n");
     s.push_str("  \"spec\": \"v0.4\",\n");
     s.push_str(
         "  \"note\": \"Canonical form is side*side palette indices, row-major, one byte \
@@ -343,6 +344,16 @@ pub fn report() -> String {
         if !sym.ring.is_empty() {
             let _ = write!(r, ",\n      \"ring\": \"{}\"", hex(&sym.ring));
         }
+        // The format codeword is wire format too, and until schema 3 nothing here froze it:
+        // it rides on the ring's *outer* cells, which are computed at render time and never
+        // stored on `Symbol`, so a change to the format word — D17's, or D21's wider profile
+        // field — passed this file silently.
+        let cw = if Layout::is_finderless(sym.format.profile, sym.format.reference_border) {
+            sym.format.to_ring_codeword()
+        } else {
+            sym.format.to_codeword()
+        };
+        let _ = write!(r, ",\n      \"format\": \"{cw:08x}\"");
         r.push_str("\n    }");
         rows.push(r);
     }

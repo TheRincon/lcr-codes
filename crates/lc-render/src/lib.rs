@@ -126,7 +126,7 @@ impl Canvas {
     pub fn of(symbol: &Symbol) -> Canvas {
         let border = symbol.format.reference_border;
         let ring = if Layout::is_finderless(symbol.format.profile, border) {
-            border::RingMode::Data(symbol.format.to_codeword())
+            border::RingMode::Data(symbol.format.to_ring_codeword())
         } else {
             border::RingMode::Plain
         };

@@ -300,6 +300,19 @@ anatomy:
         2>/dev/null
     @echo "  wrote examples/anatomy-c3.png"
 
+# Regenerate examples/anatomy-expanded-c3.png — every cell coloured by the job it does.
+#
+# The companion to `anatomy`: that figure points at features, this one colours the whole
+# symbol, including where each layer's information and parity bits physically land. Same
+# Chrome dependency, same window-size-must-match-PAGE rule.
+[doc("Regenerate examples/anatomy-expanded-c3.png, the whole-symbol anatomy.")]
+anatomy-expanded:
+    cargo run -p lc-render --release --example anatomy_expanded -- target/anatomy
+    "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1340,1700 \
+        --screenshot="$PWD/examples/anatomy-expanded-c3.png" \
+        "file://$PWD/target/anatomy/anatomy-expanded-c3.html" 2>/dev/null
+    @echo "  wrote examples/anatomy-expanded-c3.png"
+
 # Regenerate docs/img/ — the figures docs/explainer.html reads.
 #
 # Every figure is rendered by the encoder and damaged by the §15 harness at the same

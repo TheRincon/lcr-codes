@@ -25,7 +25,7 @@
 
 #![allow(dead_code)]
 
-use lc_core::capacity::capacity;
+use lc_core::capacity::capacity_for_symbol;
 use lc_core::version::Version;
 use lc_core::{Compression, EccLevel, Packet, Profile};
 use lc_decode::{DecodeOptions, Decoder};
@@ -165,8 +165,11 @@ fn main() {
             luma: level,
             chroma: level,
         };
-        let bytes = capacity(v, profile, ecc).body_bytes;
-        let cap = capacity(v, profile, ecc);
+        // The ring layout this renders with (D17/D19), not the classic one: sizing with
+        // `capacity` under-filled every symbol and measured spare ECC margin instead of
+        // the rate split.
+        let bytes = capacity_for_symbol(v, profile, ecc, true).body_bytes;
+        let cap = capacity_for_symbol(v, profile, ecc, true);
         let share = 100.0 * cap.chroma_info_bits as f32 / cap.info_bits().max(1) as f32;
         let bases: Vec<(Vec<u8>, Raster)> = (0..trials)
             .map(|t| {

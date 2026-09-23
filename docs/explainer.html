@@ -398,11 +398,20 @@ td.lo { color: var(--ink-faint); }
 
   <p class="lead">A barcode is a grid of coloured squares. Each square is a <em class="term">module</em>, and each module is one small piece of the message.</p>
 
-  <p>The three bullseyes are <em class="term">finders</em>. A scanner hunts for those first, because their stripes have a distinctive 1:1:3:1:1 width ratio that almost nothing else in a camera image produces. Once it has found three of them it knows where the symbol is, how big it is, and which way up. The ring around the outside is a calibration border: known colours in known places, so the scanner can work out what the lighting is doing to the picture before it trusts anything else.</p>
+  <p>There are no bullseyes. Most matrix codes spend three corners on <em class="term">finder</em> patterns whose 1:1:3:1:1 stripe ratio is easy to spot in a camera image; this one spends nothing, and gets located by the <strong>ring</strong> around the outside instead.</p>
+
+  <p>The ring does four jobs at once. Its four corner cells are <strong>always dark</strong>, which hands the scanner the four points it needs to undo perspective. The light and dark pattern running around it is a <strong>sequence in which every run of eight positions occurs exactly once</strong>, so any clear stretch of ring says which way up the symbol is, whether it is mirrored, and which size it is. <strong>Every third position is a known colour</strong> — that is the calibration target, telling the scanner what the lighting is doing before it trusts any colour it reads. And the positions in between <strong>carry data</strong>, both the symbol's own settings and payload.</p>
 
   <figure>
-    <img src="img/symbol.png" alt="A square LC Code symbol in green and magenta, with three bullseye finder patterns at its corners and a multicoloured calibration ring around the edge." width="540" height="540">
-    <figcaption><b>A real symbol.</b> 33×33 modules carrying 96 bytes. Every picture on this page was produced by the encoder itself, then damaged by the project's test harness — none of them are mock-ups.</figcaption>
+    <img src="img/symbol.png" alt="A square LC Code symbol in green and magenta, with no finder patterns, surrounded by a multicoloured ring." width="540" height="540">
+    <figcaption><b>A real symbol.</b> 25×25 modules carrying 96 bytes. Every picture on this page was produced by the encoder itself, then damaged by the project's test harness — none of them are mock-ups.</figcaption>
+  </figure>
+
+  <p>Dropping the finders is worth more than it sounds. They and their supporting patterns cost a fixed 204 modules at every size — <strong>46% of the smallest symbol</strong> — and that area is now payload. The same 96 bytes above used to need a 33×33 grid; it fits in 25×25.</p>
+
+  <figure>
+    <img src="../examples/anatomy-c3.png" alt="An annotated LC Code symbol with every structural part boxed in red and numbered, and a legend explaining each one." width="950">
+    <figcaption><b>Every part, labelled.</b> The same ring, on an eight-colour symbol, with each piece boxed: the dark corners, where the sequence starts, the calibration cells, the format bits and the payload. Generated from the format's own geometry, so it cannot drift from the code.</figcaption>
   </figure>
 </section>
 
@@ -435,13 +444,15 @@ td.lo { color: var(--ink-faint); }
 
   <p>Because the luma layer is a complete message by itself, a scanner that cannot see colour at all still reads something. Point a black-and-white sensor at the symbol, or read it in terrible light where the colours wash out, and you get the first chunk of the data rather than nothing.</p>
 
-  <p>This is why the finders and the calibration border are drawn in only two shades of one colour. The scanner has to locate the symbol <em>before</em> it can possibly know what the lighting is doing to the colours, so nothing in that first step is allowed to depend on colour being right.</p>
+  <p>This is why the ring is <em>found</em> by its brightness pattern alone. The scanner has to locate the symbol <em>before</em> it can possibly know what the lighting is doing to the colours, so that first step reads only light and dark. Colour is what the ring then <em>carries</em> — the settings and some payload — and none of it is needed to find the symbol in the first place.</p>
+
+  <p>There is a real cost to that split, and it is worth stating plainly: because the symbol's settings ride on the ring's colours, <strong>a purely black-and-white camera can find one of these symbols but cannot read it.</strong> Where that matters — print, or anything that might be photocopied — the format keeps the older layout with finders, and the monochrome profile below keeps them always.</p>
 
   <figure class="plate" style="max-width:26rem">
     <div class="platelabel"><span>Monochrome profile</span><span>1 bit per module</span></div>
-    <img src="img/symbol-mono.png" alt="The same data encoded as a pure black and white symbol, noticeably larger than the colour version." width="636" height="636">
+    <img src="img/symbol-mono.png" alt="The same data encoded as a pure black and white symbol, noticeably larger than the colour version." width="612" height="612">
   </figure>
-  <figcaption><b>The same 96 bytes with no colour at all.</b> It still works — it just needs a bigger symbol to fit, because each module now carries one bit instead of two.</figcaption>
+  <figcaption><b>The same 96 bytes with no colour at all.</b> It still works — it just needs a far bigger symbol to fit: 41×41 against the colour version's 25×25, because each module now carries one bit instead of two, and because this profile still spends three corners on finders.</figcaption>
 </section>
 
 <section>
@@ -613,7 +624,7 @@ td.lo { color: var(--ink-faint); }
       <img src="img/glare.png" alt="The symbol with a bright white reflection washing out one region." width="540" height="540">
     </figure>
   </div>
-  <figcaption style="max-width:var(--wide)"><b>Both still read.</b> Shading succeeds 100% of the time across the entire tested range. This is what the calibration ring and the scattered reference modules are for.</figcaption>
+  <figcaption style="max-width:var(--wide)"><b>Both still read.</b> Shading decodes 100% of the time up to 0.7 and then stops dead at 0.8 — a gradient steep enough that the correction surface can no longer follow it. Glare has two separate axes, and it is <em>size</em> that binds, not brightness: a blob can be almost fully saturating (84% at strength 0.8) as long as it is small, but widen it and the cliff arrives quickly — 100% at radius 0.3, 62% at 0.35, 12% at 0.4. This is what the ring and the scattered reference modules are for.</figcaption>
 
   <h3>Blur: the one that hurts colour first</h3>
 
@@ -633,7 +644,7 @@ td.lo { color: var(--ink-faint); }
       <img src="img/blur-5.png" alt="The symbol heavily blurred, individual modules no longer distinct." width="540" height="540">
     </figure>
   </div>
-  <figcaption style="max-width:var(--wide)"><b>The cliff is sharp.</b> Measured success across 32 attempts: 100% at 3px, 81% at 4px, 3% at 5px. One pixel of extra defocus takes it from usually-fine to essentially never.</figcaption>
+  <figcaption style="max-width:var(--wide)"><b>The cliff is sharp.</b> Measured success across 32 attempts: 100% through 4px, 28% at 5px, 0% at 6px. One pixel of extra defocus still takes it from certain to unlikely — the cliff has simply moved a pixel further out than it used to sit, because this symbol is now 25×25 rather than 33×33 and each module is the same size on screen.</figcaption>
 
   <h3>Noise: graceful</h3>
 
@@ -645,15 +656,15 @@ td.lo { color: var(--ink-faint); }
       <img src="img/noise-low.png" alt="The symbol with light random speckle over it." width="540" height="540">
     </figure>
     <figure class="plate">
-      <div class="platelabel"><span>Noise σ 0.14</span><span class="verdict fail">fails</span></div>
+      <div class="platelabel"><span>Noise σ 0.14</span><span class="verdict ok">decodes</span></div>
       <img src="img/noise-high.png" alt="The symbol with heavy random speckle, colours becoming hard to distinguish." width="540" height="540">
     </figure>
   </div>
-  <figcaption style="max-width:var(--wide)"><b>A gentle slope, not a cliff.</b> 100% → 94% → 88% → 78% → 53% → 19% as the noise rises. Compare the blur numbers above: that is the difference between damage the code was designed for and damage it was not.</figcaption>
+  <figcaption style="max-width:var(--wide)"><b>Noise no longer reaches the knee at all.</b> 100% at every level tested, out to σ 0.14 — the right-hand picture above decodes. An earlier version of this page showed that ladder falling away to 19%; the reclaimed finder area went into payload and error correction, and the sweep would have to be pushed well past anything a camera produces to find the edge. Compare the blur numbers above: that is the difference between damage the code was designed for and damage it was not.</figcaption>
 
   <h3>Tilt: geometry, mostly solved</h3>
 
-  <p>Photographing a screen at an angle squashes the square into a trapezium. This is the easiest problem on the page, because the finders and the alignment marker give four known points, and four points are exactly what you need to compute and undo the distortion. Tilting is in fact <em>encouraged</em> — a slight angle moves the camera's own reflection off the symbol.</p>
+  <p>Photographing a screen at an angle squashes the square into a trapezium. This is the easiest problem on the page, because the ring's four dark corners give four known points, and four points are exactly what you need to compute and undo the distortion. Tilting is in fact <em>encouraged</em> — a slight angle moves the camera's own reflection off the symbol.</p>
 
   <div class="duo">
     <figure class="plate">
@@ -661,11 +672,11 @@ td.lo { color: var(--ink-faint); }
       <img src="img/tilt-small.png" alt="The symbol seen at a slight angle, appearing as a mild trapezium." width="737" height="737">
     </figure>
     <figure class="plate">
-      <div class="platelabel"><span>Severe tilt</span><span class="verdict fail">fails</span></div>
+      <div class="platelabel"><span>Severe tilt</span><span class="verdict ok">decodes</span></div>
       <img src="img/tilt-large.png" alt="The symbol seen at a steep angle, strongly foreshortened." width="934" height="934">
     </figure>
   </div>
-  <figcaption style="max-width:var(--wide)"><b>Around 70% succeed at the milder of these two.</b> Which is lower than it sounds, because a live camera gets many frames a second and can combine them — a stationary symbol is a free repeat.</figcaption>
+  <figcaption style="max-width:var(--wide)"><b>Both of these decode now, every time.</b> The sweep reports 100% at every tilt it tests, out to 0.7, and in-plane rotation is 100% at every angle including a symbol turned fully on its side. Tilt used to be the page's most interesting failure; it is now the least.</figcaption>
 
   <div class="note">
     <span class="notelabel">This measurement was wrong until recently</span>
@@ -673,11 +684,11 @@ td.lo { color: var(--ink-faint); }
     <p>It now averages sixteen samples across each pixel, which is what a real sensor pixel does. The sweep became orderly, and doubling the sampling again changes nothing — which is how we know what is left over is not an artefact.</p>
   </div>
 
-  <h3>What is left over is a genuine weak spot</h3>
+  <h3>The weak corner is gone, and that is the ring's doing</h3>
 
-  <p>Tilt tolerance still depends on <em>which way</em> you tilt, and that turns out to be a real property of the symbol rather than a measurement problem. When these tilts fail, the scanner still finds the symbol and still reads the format region perfectly — it is only the payload that comes out corrupted. So the symbol is being located and then sampled slightly off.</p>
+  <p>An earlier version of this page reported a real asymmetry: tilt tolerance depended on <em>which way</em> you leaned the symbol. The cause was visible in the picture — bullseyes at three corners and only a small alignment marker at the fourth, so leaning on the weak corner gave the scanner less to work with than leaning the other way.</p>
 
-  <p>The reason is visible in the first picture on this page. There are bullseyes at three corners and only a small alignment marker at the fourth. Tilting so that the <strong>weak corner</strong> is the one squashed by perspective gives the scanner less to work with than tilting the other way. The specification already reserves the idea of extra interior markers for large symbols and leaves it undecided; this is evidence for deciding it.</p>
+  <p>Removing the finders removed the asymmetry with them. The ring has four identical dark corners, so there is no weak one left to lean on. Measured at eight directions of tilt, 45° apart, at every tilt from 0.15 to 0.85: <strong>every direction decodes at every angle</strong>. The specification's open question about extra interior markers for large symbols is still open, but this is no longer evidence for it.</p>
 </section>
 
 <section>
@@ -687,19 +698,22 @@ td.lo { color: var(--ink-faint); }
 
   <p>The written justification was that colour is the noisier channel. Section 04 shows it is not: colour measures 7.6 dB <em>better</em> on a clean capture. So the obvious move was to cut colour's redundancy back to match brightness, and take the capacity saved.</p>
 
-  <p>That was tested directly, by doing it and re-measuring everything:</p>
+  <p>That was tested directly, by cutting colour's redundancy one step and re-measuring everything. Capacity rose nearly 9%, every impairment was unchanged — except defocus, where success collapsed from 81% to 3%. Putting the redundancy back restored it.</p>
+
+  <p>The same finding shows up a second way, by asking which layer actually gives out first. Each layer is swept separately: brightness counts as surviving while its prefix is still recoverable, colour while the whole symbol decodes. At 33×33, filled to capacity:</p>
 
   <div class="tablewrap">
     <table>
-      <thead><tr><th>Redundancy given to colour</th><th>Capacity</th><th>Noise</th><th>Glare</th><th>Blur 4px</th></tr></thead>
+      <thead><tr><th>Colour's redundancy</th><th>Capacity</th><th>Brightness fails at</th><th>Colour fails at</th></tr></thead>
       <tbody>
-        <tr><td>As shipped</td><td>116 B</td><td class="lo">unchanged</td><td class="lo">unchanged</td><td>81%</td></tr>
-        <tr><td>Reduced one step</td><td>126 B <span style="opacity:.6">(+8.6%)</span></td><td class="lo">unchanged</td><td class="lo">unchanged</td><td class="hi">3%</td></tr>
+        <tr><td>35% parity</td><td>213 B</td><td>blur 5.60 px</td><td class="hi">blur 4.75 px <span style="opacity:.6">(−15%)</span></td></tr>
+        <tr><td>45% parity — as shipped</td><td>183 B</td><td class="lo">never, in range</td><td>blur 4.75 px</td></tr>
+        <tr><td>55% parity</td><td>153 B</td><td class="lo">never, in range</td><td class="lo">never, in range</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>Nearly 9% more data per symbol, and every impairment unchanged except one — where it collapsed from 81% to 3%. Putting the redundancy back restored the 81%.</p>
+  <p>Read the first row: give colour less protection and it is the half that breaks, 15% sooner than brightness. Read the second: at the shipped setting, brightness never reaches a 50% failure rate anywhere in the tested range and colour still does — under blur, and only under blur. Every other impairment in the sweep leaves both layers intact at every level.</p>
 
   <p>So both findings are true at once, and they resolve like this: <strong>colour's weakness is not noise, it is blur.</strong> A signal-to-noise measurement is a statement about random speckle, and it is structurally blind to neighbouring modules bleeding together. The extra redundancy is real protection — it is just protecting against a different enemy than the documentation claimed.</p>
 
@@ -742,11 +756,13 @@ td.lo { color: var(--ink-faint); }
     <p>That configuration was measured against the others and changed to a 1×1 cell, which doubled its capacity from 82 to 165 bytes. The evidence is below.</p>
   </div>
 
+  <p>One thing this table now understates: it counts only the grid. The ring carries payload of its own, outside those modules entirely, which is worth a further 15–18% at the smallest sizes and about 2% at the largest — so a symbol's total is higher than its bits-per-module figure times its module count.</p>
+
   <p>The bits-per-module column is measured from the real layout rather than assumed. Only C2 falls short of its ideal 1.25, because a 2×2 cell can straddle a fixed pattern or contain a reference module, and an odd-numbered side cannot be tiled evenly by 2×2 blocks. A 1×1 cell has none of those problems, which is why C1 and C3 land exactly on 2.00 and 3.00.</p>
 
   <h3>The same 33×33 square, against QR</h3>
 
-  <p>QR uses the identical size formula, so a 33×33 LC symbol and a QR <strong>version 4</strong> are the same grid. Capacity at the default error-correction setting, with QR's four levels for reference:</p>
+  <p>QR uses the identical size formula, so a 33×33 LC symbol and a QR <strong>version 4</strong> are the same grid. Capacity at the default error-correction setting, with QR's four levels for reference. The LC figures are for a symbol carrying the ring, which is what a screen symbol is — the ring both replaces the finders and carries payload of its own:</p>
 
   <div class="tablewrap">
     <table>
@@ -754,31 +770,59 @@ td.lo { color: var(--ink-faint); }
       <tbody>
         <tr><td>QR — level L</td><td>20%</td><td>78 B</td><td class="lo">1.00×</td><td class="lo">—</td></tr>
         <tr><td>QR — level M</td><td>36%</td><td>62 B</td><td class="lo">—</td><td class="lo">1.00×</td></tr>
-        <tr><td>QR — level Q</td><td>52%</td><td>44 B</td><td class="lo">—</td><td class="lo">—</td></tr>
-        <tr><td>QR — level H</td><td>64%</td><td>32 B</td><td class="lo">—</td><td class="lo">—</td></tr>
+        <tr><td>QR — level Q</td><td>52%</td><td>46 B</td><td class="lo">—</td><td class="lo">—</td></tr>
+        <tr><td>QR — level H</td><td>64%</td><td>34 B</td><td class="lo">—</td><td class="lo">—</td></tr>
         <tr><td>LC — M (mono)</td><td>25%</td><td>66 B</td><td>0.85×</td><td>1.06×</td></tr>
-        <tr><td>LC — C1</td><td>25%</td><td class="hi">116 B</td><td class="hi">1.49×</td><td class="hi">1.87×</td></tr>
-        <tr><td>LC — C2</td><td>25%</td><td>75 B</td><td>0.96×</td><td>1.21×</td></tr>
-        <tr><td>LC — C3</td><td>25%</td><td class="hi">165 B</td><td class="hi">2.12×</td><td class="hi">2.66×</td></tr>
+        <tr><td>LC — C1</td><td>25%</td><td class="hi">183 B</td><td class="hi">2.35×</td><td class="hi">2.95×</td></tr>
+        <tr><td>LC — C2</td><td>25%</td><td>121 B</td><td>1.55×</td><td>1.95×</td></tr>
+        <tr><td>LC — C3</td><td>25%</td><td class="hi">263 B</td><td class="hi">3.37×</td><td class="hi">4.24×</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>Those rows are not a fair fight, because QR's levels and LC's are defined differently — QR quotes how much damage it can repair, LC quotes the code rate directly. Pairing them instead by <em>how much of the symbol is parity</em>, which is the honest comparison:</p>
+  <p>Those rows are not a fair fight, because QR's levels and LC's are defined differently — QR quotes how much damage it can repair, LC quotes the code rate directly. Pairing them instead by <em>how much of the symbol is parity</em>, which is the honest comparison. LC protects its two layers unequally, so the column heading is the luma figure; colour always carries 20 points more parity than brightness does:</p>
 
   <div class="tablewrap">
     <table>
-      <thead><tr><th>Profile</th><th>LC @ 15% parity</th><th>vs QR-L (20%, 78 B)</th><th>LC @ 35% parity</th><th>vs QR-M (36%, 62 B)</th></tr></thead>
+      <thead><tr><th>Profile</th><th>LC @ 15% luma parity</th><th>vs QR-L (20%, 78 B)</th><th>LC @ 35% luma parity</th><th>vs QR-M (36%, 62 B)</th></tr></thead>
       <tbody>
         <tr><td>M (mono)</td><td>76 B</td><td>0.97×</td><td>57 B</td><td>0.92×</td></tr>
-        <tr><td>C1</td><td>135 B</td><td class="hi">1.73×</td><td>96 B</td><td class="hi">1.55×</td></tr>
-        <tr><td>C2</td><td>87 B</td><td>1.12×</td><td>63 B</td><td>1.02×</td></tr>
-        <tr><td>C3</td><td>194 B</td><td class="hi">2.49×</td><td>137 B</td><td class="hi">2.21×</td></tr>
+        <tr><td>C1</td><td>213 B</td><td class="hi">2.73×</td><td>153 B</td><td class="hi">2.47×</td></tr>
+        <tr><td>C2</td><td>139 B</td><td>1.78×</td><td>103 B</td><td>1.66×</td></tr>
+        <tr><td>C3</td><td>307 B</td><td class="hi">3.94×</td><td>221 B</td><td class="hi">3.56×</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p><strong>C1 delivers the 1.5×–2× the format set out to achieve; C3 goes past it.</strong> C2 is roughly a wash with QR, and the monochrome profile is slightly <em>behind</em> — which is the useful control, because it says the colour layer is carrying the entire gain. LC spends area QR does not need: palette anchors, scattered reference modules, and a format region twice the size of QR's.</p>
+  <p><strong>C1 now carries about 2.5× what QR does at matched parity, and C3 between 3.5× and 4×.</strong> The format set out to achieve 1.5×–2×; removing the finders and putting the ring to work took it past that. The monochrome profile is the useful control: it is unchanged, and still slightly <em>behind</em> QR, which says the entire gain comes from the colour layer and the reclaimed area rather than from anything QR is doing badly.</p>
+
+  <p>One caveat on the mono row, and it is the reason it did not move: profile M keeps the finders. Its settings would have to ride on the ring's colours to lose them, and a monochrome symbol has no colours to ride on.</p>
+
+  <h3>The same 96 bytes, side by side</h3>
+
+  <p>Capacity tables are abstract. This is the same payload, encoded twice, drawn at the same module size and shown at <strong>true relative scale</strong> — the widths below are in the same proportion as the symbols themselves:</p>
+
+  <div style="display:flex; align-items:flex-start; gap:1.5rem; margin:2rem 0">
+    <figure class="plate" style="margin:0; flex:0 0 41%">
+      <div class="platelabel"><span>LC Code · C1</span><span>25×25</span></div>
+      <img src="img/symbol.png" alt="The LC Code symbol carrying 96 bytes, 25 modules across." width="420" height="420">
+    </figure>
+    <figure class="plate" style="margin:0; flex:0 0 57%">
+      <div class="platelabel"><span>QR · level M</span><span>41×41</span></div>
+      <img src="img/qr-medium.png" alt="A QR code carrying the same 96 bytes, 41 modules across, noticeably larger." width="588" height="588">
+    </figure>
+  </div>
+  <figcaption style="max-width:var(--wide)"><b>Same bytes, same module pitch.</b> 25×25 against 41×41 — the QR symbol covers <strong>2.7× the area</strong>. Both were generated by this project's build: the QR by the <code>qrcodegen</code> crate, and the test suite reads it back with <code>rqrr</code>, an independent decoder, so the thing being compared against is a real QR symbol rather than a drawing of one. QR level M is the fair pairing here — it is the level a short fallback URL would normally use, and its parity share (36%) is closest to what LC is carrying.</figcaption>
+
+  <h3>A third shape, for contrast</h3>
+
+  <p>Aztec Code solves the same problem differently again: a bullseye in the <em>middle</em> rather than finders at the corners, and no quiet zone requirement at all.</p>
+
+  <figure class="plate" style="max-width:20rem">
+    <div class="platelabel"><span>Aztec Code</span><span>illustrative only</span></div>
+    <img src="img/aztec.svg" alt="An Aztec Code symbol: a square matrix with a concentric square bullseye at its centre." width="420" height="420" style="background:#fff; padding:6%; box-sizing:border-box">
+  </figure>
+  <figcaption><b>Not the same payload, and not to scale.</b> This project has no Aztec encoder, so unlike every other picture on this page this one was not generated here — it is a stock example, included to show the shape of a third approach. Read it as a silhouette, not as a measurement. Aztec's central bullseye is the interesting contrast with the ring: both put the locating structure somewhere the payload is not, and both avoid spending three corners on it.</figcaption>
 
   <h3>What eight colours look like</h3>
 
@@ -799,21 +843,21 @@ td.lo { color: var(--ink-faint); }
 
   <h3>Both profiles, the same message</h3>
 
-  <div class="duo">
-    <figure class="plate">
-      <div class="platelabel"><span>C1 · 4 colours</span><span>33×33</span></div>
-      <img src="img/symbol.png" alt="The four-colour green and magenta symbol, 33 by 33 modules." width="540" height="540">
+  <div style="display:flex; align-items:flex-start; gap:1.5rem; margin:2rem 0">
+    <figure class="plate" style="margin:0; flex:0 0 53%">
+      <div class="platelabel"><span>C1 · 4 colours</span><span>25×25</span></div>
+      <img src="img/symbol.png" alt="The four-colour green and magenta symbol, 25 by 25 modules." width="420" height="420">
     </figure>
-    <figure class="plate">
-      <div class="platelabel"><span>C3 · 8 colours</span><span>29×29</span></div>
-      <img src="img/symbol-c3.png" alt="The same data as an eight-colour symbol in amber, green, blue and rose, visibly smaller at 29 by 29 modules." width="492" height="492">
+    <figure class="plate" style="margin:0; flex:0 0 47%">
+      <div class="platelabel"><span>C3 · 8 colours</span><span>21×21</span></div>
+      <img src="img/symbol-c3.png" alt="The same data as an eight-colour symbol in amber, green, blue and rose, visibly smaller at 21 by 21 modules." width="372" height="372">
     </figure>
   </div>
   <figcaption style="max-width:var(--wide)"><b>The density argument, at actual scale.</b> Identical payload, identical module size — the C3 symbol is simply smaller, because each of its modules carries three bits instead of two. Both were decoded before being written to this page.</figcaption>
 
   <figure class="plate" style="max-width:26rem">
     <div class="platelabel"><span>C3 chroma layer</span><span>four hue states</span></div>
-    <img src="img/layer-chroma-c3.png" alt="The eight-colour symbol with brightness flattened, leaving a mosaic of four hues: amber, green, blue and rose." width="492" height="492">
+    <img src="img/layer-chroma-c3.png" alt="The eight-colour symbol with brightness flattened, leaving a mosaic of four hues: amber, green, blue and rose." width="372" height="372">
   </figure>
   <figcaption><b>The same brightness-flattening trick as section 02.</b> Where C1's colour layer had two hues, this has four — and each one is worth two bits instead of one.</figcaption>
 
@@ -839,34 +883,36 @@ td.lo { color: var(--ink-faint); }
 
   <div class="tablewrap">
     <table>
-      <thead><tr><th>Impairment</th><th>C1 — 116 B</th><th>C2 — 75 B</th><th>C3 — 165 B</th></tr></thead>
+      <thead><tr><th>Impairment</th><th>C1 — 183 B</th><th>C2 — 121 B</th><th>C3 — 263 B</th></tr></thead>
       <tbody>
-        <tr><td>Noise</td><td class="hi">0.128</td><td class="hi">0.128</td><td>0.096</td></tr>
-        <tr><td>Blur</td><td>4.71</td><td class="hi">5.75</td><td>4.94</td></tr>
-        <tr><td>Glare strength</td><td class="hi">0.600</td><td class="hi">0.600</td><td>0.510</td></tr>
-        <tr><td>Glare size</td><td class="hi">0.300</td><td class="hi">0.300</td><td>0.288</td></tr>
-        <tr><td>Occlusion</td><td>0.300</td><td>0.300</td><td class="hi">0.304</td></tr>
-        <tr><td>Shading</td><td class="lo">never fails</td><td class="lo">never fails</td><td class="lo">never fails</td></tr>
+        <tr><td>Noise</td><td class="lo">never fails</td><td class="lo">never fails</td><td class="lo">never fails</td></tr>
+        <tr><td>Blur</td><td>4.750</td><td class="hi">5.864</td><td>4.733</td></tr>
+        <tr><td>Glare strength</td><td class="lo">never fails</td><td class="lo">never fails</td><td class="lo">never fails</td></tr>
+        <tr><td>Glare size</td><td class="hi">0.370</td><td>0.368</td><td>0.343</td></tr>
+        <tr><td>Occlusion</td><td class="lo">never fails</td><td class="lo">never fails</td><td class="lo">never fails</td></tr>
+        <tr><td>Shading</td><td class="lo">never fails</td><td class="lo">never fails</td><td>0.770</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>C3 gives up about <strong>25% of its noise tolerance and 15% of its glare tolerance</strong> against C1 — real, but far short of the 7.1 dB of raw separation it lost, because the error correction absorbs much of it. Blur it very slightly wins, and occlusion is a tie. For that it carries <strong>42% more data in the same square</strong>.</p>
+  <p><strong>Four of the six impairments no longer separate the profiles at all</strong> — every profile survives the full tested range of noise, glare strength, occlusion and (for C1 and C2) shading. That is itself the result: at this symbol size the reclaimed area went into enough redundancy that these impairments stop being the binding constraint, and the sweep would have to be extended to find the knee.</p>
 
-  <p>No profile is best at everything, which is what makes the choice a real one rather than a default. C2 buys blur tolerance with density. C1 balances. C3 buys density with margin.</p>
+  <p>Where they still separate, the ordering is narrow. C2 keeps its blur advantage, by about a pixel. C3 gives up a little glare-size tolerance (0.343 against C1's 0.370, roughly 7%) and is the only profile to hit a shading limit inside the range — and for that it carries <strong>44% more data in the same square</strong>. Its 7.1 dB of lost hue separation costs far less than it sounds, because the error correction absorbs most of it.</p>
+
+  <p>No profile is best at everything, which is what makes the choice a real one rather than a default. C2 buys blur tolerance with density. C1 balances. C3 buys density with a thinner margin against glare and shading.</p>
 
   <div class="note">
     <span class="notelabel">How this table changed the format</span>
     <p>The original C3 — eight colours at a 2×2 cell — was measured first, and it was the <em>most</em> blur-tolerant profile in the set, never dropping below 50% anywhere in the sweep. But that was the only column it won, C2 covers nearly the same ground, and it paid with the worst noise and glare figures for a capacity barely above C2's.</p>
-    <p>Moving it to a 1×1 cell doubled its capacity from 82 to 165 bytes. Noise tolerance came out <em>identical</em>, glare slightly <em>better</em>, and only blur regressed — to 4.94, still marginally ahead of C1. Twice the data, for a change that was free on three impairments out of four.</p>
+    <p>Moving it to a 1×1 cell doubled its capacity from 82 to 165 bytes — figures from the finder-bearing layout of the time, which is why they are smaller than the table above. Noise tolerance came out <em>identical</em>, glare slightly <em>better</em>, and only blur regressed — to 4.94, still marginally ahead of C1. Twice the data, for a change that was free on three impairments out of four.</p>
   </div>
 
   <p>C3 is optional in the specification: implementations must support M, C1 and C2, and may reject C3 entirely. It is also never selected automatically — a caller has to name it, and the trade above is documented where that choice is made. Reach for it when capture conditions are genuinely good and the payload will not otherwise fit. Reach for C1 the rest of the time.</p>
 </section>
 
 <div class="foot">
-  <p>Every symbol on this page was produced by the LC Code encoder and damaged by the project's own degradation harness, at 12 device pixels per module with the calibration border enabled — the same configuration the quoted success rates were measured on. Percentages are over 32 independent attempts per point, each with a different payload and a randomised placement of the damage, which carries a margin of roughly ±9 points. Colour values are CIELAB: <em class="term">L*</em> is lightness, <em class="term">a*b*</em> the two colour axes, and hue angles are measured in that plane.</p>
-  <p>LC capacities and bits-per-module are computed from the real layout rather than estimated. QR capacities are the published byte-mode figures for version 4 from ISO/IEC 18004, and QR parity percentages are its error-correction codewords as a share of the total — the one comparison on this page not produced by running code.</p>
+  <p>Every symbol on this page was produced by the LC Code encoder and damaged by the project's own degradation harness, at 12 device pixels per module with the §6.4 ring enabled — the same configuration the quoted success rates were measured on. Percentages are over 32 independent attempts per point, each with a different payload and a randomised placement of the damage, which carries a margin of roughly ±9 points. Colour values are CIELAB: <em class="term">L*</em> is lightness, <em class="term">a*b*</em> the two colour axes, and hue angles are measured in that plane.</p>
+  <p>LC capacities and bits-per-module are computed from the real layout rather than estimated, for a symbol carrying the §6.4 ring — which is what a screen symbol is, and which since the finder-less change is a different layout from a print symbol's. QR capacities are now measured the same way, by encoding with <code>qrcodegen</code> and reading back the version it chose, rather than transcribed from ISO/IEC 18004; QR parity percentages are still the published figures. The one picture here not produced by this project is the Aztec symbol, which is a supplied stock example carrying different data.</p>
 </div>
 
 </div>

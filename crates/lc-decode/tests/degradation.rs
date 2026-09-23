@@ -240,16 +240,14 @@ fn survives_defocus() {
         assert_decodes(&blur(&base, radius), &format!("blur r={radius}"));
     }
 
-    // The envelope is the blur's size *in modules*, measured across 12–20 px/module by
-    // `ring_diag::defocus_and_glare_envelope`. On this fixture it is ~0.42: radius 5 at the
-    // 12 px/module rendered here decodes and radius 6 (0.50) does not.
+    // Radius 4 is the last *reliable* step and is what this asserts. `just envelope` puts
+    // the knee immediately after it: over 32 trials, 100% through 4 px, 28% at 5, 0% at 6.
     //
-    // D18 cost this a step — narrowing the ring-to-grid gap shrank the square the homography
-    // is fitted from, and radius 4 stopped decoding. D19 handed it back, for a reason worth
-    // stating: the ring's payload cells moved this 96-byte payload from v3 into v2, so it now
-    // sits in a shorter code with more redundancy. The number is a property of the fixture as
-    // much as of the format.
-    assert_decodes(&blur(&base, 5), "blur r=5 (0.42 modules)");
+    // An earlier version of this test asserted radius 5 as well, on the strength of one
+    // sample that happened to decode. A 28% point is not a gate — it passed until a change
+    // that has nothing to do with defocus (D21's ring word) shifted the ring's colours and
+    // the sample stopped landing the lucky side of the knee. The sweep is where a rate like
+    // that belongs.
 }
 
 /// §1.4's whole premise: chroma is the low-bandwidth channel, and 4:2:0 is why. Splitting

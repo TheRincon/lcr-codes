@@ -194,9 +194,11 @@ fn main() {
         v.dedup();
         v
     };
-    let version_pos = slots(0..5);
-    let mut rest_pos = slots(5..15);
-    rest_pos.retain(|p| !version_pos.contains(p));
+    // Bits 0–3 of a ringed symbol's word are the profile (D21); the version is not in
+    // the word at all, because the ring's sequence already gave it.
+    let profile_pos = slots(0..4);
+    let mut rest_pos = slots(4..15);
+    rest_pos.retain(|p| !profile_pos.contains(p));
 
     let arc_start = 3 * (s - 1) + (s - 1) / 2 - window / 2;
     let arc = (arc_start..arc_start + window)
@@ -234,10 +236,8 @@ fn main() {
     let notes = vec![
         Note {
             title: "Ring corners (all four)".into(),
-            body: "Always dark — a dark hue or black — in every version's sequence. The \
-                   detector outlines the symbol's ink, and these four cells are the corners of \
-                   that outline: they fix the perspective transform, with no finder patterns \
-                   needed. The top-left one is also note 2."
+            body: "A dark hue or black in each corner. They fix the perspective transform, WITHOUT finder patterns \
+                   needed. The top-left one is also part of note 2."
                 .into(),
             groups: corners
                 .iter()
@@ -252,8 +252,8 @@ fn main() {
         Note {
             title: "Top-left: the sequence starts here".into(),
             body: "Position 0 of the ring's light/dark sequence, which runs clockwise from \
-                   here. The decoder tries every corner as the start, in both directions; the \
-                   one that matches tells it which way is up and whether the image is \
+                   here. The decoder tries every corner as the start, in both directions. The \
+                   one that matches tells it which way is up, and whether the image is \
                    mirrored."
                 .into(),
             groups: vec![Group {
@@ -277,25 +277,25 @@ fn main() {
             dashed: false,
         },
         Note {
-            title: format!("Version bits: v{version}"),
+            title: format!("Profile bits: {:?}", f.profile),
             body: format!(
-                "Five bits of the format codeword spell out the version. Each non-reference \
-                 ring position carries {bpp} format bits in its choice among {hues} hues, so \
-                 these {} positions hold them (copy A). BCH(30,15) lets each copy survive 3 \
-                 wrong bits.",
-                version_pos.len()
+                "Four bits of the format codeword name the profile — room for 16, of which 4 \
+                 are defined. Each non-reference ring position carries {bpp} format bits in \
+                 its choice among {hues} hues, so these {} positions hold them (copy A). \
+                 BCH(30,15) lets each copy survive 3 wrong bits. The version is *not* in the \
+                 word: the sequence above already gave it, which is what freed these bits.",
+                profile_pos.len()
             ),
-            groups: by_edge(&version_pos),
+            groups: by_edge(&profile_pos),
             dashed: false,
         },
         Note {
             title: "The rest of the format".into(),
-            body: format!(
-                "Profile ({:?}), the two ECC levels, the mask and the ring flag, copy A. The \
-                 other 15 bits of each copy are BCH parity. Copy B sits half a step along, so \
-                 glare over one arc chips a few bits from both copies instead of erasing one.",
-                f.profile
-            ),
+            body: "The two ECC levels, the mask, and four reserved bits that must read zero \
+                   — copy A. The other 15 bits of each copy are BCH parity. Copy B sits half a \
+                   step along, so glare over one arc chips a few bits from both copies instead \
+                   of erasing one."
+                .into(),
             groups: by_edge(&rest_pos),
             dashed: false,
         },
@@ -397,8 +397,7 @@ fn main() {
         Note {
             title: "Interior references".into(),
             body: format!(
-                "{} modules of known colour scattered through the grid, all boxed, so the \
-                 illumination fit can correct glare the ring can't see.",
+                "{} modules of known colour scattered through the grid so the glare can be corrected.",
                 interior.len()
             ),
             groups: interior
@@ -503,13 +502,12 @@ fn main() {
     }
     let sub = format!(
         "v{version} · {side} × {side} grid · {} B of JSON, sent as {} B of CBOR · every box is \
-         computed from lc-core's geometry, and this symbol decodes",
+         computed from lc-core's geometry",
         JSON.len(),
         cbor.len()
     );
-    let foot = "Needs a colour capture: the format rides on hue, so a greyscale camera can find \
-                this symbol but not read it. Print symbols and profile M keep their finders. \
-                Regenerate with <code>just anatomy</code>.";
+    let foot = "It must be with a color camera. Grarscale will recognize the image but not successfully decode it. \
+                Regenerate this explanatory image with <code>just anatomy</code>.";
     let (pw, ph) = PAGE;
     let html = format!(
         r#"<!doctype html>

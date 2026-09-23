@@ -125,10 +125,10 @@
 
     <label class="f" for="capw">Capture width</label>
     <select id="capw">
-      <option value="1280" selected>1280 — the measured baseline, sweeps 1–4</option>
-      <option value="1920">1920 · ~1.5× range · ~1.5× decode time</option>
-      <option value="2560">2560 · ~2× range · ~1.8× decode time — try this next</option>
-      <option value="3840">3840 (4K) · ~3× range · ~4× decode time, likely too slow</option>
+      <option value="1280">1280×720 — 720 px across the symbol (sweeps 1–6 ran here)</option>
+      <option value="1920" selected>1920×1080 — 1080 px across · 1.5× the range</option>
+      <option value="2560">2560×1440 — 1440 px across · 2× range · ~1.8× decode time</option>
+      <option value="3840">3840×2160 — 2160 px across · 3× range · ~4× decode time</option>
     </select>
     <p class="note"><b>The pitch ceiling is lifted</b> (D16): detection used to stop above
       ~22 captured px/module, which is why a 4K capture decoded nothing. It now retries on a
@@ -148,6 +148,7 @@
       <div><b id="nObliq">—</b>obliquity</div>
       <div><b id="nSnr">—</b>luma SNR</div>
       <div><b id="nFrame">—</b>frame</div>
+      <div><b id="nFill">—</b>frame filled</div>
     </div>
     <div class="guide" id="guide"></div>
   </div>
@@ -303,6 +304,15 @@ function trial(image) {
     }
   }
   if (rec.pitchMin != null) rec.obliquity = round(rec.pitchMax / rec.pitchMin, 3);
+  // How much of the frame's short edge the symbol spans — the quantity sweeps 5 and 6 say
+  // decides the outcome. Below 0.7 the capture is under-sampled and nothing decoded at all;
+  // at 0.8 decoding ran 62% and 44%; at 0.9 and above the ring's quiet zone starts leaving
+  // the frame and it returns to zero. Assumes the ring is present, which is the screen
+  // default; a border-less symbol spans slightly less.
+  if (rec.version && rec.pitchMax && rec.frameW && rec.frameH) {
+    const side = 21 + 4 * (rec.version - 1);
+    rec.fill = round(((side + 10) * rec.pitchMax) / Math.min(rec.frameW, rec.frameH), 2);
+  }
   return rec;
 }
 
@@ -326,6 +336,7 @@ function showLive(rec) {
   $('nObliq').textContent = rec.obliquity?.toFixed(2) ?? '—';
   $('nSnr').textContent = rec.snrDb?.toFixed(1) ?? '—';
   $('nFrame').textContent = rec.frameW ? `${rec.frameW}×${rec.frameH}` : '—';
+  $('nFill').textContent = rec.fill?.toFixed(2) ?? '—';
   $('guide').textContent = guidance(rec);
 }
 
@@ -354,6 +365,14 @@ function guidance(rec) {
   if (rec.found === false) return 'Nothing found — fill more of the frame with the symbol.';
   if (rec.obliquity != null && rec.obliquity < TILT_LO) {
     return `Tilt more — obliquity ${rec.obliquity.toFixed(2)}, aim for ${TILT_LO}–${TILT_HI}.`;
+  }
+  // Sweeps 5 and 6 decoded 0 of 40+ trials above 0.9 — the failure nothing on screen
+  // warned about, because the page only ever said "move closer".
+  if (rec.fill != null && rec.fill > 0.9) {
+    return `Too close — filling ${rec.fill.toFixed(2)} of the frame, back off until it reads 0.80.`;
+  }
+  if (rec.fill != null && rec.fill < 0.7) {
+    return `Too far — filling ${rec.fill.toFixed(2)} of the frame, move in until it reads 0.80.`;
   }
   if (rec.pitchMin != null && rec.pitchMin < 7) return 'Found it, but too small — move closer.';
   return 'Found it, payload marginal — hold steadier, or reduce glare.';
@@ -412,7 +431,11 @@ $('start').onclick = async () => {
         // `ideal`, not `exact`: a camera that cannot do the asked-for width should give
         // its best rather than refuse, and what it actually delivered is recorded per
         // trial so the log is self-describing.
+        // Height as well as width: the symbol has to fit the frame's **short** edge, and
+        // asking for width alone leaves that edge wherever the camera's default mode puts
+        // it — 720 px for every one of sweeps 1–6.
         width: { ideal: Number($('capw').value) },
+        height: { ideal: Math.round((Number($('capw').value) * 9) / 16) },
       },
       audio: false,
     });

@@ -247,6 +247,7 @@ pub fn capacity_for_symbol(
     capacity::capacity_for_symbol(version, profile, ecc, reference_border)
 }
 
+#[cfg(feature = "sign")]
 pub mod sign;
 
 #[cfg(test)]
@@ -441,11 +442,38 @@ mod tests {
 
     #[test]
     fn oversized_payloads_are_rejected() {
-        let data = alloc::vec![0u8; 50_000];
+        // Beyond `MAX_PAYLOAD` nothing is accepted, however well it would compress: that is
+        // the ceiling a decoder will decompress to, so framing more would produce a symbol
+        // that encodes and then cannot be read.
         assert!(matches!(
-            encode_bytes(&data, &EncodeOptions::default()),
+            encode_bytes(
+                &alloc::vec![0u8; lc_core::frame::MAX_PAYLOAD + 1],
+                &EncodeOptions::default()
+            ),
             Err(LcError::TooLarge(_))
         ));
+
+        // Incompressible and larger than any symbol holds: rejected on capacity grounds.
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let random: alloc::vec::Vec<u8> = (0..50_000)
+            .map(|_| {
+                state ^= state >> 12;
+                state ^= state << 25;
+                state ^= state >> 27;
+                (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as u8
+            })
+            .collect();
+        assert!(matches!(
+            encode_bytes(&random, &EncodeOptions::default()),
+            Err(LcError::TooLarge(_))
+        ));
+
+        // But the same size of *compressible* payload now fits, because the length field
+        // counts the compressed body. This is the behaviour that used to be refused.
+        let compressible = alloc::vec![0u8; 50_000];
+        let sym = encode_bytes(&compressible, &EncodeOptions::default())
+            .expect("50 KB of compressible bytes fits");
+        assert!(sym.format.version.get() <= 32);
 
         // Forcing too small a version is a capacity error, not a silent truncation.
         let opts = EncodeOptions {

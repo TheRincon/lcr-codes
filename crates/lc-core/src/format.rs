@@ -66,6 +66,55 @@ impl FormatInfo {
         bch::encode(self.to_bits())
     }
 
+    /// Pack into the 15-bit word a **ringed** symbol carries (D21).
+    ///
+    /// | Bits | Field | Values |
+    /// |---|---|---|
+    /// | 0–3 | Profile | 4 bits: `0`=M, `1`=C1, `2`=C2, `3`=C3, `4`–`15` reserved |
+    /// | 4–5 | Luma ECC level | 0..3 |
+    /// | 6–7 | Chroma ECC level | 0..3 |
+    /// | 8–10 | Mask ID | 0..7 |
+    /// | 11–14 | Reserved | must be zero |
+    ///
+    /// **Why this differs from §7.** A finder-less symbol's version is recovered from the
+    /// ring's position sequence *before* the format is read — that is how the decoder finds
+    /// the symbol at all — and its border flag is true by construction. Those six bits
+    /// therefore tell a ring decoder nothing it does not already know. Spending them here
+    /// widens the profile field from 2 bits to 4, taking the ceiling from 4 profiles to 16,
+    /// and leaves 4 reserved — without lengthening the codeword, consuming ring slots, or
+    /// needing a second BCH code.
+    ///
+    /// The reserved bits are checked to be zero on read, which keeps the wrong-read
+    /// rejection that the version cross-check used to provide: a garbage word survives the
+    /// BCH decode only to fail here.
+    pub fn to_ring_bits(self) -> u16 {
+        ((self.profile.to_bits() as u16) << 11)
+            | ((self.ecc.luma as u16) << 9)
+            | ((self.ecc.chroma as u16) << 7)
+            | ((self.mask as u16 & 7) << 4)
+    }
+
+    /// Unpack a ringed symbol's word. `version` comes from the ring, not from the word.
+    pub fn from_ring_bits(w: u16, version: Version) -> Result<FormatInfo, LcError> {
+        if w & 0xF != 0 {
+            return Err(LcError::FormatUndecodable);
+        }
+        let profile = Profile::from_bits(((w >> 11) & 0xF) as u8)?;
+        let ecc = EccLevel::new(((w >> 9) & 3) as u8, ((w >> 7) & 3) as u8)?;
+        Ok(FormatInfo {
+            version,
+            profile,
+            ecc,
+            mask: ((w >> 4) & 7) as u8,
+            reference_border: true,
+        })
+    }
+
+    /// The 30-bit BCH codeword a ringed symbol's colour choices carry (D21).
+    pub fn to_ring_codeword(self) -> u32 {
+        bch::encode(self.to_ring_bits())
+    }
+
     /// Hard-decision decode of one 30-bit copy.
     pub fn from_codeword(word: u32) -> Result<(FormatInfo, u32), LcError> {
         let (bits, dist) = bch::decode(word)?;
@@ -113,6 +162,51 @@ mod tests {
                 })
             })
         })
+    }
+
+    /// The ring word carries everything the §7 word does except the two fields a ring
+    /// decoder already knows.
+    #[test]
+    fn the_ring_word_roundtrips() {
+        for f in samples() {
+            let back = FormatInfo::from_ring_bits(f.to_ring_bits(), f.version).unwrap();
+            assert_eq!(
+                back,
+                FormatInfo {
+                    reference_border: true,
+                    ..f
+                },
+                "ring word lost a field"
+            );
+        }
+    }
+
+    /// The four reserved bits and the twelve unused profile codes are what replaces the
+    /// version cross-check: a garbage word that survives BCH has to fail here instead.
+    #[test]
+    fn the_ring_word_rejects_what_is_reserved() {
+        let f = FormatInfo {
+            version: Version::new(7).unwrap(),
+            profile: Profile::C3,
+            ecc: EccLevel { luma: 1, chroma: 2 },
+            mask: 5,
+            reference_border: true,
+        };
+        let w = f.to_ring_bits();
+        assert!(FormatInfo::from_ring_bits(w, f.version).is_ok());
+        for bit in 0..4 {
+            assert!(
+                FormatInfo::from_ring_bits(w | (1 << bit), f.version).is_err(),
+                "reserved bit {bit} was accepted"
+            );
+        }
+        for code in 4..16u16 {
+            let w = (code << 11) | (w & 0x07FF);
+            assert!(
+                FormatInfo::from_ring_bits(w, f.version).is_err(),
+                "profile code {code} is reserved and was accepted"
+            );
+        }
     }
 
     #[test]

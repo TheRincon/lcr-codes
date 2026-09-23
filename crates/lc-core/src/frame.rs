@@ -28,6 +28,14 @@ use alloc::vec::Vec;
 pub const COMPACT_MAX: usize = 255;
 /// Largest body carried by an extended frame.
 pub const EXTENDED_MAX: usize = 16383;
+/// Largest payload an encoder will frame, and the ceiling a decoder will decompress to.
+///
+/// The decompression limit exists so a small hostile frame cannot expand without bound.
+/// It is also, therefore, the largest payload that can ever come *back*, so the encoder
+/// enforces the same number: an encoder that will happily frame 87 KB when the decoder
+/// refuses anything over this produces symbols that encode and then fail to read, which is
+/// worse than refusing them up front.
+pub const MAX_PAYLOAD: usize = EXTENDED_MAX * 4;
 
 /// Content type (§9.2).
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
@@ -235,20 +243,35 @@ impl Frame {
     /// input, so this tries every codec the build supports and keeps the smallest result,
     /// including no compression at all.
     pub fn compressed(ctype: ContentType, data: &[u8]) -> Result<Frame, LcError> {
-        let mut best = Frame::new(ctype, data.to_vec())?;
+        // The length field counts the **post-compression** body, so what has to fit
+        // `EXTENDED_MAX` is the candidate, not the input. Building the uncompressed frame
+        // first and letting `Frame::new` reject it meant a payload was turned away for the
+        // size it arrived at rather than the size it would occupy: a 50 KB document that
+        // deflates to 3 KB was refused, though the frame it would have produced is legal
+        // and well inside a symbol's capacity.
+        if data.len() > MAX_PAYLOAD {
+            return Err(LcError::TooLarge(data.len()));
+        }
+        let mut best = (data.len() <= EXTENDED_MAX).then(|| Frame {
+            ctype,
+            cflag: Compression::None,
+            body: data.to_vec(),
+        });
         for cflag in [Compression::Deflate, Compression::Brotli] {
             let Ok(candidate) = compress(cflag, data) else {
                 continue;
             };
-            if candidate.len() < best.body.len() {
-                best = Frame {
+            if candidate.len() <= EXTENDED_MAX
+                && best.as_ref().is_none_or(|b| candidate.len() < b.body.len())
+            {
+                best = Some(Frame {
                     ctype,
                     cflag,
                     body: candidate,
-                };
+                });
             }
         }
-        Ok(best)
+        best.ok_or(LcError::TooLarge(data.len()))
     }
 }
 
@@ -331,7 +354,7 @@ pub fn decompress(cflag: Compression, data: &[u8]) -> Result<Vec<u8>, LcError> {
         Compression::None => Ok(data.to_vec()),
         #[cfg(feature = "deflate")]
         Compression::Deflate => {
-            miniz_oxide::inflate::decompress_to_vec_with_limit(data, EXTENDED_MAX * 4)
+            miniz_oxide::inflate::decompress_to_vec_with_limit(data, MAX_PAYLOAD)
                 .map_err(|_| LcError::CompressionFailed)
         }
         #[cfg(not(feature = "deflate"))]

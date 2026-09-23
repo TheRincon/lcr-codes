@@ -693,3 +693,470 @@ fn tilt_by_azimuth() {
         println!("tilt {tilt:.2}: {}", row.join(" | "));
     }
 }
+
+/// The biggest symbol the format can actually carry — encoded, rendered and decoded.
+///
+/// Capacity tables say what fits; this says what comes back. Timed, because a v32 symbol is
+/// 145 modules across and the decode cost scales with pixels, not modules.
+#[test]
+#[ignore]
+fn largest_symbol() {
+    use lc_core::capacity::capacity_for_symbol;
+    use lc_core::{EccLevel, Version};
+    use std::time::Instant;
+
+    let v32 = Version::new(32).unwrap();
+    println!(
+        "\nv32: {} x {} modules, {} in the grid",
+        v32.side(),
+        v32.side(),
+        v32.side() as usize * v32.side() as usize
+    );
+    for profile in [Profile::C1, Profile::C3] {
+        let layout = lc_core::layout::Layout::for_symbol(v32, profile, true);
+        let cap = layout.capacity();
+        println!(
+            "  {profile:?}: {} luma + {} chroma = {} raw channel bits ({} ring cells)",
+            cap.luma_bits,
+            cap.chroma_bits,
+            cap.luma_bits + cap.chroma_bits,
+            layout.ring_cells
+        );
+    }
+    for profile in [Profile::C1, Profile::C3] {
+        for ecc in [0u8, 1] {
+            let e = EccLevel {
+                luma: ecc,
+                chroma: ecc,
+            };
+            let bytes = capacity_for_symbol(v32, profile, e, true).body_bytes;
+            let payload: Vec<u8> = (0..bytes).map(|i| (i * 31 + 7) as u8).collect();
+            let opts = EncodeOptions {
+                profile,
+                version: Some(v32),
+                reference_border: true,
+                compression: Some(Compression::None),
+                ecc: e,
+                ..Default::default()
+            };
+            let t0 = Instant::now();
+            let sym = match lc_encode::encode_bytes(&payload, &opts) {
+                Ok(s) => s,
+                Err(e) => {
+                    println!("  {profile:?} ecc {ecc}: {bytes} B did not encode: {e}");
+                    continue;
+                }
+            };
+            let enc = t0.elapsed();
+            for px in [8u32, 12] {
+                let r = render_at(&sym, px);
+                let t0 = Instant::now();
+                let got = Decoder::new()
+                    .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+                    .map(|o| matches!(&o.packet, Packet::Unsigned { body, .. } if *body == payload))
+                    .unwrap_or(false);
+                println!(
+                    "  {profile:?} ecc {ecc}: {bytes:>5} B | {px:>2} px/module -> {}x{} px | encode {enc:>8.1?} decode {:>8.1?} | {}",
+                    r.width,
+                    r.height,
+                    t0.elapsed(),
+                    if got { "decodes" } else { "FAILED" }
+                );
+            }
+        }
+    }
+}
+
+/// How big a *document* one symbol can carry, once compression is allowed.
+///
+/// The raw ceiling is v32's capacity; the useful ceiling is how much source text fits
+/// through §9.4's compression first. Random bytes are the worst case and JSON the realistic
+/// one, so both are measured rather than assumed.
+#[test]
+#[ignore]
+fn how_much_can_one_symbol_carry() {
+    use lc_core::Version;
+
+    // A repetitive JSON document, the shape a big payload actually takes.
+    let json = |n: usize| -> Vec<u8> {
+        let mut s = String::from("{\"records\":[");
+        let mut i = 0;
+        while s.len() < n {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!(
+                "{{\"id\":{i},\"name\":\"record {i}\",\"tags\":[\"alpha\",\"beta\"],\"score\":{}.{}}}",
+                i % 97,
+                i % 10
+            ));
+            i += 1;
+        }
+        s.push_str("]}");
+        s.into_bytes()
+    };
+    let random = |n: usize| -> Vec<u8> {
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        (0..n)
+            .map(|_| {
+                x ^= x >> 12;
+                x ^= x << 25;
+                x ^= x >> 27;
+                (x >> 33) as u8
+            })
+            .collect()
+    };
+
+    for (label, make) in [
+        ("JSON", &json as &dyn Fn(usize) -> Vec<u8>),
+        ("random", &random),
+    ] {
+        for kb in [4usize, 8, 16, 32, 50] {
+            let data = make(kb * 1024);
+            let opts = EncodeOptions {
+                profile: Profile::C3,
+                reference_border: true,
+                ecc: lc_core::EccLevel { luma: 0, chroma: 0 },
+                ..Default::default() // compression: auto
+            };
+            match lc_encode::encode_bytes(&data, &opts) {
+                Ok(sym) => {
+                    let v = sym.format.version;
+                    let px = 8;
+                    let r = render_at(&sym, px);
+                    let ok = Decoder::new()
+                        .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+                        .map(
+                            |o| matches!(&o.packet, Packet::Unsigned { body, .. } if *body == data),
+                        )
+                        .unwrap_or(false);
+                    println!(
+                        "  {label:>6} {kb:>3} KB -> v{:<2} {}x{} modules, {}x{} px at {px}/module | {}",
+                        v.get(),
+                        v.side(),
+                        v.side(),
+                        r.width,
+                        r.height,
+                        if ok { "decodes" } else { "FAILED" }
+                    );
+                }
+                Err(e) => println!("  {label:>6} {kb:>3} KB -> does not fit any version ({e})"),
+            }
+        }
+    }
+    let v32 = Version::new(32).unwrap();
+    println!(
+        "\n  the cap is the format word: version is 5 bits, so v{} ({}x{}) is the largest that exists",
+        v32.get(),
+        v32.side(),
+        v32.side()
+    );
+}
+
+/// The exact ceiling, both layouts: the largest JSON document that fits, found by search.
+#[test]
+#[ignore]
+fn the_real_ceiling() {
+    use lc_core::Version;
+
+    let json = |n: usize| -> Vec<u8> {
+        let mut s = String::from("{\"records\":[");
+        let mut i = 0;
+        while s.len() < n {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!(
+                "{{\"id\":{i},\"name\":\"record {i}\",\"tags\":[\"alpha\",\"beta\"],\"score\":{}.{}}}",
+                i % 97,
+                i % 10
+            ));
+            i += 1;
+        }
+        s.push_str("]}");
+        s.into_bytes()
+    };
+
+    for border in [true, false] {
+        let layout = if border {
+            "ring, finder-less"
+        } else {
+            "classic, 3 finders"
+        };
+        let opts = |ecc| EncodeOptions {
+            profile: Profile::C3,
+            reference_border: border,
+            ecc,
+            ..Default::default()
+        };
+        let e0 = lc_core::EccLevel { luma: 0, chroma: 0 };
+
+        // Raw ceiling: incompressible bytes at v32.
+        let raw = lc_core::capacity::capacity_for_symbol(
+            Version::new(32).unwrap(),
+            Profile::C3,
+            e0,
+            border,
+        )
+        .body_bytes;
+
+        // Source ceiling: binary search the largest JSON that still encodes.
+        let (mut lo, mut hi) = (1024usize, 200 * 1024);
+        while lo + 256 < hi {
+            let mid = (lo + hi) / 2;
+            if lc_encode::encode_bytes(&json(mid), &opts(e0)).is_ok() {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let data = json(lo);
+        let sym = lc_encode::encode_bytes(&data, &opts(e0)).expect("the found size encodes");
+        let r = render_at(&sym, 8);
+        let ok = Decoder::new()
+            .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+            .map(|o| matches!(&o.packet, Packet::Unsigned { body, .. } if *body == data))
+            .unwrap_or(false);
+        println!(
+            "  {layout:<20} raw {raw:>5} B | JSON {:>6} B ({:.1} KB, {:.1}x compression) -> v{} {}x{} | {}",
+            data.len(),
+            data.len() as f32 / 1024.0,
+            data.len() as f32 / raw as f32,
+            sym.format.version.get(),
+            sym.side(),
+            sym.side(),
+            if ok { "decodes" } else { "FAILED" }
+        );
+    }
+}
+
+/// What actually stops a 50 KB payload: the container's length field, not the symbol.
+///
+/// `Frame` checks the **uncompressed** body against `EXTENDED_MAX` (16383) before it
+/// compresses anything, so a payload that would compress to a few hundred bytes is rejected
+/// for being long, not for being big. This measures both sides of that.
+#[test]
+#[ignore]
+fn what_blocks_fifty_kilobytes() {
+    use lc_core::frame::{Compression as C, EXTENDED_MAX, compress};
+
+    // Repetitive JSON, the shape the photographed test payload had.
+    let doc = |n: usize| -> String {
+        let mut s = String::from("{\"records\":[");
+        let mut i = 0;
+        while s.len() < n {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!(
+                "{{\"id\":{i},\"name\":\"record {i}\",\"note\":\"the quick brown fox\",\"ok\":true}}"
+            ));
+            i += 1;
+        }
+        s.push_str("]}");
+        s
+    };
+
+    println!(
+        "\n  container limit: EXTENDED_MAX = {EXTENDED_MAX} B, checked on the *uncompressed* body"
+    );
+    for kb in [8usize, 16, 32, 50, 64] {
+        let json = doc(kb * 1024);
+        let cbor = lc_core::json::parse(&json).unwrap().to_vec();
+        let deflate = compress(C::Deflate, &cbor).map(|v| v.len()).unwrap_or(0);
+        let brotli = compress(C::Brotli, &cbor).map(|v| v.len()).unwrap_or(0);
+        let best = deflate.min(if brotli > 0 { brotli } else { usize::MAX });
+        // Would the compressed form fit a symbol, if the container allowed the body?
+        let fits_v32 = best
+            <= lc_core::capacity::capacity_for_symbol(
+                lc_core::Version::new(32).unwrap(),
+                Profile::C3,
+                lc_core::EccLevel { luma: 0, chroma: 0 },
+                true,
+            )
+            .body_bytes;
+        println!(
+            "  {kb:>3} KB JSON -> {:>6} B CBOR -> {:>5} B compressed ({:.1}x) | container: {} | fits v32 once framed: {}",
+            cbor.len(),
+            best,
+            json.len() as f32 / best as f32,
+            if cbor.len() <= EXTENDED_MAX {
+                "ok"
+            } else {
+                "REJECTED"
+            },
+            if fits_v32 { "yes" } else { "no" }
+        );
+    }
+}
+
+/// What compression actually buys, by payload shape — because the synthetic figure lied.
+///
+/// The first generator here repeated one literal string thousands of times, which DEFLATE
+/// reduces ~15x. No real payload does that. These are the shapes a real one takes, from
+/// most compressible to least.
+#[test]
+#[ignore]
+fn compression_reality_check() {
+    use lc_core::frame::{Compression as C, compress};
+
+    fn rnd(state: &mut u64) -> u64 {
+        *state ^= *state >> 12;
+        *state ^= *state << 25;
+        *state ^= *state >> 27;
+        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+    const WORDS: [&str; 18] = [
+        "alpha", "bravo", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo",
+        "lima", "mike", "north", "oscar", "papa", "quebec", "romeo", "sierra",
+    ];
+
+    /// What the earlier probe generated: one literal, repeated.
+    fn repetitive(n: usize) -> String {
+        let mut s = String::from("{\"records\":[");
+        let mut i = 0;
+        while s.len() < n {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!(
+                "{{\"id\":{i},\"name\":\"record {i}\",\"note\":\"the quick brown fox\",\"ok\":true}}"
+            ));
+            i += 1;
+        }
+        s.push_str("]}");
+        s
+    }
+
+    /// The same schema, with values that actually vary.
+    fn varied(n: usize) -> String {
+        let mut st = 0x1234_5678_9ABC_DEF0u64;
+        let mut s = String::from("{\"records\":[");
+        let mut first = true;
+        while s.len() < n {
+            if !first {
+                s.push(',');
+            }
+            first = false;
+            let x = rnd(&mut st);
+            s.push_str(&format!(
+                "{{\"id\":{},\"name\":\"{}-{}\",\"lat\":{}.{},\"lon\":-{}.{},\"tag\":\"{}\"}}",
+                x % 1_000_000,
+                WORDS[(x >> 7) as usize % WORDS.len()],
+                x % 9973,
+                30 + x % 20,
+                x % 1_000_000,
+                80 + (x >> 11) % 40,
+                (x >> 17) % 1_000_000,
+                WORDS[(x >> 23) as usize % WORDS.len()]
+            ));
+        }
+        s.push_str("]}");
+        s
+    }
+
+    /// Natural-ish prose from a small vocabulary.
+    fn prose(n: usize) -> String {
+        let mut st = 0x0BAD_C0FF_EE12_3456u64;
+        let mut s = String::from("{\"text\":\"");
+        while s.len() < n {
+            s.push_str(WORDS[rnd(&mut st) as usize % WORDS.len()]);
+            s.push(' ');
+        }
+        s.push_str("\"}");
+        s
+    }
+
+    /// Base64 of random bytes: a key, a certificate, a thumbnail.
+    fn b64ish(n: usize) -> String {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut st = 0xFEED_FACE_CAFE_D00Du64;
+        let mut s = String::from("{\"blob\":\"");
+        while s.len() < n {
+            s.push(A[rnd(&mut st) as usize % 64] as char);
+        }
+        s.push_str("\"}");
+        s
+    }
+
+    let cap = lc_core::capacity::capacity_for_symbol(
+        lc_core::Version::new(32).unwrap(),
+        Profile::C3,
+        lc_core::EccLevel { luma: 0, chroma: 0 },
+        true,
+    )
+    .body_bytes;
+    println!("\n  50 KB of each shape. v32 C3 at the weakest ECC holds {cap} B.\n");
+    println!("  shape                         CBOR  deflate   brotli   ratio  fits v32");
+    for (name, doc) in [
+        ("one literal repeated", repetitive(50 * 1024)),
+        ("varying field values", varied(50 * 1024)),
+        ("prose, 18-word vocab", prose(50 * 1024)),
+        ("base64 random bytes", b64ish(50 * 1024)),
+    ] {
+        let cbor = lc_core::json::parse(&doc).unwrap().to_vec();
+        let d = compress(C::Deflate, &cbor)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        let b = compress(C::Brotli, &cbor)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
+        let best = d.min(b);
+        println!(
+            "  {name:<26} {:>7} {:>8} {:>8} {:>6.1}x  {}",
+            cbor.len(),
+            d,
+            b,
+            doc.len() as f32 / best as f32,
+            if best <= cap { "yes" } else { "NO" }
+        );
+    }
+    println!("\n  the repetitive document, first 180 bytes — this is why it compressed 15x:");
+    println!("  {}", &repetitive(50 * 1024)[..180]);
+
+    // The honest ceiling: largest source of each shape that still encodes AND decodes.
+    println!("\n  largest single symbol, by shape (C3, weakest ECC, ring):");
+    for (name, make) in [
+        ("one literal repeated", repetitive as fn(usize) -> String),
+        ("varying field values", varied),
+        ("prose, 18-word vocab", prose),
+        ("base64 random bytes", b64ish),
+    ] {
+        let opts = EncodeOptions {
+            profile: Profile::C3,
+            reference_border: true,
+            ecc: lc_core::EccLevel { luma: 0, chroma: 0 },
+            ..Default::default()
+        };
+        let (mut lo, mut hi) = (512usize, 512 * 1024);
+        while lo + 512 < hi {
+            let mid = (lo + hi) / 2;
+            if lc_encode::encode_json(&make(mid), &opts).is_ok() {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let doc = make(lo);
+        match lc_encode::encode_json(&doc, &opts) {
+            Ok(sym) => {
+                let r = render_at(&sym, 8);
+                let ok = Decoder::new()
+                    .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+                    .is_ok();
+                println!(
+                    "  {name:<26} {:>6} B ({:>5.1} KB) -> v{} {}x{} at 8px = {}x{} px | {}",
+                    doc.len(),
+                    doc.len() as f32 / 1024.0,
+                    sym.format.version.get(),
+                    sym.side(),
+                    sym.side(),
+                    r.width,
+                    r.height,
+                    if ok { "decodes" } else { "FAILED" }
+                );
+            }
+            Err(e) => println!("  {name:<26} nothing fit ({e})"),
+        }
+    }
+}

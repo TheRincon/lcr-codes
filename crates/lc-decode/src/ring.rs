@@ -318,12 +318,14 @@ pub fn read_ring_format(
 
         for llrs in &copies {
             let (bits, margin) = bch::decode_soft(llrs);
-            let Ok(info) = FormatInfo::from_bits(bits) else {
+            // `from_ring_bits`, not `from_bits`: a ringed symbol spends the version and
+            // border bits on a wider profile field (D21), because the sequence correlation
+            // above already established both. It also rejects a non-zero reserved field,
+            // which is what now catches a word that survived the BCH decode as garbage.
+            let Ok(info) = FormatInfo::from_ring_bits(bits, version) else {
                 continue;
             };
-            let consistent = info.version == version
-                && info.reference_border
-                && info.profile != Profile::M
+            let consistent = info.profile != Profile::M
                 // C1 and C2 share the 4-colour palette, C3 has the 8-colour one; comparing
                 // families avoids building a second palette just to read its hue count.
                 && (info.profile == Profile::C3) == (family == Profile::C3);

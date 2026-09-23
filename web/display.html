@@ -152,11 +152,13 @@
 
       <label class="f"><input type="checkbox" id="border" checked> Reference border (§6.4) —
         <em>on is the conforming screen default</em></label>
-      <p class="why" style="margin:.2rem 0 0">Mandatory on screen as of D14: the ring now
-        carries the position sequence, so turning it off produces a symbol that is missing
-        something a decoder is entitled to. Left togglable because what the border is
-        <em>worth</em> under real glare has never been measured, and that is an A/B the
-        capture sweep can run.</p>
+      <p class="why" style="margin:.2rem 0 0">This checkbox is also the <b>layout</b> switch.
+        <b>On</b> (D17): the ring locates the symbol, so there are no finders at all — the 204
+        modules they and their supporting patterns cost go back to payload, and the ring
+        carries some itself. <b>Off</b>: the classic three-bullseye layout, which is what print
+        uses and what a greyscale camera can still read — a finder-less symbol keeps its
+        settings in hue, so mono capture can find one but not read it. Profile M keeps its
+        finders either way, for the same reason. Toggle it and watch the version move.</p>
 
       <button id="go">Encode and display</button>
       <button id="present" class="ghost">Present full screen</button>
