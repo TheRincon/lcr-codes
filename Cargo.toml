@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/lc-cft",
     "crates/lc-core",
     "crates/lc-decode",
     "crates/lc-encode",
@@ -22,6 +23,7 @@ authors = ["LC Code contributors"]
 
 [workspace.dependencies]
 lc-core   = { path = "crates/lc-core",   version = "0.4.0", default-features = false }
+lc-cft    = { path = "crates/lc-cft",    version = "0.4.0", default-features = false }
 lc-decode = { path = "crates/lc-decode", version = "0.4.0", default-features = false }
 lc-encode = { path = "crates/lc-encode", version = "0.4.0", default-features = false }
 lc-render = { path = "crates/lc-render", version = "0.4.0", default-features = false }
