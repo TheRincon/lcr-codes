@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LC Code file transfer — receiver</title>
+<style>
+  :root {
+    --bg: #0e120d; --panel: #171d15; --line: #2a3326;
+    --ink: #e9eee4; --dim: #97a291; --ok: #8bd377; --bad: #e0a070; --accent: #78297c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    padding: 1rem .8rem 3rem;
+  }
+  .wrap { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.05rem; font-weight: 600; margin: 0 0 .2rem; }
+  .sub { color: var(--dim); font-size: .8rem; margin: 0 0 1rem; }
+
+  video { width: 100%; border-radius: 8px; background: #000; display: block; aspect-ratio: 3/4; object-fit: cover; }
+  button {
+    font: inherit; font-size: .95rem; padding: .75rem 1rem; margin-top: .7rem;
+    border-radius: 6px; border: 1px solid var(--accent); background: var(--accent);
+    color: var(--ink); cursor: pointer; width: 100%;
+  }
+  button.ghost { background: var(--panel); border-color: var(--line); }
+  button.go { background: var(--ok); border-color: var(--ok); color: #0e120d; font-weight: 600; font-size: 1.05rem; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: .85rem; margin-top: .8rem; }
+  .big { font-size: 1.35rem; font-weight: 600; letter-spacing: -.02em; }
+  .kv { font: .78rem ui-monospace, Menlo, monospace; color: var(--dim); margin-top: .5rem; }
+  .kv b { color: var(--ink); }
+  .hint { font-size: .85rem; color: var(--bad); margin-top: .5rem; }
+  .err { color: var(--bad); font-size: .82rem; margin-top: .5rem; white-space: pre-wrap; }
+  .ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>File transfer — receiver</h1>
+  <p class="sub">
+    Point the camera at the sender's symbol and hold steady. It is a single symbol — one
+    good read is the whole file. Nothing leaves this device.
+  </p>
+
+  <video id="video" playsinline muted></video>
+  <button id="start">Start camera</button>
+
+  <div class="card">
+    <div class="big" id="state">Ready.</div>
+    <div class="kv" id="kv"></div>
+    <div class="hint" id="hint"></div>
+    <div class="err" id="err"></div>
+    <button id="save" class="go" hidden>Save file</button>
+    <button id="again" class="ghost" hidden>Scan another</button>
+  </div>
+</div>
+
+<canvas id="scratch" hidden></canvas>
+
+<script type="module">
+import { decoder, cft } from './lc/lc-code.js';
+
+const $ = id => document.getElementById(id);
+const video = $('video'), scratch = $('scratch');
+const sctx = scratch.getContext('2d', { willReadFrequently: true });
+
+let stream = null, running = false, blobUrl = null;
+let frames = 0, probes = 0;
+
+// §12.4's multi-frame LLR combining — "the single best use of a live camera preview".
+// Glare, banding and blur move between frames, so accumulating soft information across
+// them is far cheaper than tightening the code rate, and it is the difference between a
+// large symbol that never quite decodes and one that decodes on the fifth frame.
+//
+// Geometry is fixed by the first frame that detects; later frames are demodulated against
+// it, which is both faster and better — re-detecting per frame would let detection jitter
+// smear the very LLRs being accumulated.
+let acc = null;
+
+function reset() {
+  frames = probes = 0;
+  acc = new decoder.Accumulator();
+  if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+  $('save').hidden = true;
+  $('again').hidden = true;
+  $('err').textContent = '';
+  $('hint').textContent = '';
+  $('kv').textContent = '';
+  $('state').textContent = 'Ready.';
+  $('state').classList.remove('ok');
+}
+
+function sniff(b) {
+  const at = (...sig) => sig.every((v, i) => b[i] === v);
+  if (at(0x25, 0x50, 0x44, 0x46)) return ['pdf', 'application/pdf'];
+  if (at(0x89, 0x50, 0x4E, 0x47)) return ['png', 'image/png'];
+  if (at(0xFF, 0xD8, 0xFF)) return ['jpg', 'image/jpeg'];
+  if (at(0x50, 0x4B, 0x03, 0x04)) return ['zip', 'application/zip'];
+  return ['bin', 'application/octet-stream'];
+}
+
+function typeFor(name) {
+  return { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+           txt: 'text/plain', json: 'application/json', zip: 'application/zip',
+         }[name.toLowerCase().split('.').pop()] || 'application/octet-stream';
+}
+
+function offer(bytes, name, type) {
+  stopCamera();
+  if (blobUrl) URL.revokeObjectURL(blobUrl);
+  const file = new File([bytes], name, { type });
+  blobUrl = URL.createObjectURL(file);
+  $('state').textContent = `Verified — ${bytes.length.toLocaleString()} bytes`;
+  $('state').classList.add('ok');
+  $('hint').textContent = '';
+  $('kv').innerHTML = `file <b>${name}</b> · frames <b>${frames}</b>`;
+  $('save').hidden = false;
+  $('again').hidden = false;
+  $('save').textContent = `Save ${name}`;
+  $('save').onclick = async () => {
+    // iOS Safari frequently ignores an anchor's `download` on a blob: URL and names the
+    // result after the blob's UUID. The share sheet is the path that keeps the filename,
+    // and the button click is the user gesture it requires.
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: name }); return; } catch { /* fall through */ }
+    }
+    const a = document.createElement('a');
+    a.href = blobUrl; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+}
+
+// One decoded symbol is the whole transfer: CFT carries the stream inline in the manifest,
+// so the first message completes it — filename and hash included.
+function handle(body) {
+  const rx = new cft.Receiver();
+  let complete = false;
+  try {
+    complete = rx.accept(body).tag === 'complete';
+  } catch {
+    // Not a CFT message. A whole file sent as raw bytes still decodes; it just has no
+    // filename or hash to check, so sniff a type and hand it over.
+    const [ext, type] = sniff(body);
+    offer(body, `received.${ext}`, type);
+    return true;
+  }
+  if (!complete) {
+    $('err').textContent = 'That symbol is part of a multi-symbol transfer, which this page does not collect.';
+    return false;
+  }
+  try {
+    const bytes = rx.finish();                       // only returns if the hash matches
+    const name = rx.filename() || 'received.bin';
+    offer(bytes, name, typeFor(name));
+    return true;
+  } catch (e) {
+    $('err').textContent = `Verification failed: ${e && e.message || e}`;
+    return false;
+  }
+}
+
+function tick() {
+  if (!running) return;
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) { requestAnimationFrame(tick); return; }
+  if (scratch.width !== w) { scratch.width = w; scratch.height = h; }
+  sctx.drawImage(video, 0, 0, w, h);
+  const img = sctx.getImageData(0, 0, w, h);
+  frames++;
+
+  const image = { pixels: img.data, width: w, height: h, stride: w * 4, format: 'rgba8' };
+  try {
+    // Feed the accumulator first. A frame that fails to demodulate is skipped rather than
+    // fatal — in a preview stream most frames are blurred or mid-refresh.
+    let combined = 0;
+    try {
+      acc.push(image);
+      combined = acc.frames();
+    } catch { /* nothing usable in this frame */ }
+
+    // Try the accumulated evidence, then this frame alone. The accumulator wins on a
+    // marginal capture; the single frame wins when the camera has just been re-aimed and
+    // the accumulated geometry is stale.
+    let res = null;
+    if (combined > 0) {
+      try { res = acc.tryDecode(); } catch { res = null; }
+    }
+    if (!res) res = decoder.decode(image);
+    if (res.packet.tag === 'unsigned' && handle(res.packet.val.body)) return;
+  } catch {
+    // No decode. Probe occasionally so the page can say *why* rather than just waiting —
+    // §12.1–§12.3 without the payload work. Every sixth frame, so it stays cheap.
+    if (++probes % 6 === 0) {
+      try {
+        const pr = decoder.probe({ pixels: img.data, width: w, height: h, stride: w * 4, format: 'rgba8' });
+        const px = pr.capturePitchMin;
+        $('state').textContent = `Symbol found — v${pr.version}`;
+        $('hint').textContent = px < 3
+          ? `Only ${px.toFixed(1)} px per module. Move closer.`
+          : `${px.toFixed(1)} px per module, but the payload will not decode yet. Hold steadier, or avoid glare.`;
+      } catch {
+        $('state').textContent = 'Looking…';
+        $('hint').textContent = 'No symbol in frame. Fill more of the view with it.';
+      }
+    }
+  }
+  let combined = 0;
+  try { combined = acc.frames(); } catch { /* ignore */ }
+  $('kv').innerHTML = `frames <b>${frames}</b> · combined <b>${combined}</b>`;
+  // A long run of combined frames that still will not decode means the geometry locked on
+  // something stale — drop it and let the next frame re-detect.
+  if (combined >= 24) { try { acc.reset(); } catch { /* ignore */ } }
+  requestAnimationFrame(tick);
+}
+
+async function startCamera() {
+  if (stream) return stopCamera();
+  reset();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      // A single large symbol needs resolution: v64 is 273 modules across, so 1920 gives
+      // about 7 px per module when it fills the frame.
+      video: { facingMode: { ideal: 'environment' },
+               width: { ideal: 1920 }, height: { ideal: 1440 } },
+      audio: false,
+    });
+  } catch (e) {
+    $('err').textContent = `Camera unavailable: ${e && e.message || e}\n` +
+      `A camera needs HTTPS or localhost — a plain LAN address will not work.`;
+    return;
+  }
+  video.srcObject = stream;
+  await video.play();
+  running = true;
+  $('state').textContent = 'Looking…';
+  $('start').textContent = 'Stop camera';
+  requestAnimationFrame(tick);
+}
+
+function stopCamera() {
+  running = false;
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null;
+  $('start').textContent = 'Start camera';
+}
+
+$('start').addEventListener('click', startCamera);
+$('again').addEventListener('click', () => { reset(); startCamera(); });
+reset();
+</script>
+</body>
+</html>

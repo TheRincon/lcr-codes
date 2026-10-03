@@ -236,10 +236,39 @@ web port="8000":
     cargo run -p lc-decode --release --example frame -- web/frame.rgba
     echo
     echo "  display:  http://localhost:{{port}}/display.html   (laptop)"
+    echo "  transfer: http://localhost:{{port}}/transfer.html  (laptop — file drop)"
+    echo "  receive:  http://localhost:{{port}}/receive.html   (phone — needs HTTPS, see \`just tunnel\`)"
     echo "  sweep:    http://localhost:{{port}}/sweep.html     (phone — records trials)"
     echo "  scanner:  http://localhost:{{port}}/               (phone — needs HTTPS)"
     echo "  ^C to stop"
     cd web && python3 -m http.server {{port}}
+
+# Serve the demo over an HTTPS tunnel, for the file-transfer pages.
+#
+# A camera needs a secure context, so `just web` tells the phone to use localhost — which
+# a phone does not have. `cloudflared` gives the laptop's server a public HTTPS name for
+# the length of the session, which is the shortest path to a phone actually decoding.
+#
+# Nothing is uploaded to the tunnel but the page itself: encode and decode both run in the
+# browser, and the file never leaves the two devices.
+[doc("Serve the demo over an HTTPS cloudflared tunnel, so a phone can use its camera.")]
+tunnel port="8000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH=/opt/homebrew/bin:$PATH
+    command -v cloudflared >/dev/null || { echo "cloudflared not found (brew install cloudflared)" >&2; exit 1; }
+    just component _component-compare
+    npx --yes @bytecodealliance/jco@latest transpile dist/lc-code-compare.wasm \
+        --name lc-code -o web/lc --no-typescript
+    ( cd web && python3 -m http.server {{port}} >/dev/null 2>&1 ) &
+    server=$!
+    trap 'kill $server 2>/dev/null || true' EXIT
+    echo
+    echo "  starting tunnel — the https URL appears below"
+    echo "  sender:   <url>/transfer.html   (laptop)"
+    echo "  receiver: <url>/receive.html    (phone)"
+    echo
+    cloudflared tunnel --url http://localhost:{{port}}
 
 # Check the WIT interface parses and round-trips.
 wit-check:

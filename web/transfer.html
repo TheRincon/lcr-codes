@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LC Code file transfer — sender</title>
+<style>
+  :root {
+    --bg: #0e120d; --panel: #171d15; --line: #2a3326;
+    --ink: #e9eee4; --dim: #97a291; --ok: #8bd377; --bad: #e0a070; --accent: #78297c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    padding: 1.5rem 1rem 3rem;
+  }
+  .wrap { max-width: 68rem; margin: 0 auto; }
+  h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  .sub { color: var(--dim); font-size: .85rem; margin: 0 0 1.25rem; }
+  a { color: var(--ok); }
+  code { font-size: .92em; }
+
+  .cols { display: grid; grid-template-columns: 1fr; gap: 1.25rem; }
+  @media (min-width: 56rem) { .cols { grid-template-columns: 19rem 1fr; } }
+
+  .drop {
+    border: 1.5px dashed var(--line); border-radius: 8px;
+    padding: 1.6rem 1rem; text-align: center; cursor: pointer;
+    background: var(--panel); transition: border-color .15s, background .15s;
+  }
+  .drop.hot { border-color: var(--ok); background: #1b2418; }
+  .drop b { display: block; font-size: .92rem; font-weight: 600; }
+  .drop span { font-size: .78rem; color: var(--dim); }
+
+  label.f { display: block; font-size: .78rem; color: var(--dim); margin: .8rem 0 .3rem; }
+  select, input[type=number] {
+    font: inherit; font-size: .85rem; width: 100%;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; padding: .4rem .5rem;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+
+  .stage {
+    background: #fff; border-radius: 6px; padding: 1rem;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 24rem;
+  }
+  /* No max-width/max-height: §13.1.3 requires integer device-pixel multiples, and any
+     CSS scaling resamples the modules before the camera ever sees them. The canvas is
+     sized in `paint()` so one canvas pixel is one device pixel; if that overflows the
+     stage, the stage scrolls rather than the symbol shrinking. */
+  .stage { overflow: auto; }
+  .stage canvas { image-rendering: pixelated; display: block; }
+  .stage .idle { color: #667; font-size: .85rem; text-align: center; }
+
+  .meta {
+    margin-top: .8rem; font: .78rem ui-monospace, Menlo, monospace;
+    color: var(--dim); display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: .3rem 1rem;
+  }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .err { color: var(--bad); font-size: .85rem; margin-top: .8rem; white-space: pre-wrap; }
+  .note { font-size: .78rem; color: var(--dim); margin-top: 1rem; }
+  .big { font-size: 1.05rem; font-weight: 600; color: var(--ink); }
+  .good { color: var(--ok); }
+  .warn { color: var(--bad); }
+  #display { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>File transfer — sender</h1>
+  <p class="sub">
+    Drop a file. It is compressed and encoded into <b>one</b> LC Code symbol, carrying its
+    own filename and SHA-256. Point the <a href="./receive.html">receiver</a> at it once.
+    No animation, no sequence, nothing uploaded — it all happens in this tab.
+  </p>
+
+  <div class="cols">
+    <div>
+      <div class="drop" id="drop">
+        <b>Drop a file</b>
+        <span>or click to choose</span>
+        <input type="file" id="file" hidden>
+      </div>
+
+      <label class="f" for="version">Version</label>
+      <select id="version">
+        <option value="0" selected>Auto — smallest that fits</option>
+      </select>
+
+      <label class="f" for="profile">Profile</label>
+      <select id="profile">
+        <option value="c3" selected>C3 — 8 colours, densest</option>
+        <option value="c1">C1 — 4 colours, most robust</option>
+        <option value="c2">C2 — 4 colours, print</option>
+      </select>
+
+      <div class="row">
+        <div>
+          <label class="f" for="ecc">ECC</label>
+          <select id="ecc">
+            <option value="0" selected>0 — most capacity</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3 — most robust</option>
+          </select>
+        </div>
+        <div>
+          <label class="f" for="modulePx">Module px</label>
+          <input type="number" id="modulePx" min="8" max="24" value="8">
+        </div>
+      </div>
+
+      <p class="note">
+        One symbol tops out at <b id="ceiling">…</b> after compression — the §9.1 container's
+        14-bit length field, not the geometry. Auto picks the smallest version that fits, so
+        a small file stays easy to scan.
+      </p>
+    </div>
+
+    <div>
+      <div class="stage" id="stage"><div class="idle">No file yet.</div></div>
+      <div class="meta" id="meta"></div>
+      <div class="err" id="err"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { encoder, cft } from './lc/lc-code.js';
+
+const $ = id => document.getElementById(id);
+const stage = $('stage'), meta = $('meta'), err = $('err');
+
+const MAX_VERSION = 64;
+// Room for the CFT manifest beside the payload: magic, filename, sizes, hash, transfer id,
+// chunk count, and the inline byte-string header. 160 bytes is comfortable at any size.
+const MANIFEST_SLACK = 160;
+
+for (let v = 1; v <= MAX_VERSION; v++) {
+  const o = document.createElement('option');
+  o.value = String(v);
+  o.textContent = `v${v} — ${21 + 4 * (v - 1)} modules${v > 32 ? ' (ring only)' : ''}`;
+  $('version').appendChild(o);
+}
+
+function settings() {
+  const ecc = Number($('ecc').value);
+  return {
+    profile: $('profile').value,
+    eccLuma: ecc,
+    eccChroma: ecc,
+    // The payload is already deflated by CFT, so a second pass is wasted work.
+    compression: 'none',
+    referenceBorder: true,
+    mask: undefined,
+  };
+}
+
+function capacityAt(v, s) {
+  try {
+    return encoder.capacity(s.profile, v, s.eccLuma, s.eccChroma, true);
+  } catch {
+    return 0;
+  }
+}
+
+function showCeiling() {
+  const s = settings();
+  $('ceiling').textContent = `${capacityAt(MAX_VERSION, s).toLocaleString()} B`;
+}
+
+function render(rendered) {
+  const { pixels, width, height } = rendered;
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  // One canvas pixel per *device* pixel. On a 2x display that means a 2008px symbol
+  // occupies 1004 CSS px and still renders 8 device pixels per module; letting CSS pick
+  // the size instead would resample at a non-integer ratio, which §13.1.3 forbids
+  // precisely because it aliases against the capturing sensor.
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = `${width / dpr}px`;
+  canvas.style.height = `${height / dpr}px`;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(width, height);
+  for (let i = 0, j = 0; i < width * height; i++) {
+    img.data[j++] = pixels[i * 3];
+    img.data[j++] = pixels[i * 3 + 1];
+    img.data[j++] = pixels[i * 3 + 2];
+    img.data[j++] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+// §13.1.3: at least 8 device pixels per module, at an integer multiple. A symbol wider
+// than the window is the common way to violate it — the browser would scale it, and a
+// scaled module is a soft module.
+function reportDisplay(one, modulePx) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = one.width / dpr;
+  const stage = $('stage');
+  const fits = cssWidth <= stage.clientWidth;
+  const el = $('display');
+  if (!el) return;
+  if (fits) {
+    el.innerHTML = `display <b class="good">${modulePx} device px/module</b> — meets §13.1`;
+  } else {
+    el.innerHTML =
+      `<b class="warn">Too wide for this window.</b> Needs ${Math.ceil(cssWidth)} CSS px, ` +
+      `has ${stage.clientWidth}. Scroll to show it whole, zoom the browser out to an ` +
+      `exact fraction, or use a smaller version — a scaled symbol breaks §13.1.3 and will ` +
+      `not decode however close the camera gets.`;
+  }
+}
+
+function idle(text) {
+  stage.replaceChildren(Object.assign(document.createElement('div'),
+    { className: 'idle', textContent: text }));
+}
+
+async function load(file) {
+  err.textContent = '';
+  meta.innerHTML = '';
+  idle('Encoding…');
+  await new Promise(r => requestAnimationFrame(r));
+
+  try {
+    const s = settings();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const chosen = Number($('version').value);
+    const modulePx = Number($('modulePx').value);
+    const id = crypto.getRandomValues(new Uint8Array(4));
+
+    // Compress once at the largest chunk size any version offers, so the compressed
+    // length is known before a version is picked. CFT puts the whole stream inline when
+    // it fits, which is what makes this one symbol rather than two.
+    const ceiling = capacityAt(MAX_VERSION, s) - MANIFEST_SLACK;
+    const probe = cft.split(bytes, file.name, id, ceiling);
+    if (probe.totalChunks !== 1) {
+      throw new Error(
+        `${bytes.length.toLocaleString()} B compresses to ` +
+        `${Number(probe.compressedSize).toLocaleString()} B, which is past the ` +
+        `${capacityAt(MAX_VERSION, s).toLocaleString()} B a single symbol can hold.\n` +
+        `Use a smaller file, or a more compressible one.`);
+    }
+    const streamLen = Number(probe.compressedSize);
+
+    // Smallest version whose capacity holds the manifest plus the inline stream.
+    let version = chosen;
+    if (!chosen) {
+      version = 0;
+      for (let v = 1; v <= MAX_VERSION; v++) {
+        if (capacityAt(v, s) >= streamLen + MANIFEST_SLACK) { version = v; break; }
+      }
+      if (!version) throw new Error('no version fits — this should not happen');
+    }
+
+    const cap = capacityAt(version, s);
+    const transfer = cft.split(bytes, file.name, id, cap - MANIFEST_SLACK);
+    if (transfer.totalChunks !== 1) {
+      throw new Error(
+        `v${version} holds ${cap.toLocaleString()} B but the stream needs ` +
+        `${streamLen.toLocaleString()} B. Pick a larger version, or leave it on Auto.`);
+    }
+
+    const t0 = performance.now();
+    const one = encoder.encodeBytes(transfer.messages[0], { ...s, version }, modulePx);
+    const ms = performance.now() - t0;
+
+    stage.replaceChildren(render(one));
+    const orig = Number(transfer.originalSize);
+    const ratio = orig ? streamLen / orig : 1;
+    meta.innerHTML = `
+      <div class="big">One symbol — v${one.version}, ${one.side}&times;${one.side} modules</div>
+      <div>file <b>${file.name}</b></div>
+      <div>original <b>${orig.toLocaleString()} B</b></div>
+      <div>compressed <b>${streamLen.toLocaleString()} B</b> (${(ratio * 100).toFixed(0)}%)</div>
+      <div>capacity <b>${cap.toLocaleString()} B</b> at ECC ${s.eccLuma}</div>
+      <div>headroom <b>${(cap - streamLen - MANIFEST_SLACK).toLocaleString()} B</b></div>
+      <div>rendered <b>${one.width}&times;${one.height} px</b> in ${ms.toFixed(0)} ms</div>
+      <div id="display"></div>`;
+    reportDisplay(one, modulePx);
+  } catch (e) {
+    idle('Nothing to show.');
+    err.textContent = String(e && e.message || e);
+  }
+}
+
+const drop = $('drop');
+drop.addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', e => e.target.files[0] && load(e.target.files[0]));
+for (const ev of ['dragenter', 'dragover']) {
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hot'); });
+}
+for (const ev of ['dragleave', 'drop']) {
+  drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hot'); });
+}
+drop.addEventListener('drop', e => e.dataTransfer.files[0] && load(e.dataTransfer.files[0]));
+
+for (const id of ['version', 'profile', 'ecc', 'modulePx']) {
+  $(id).addEventListener('change', () => {
+    showCeiling();
+    const f = $('file').files[0];
+    if (f) load(f);
+  });
+}
+showCeiling();
+</script>
+</body>
+</html>

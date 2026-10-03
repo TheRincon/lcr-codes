@@ -72,7 +72,7 @@ fn ring_positions(side: u32) -> usize {
 
 /// Every version's side length, per §6.1.
 fn sides() -> impl Iterator<Item = (u8, u32)> {
-    (1u8..=32).map(|v| (v, 21 + 4 * (v as u32 - 1)))
+    (1u8..=lc_core::Version::MAX.get()).map(|v| (v, 21 + 4 * (v as u32 - 1)))
 }
 
 // ---------------------------------------------------------------- generation
@@ -379,11 +379,12 @@ pub fn table() -> String {
          //! bit per position, LSB first. A set bit is a **light** cell, a clear bit dark —\n\
          //! the luma layer §12.1 detects from. Colour rides on top; see `border::cell_color`.\n\n",
     );
+    let n = sides().count();
     let _ = writeln!(
         s,
         "/// Window length per version: the number of consecutive positions that identify\n\
          /// a location on the ring uniquely. Indexed by `version - 1`.\n\
-         pub static WINDOW: [u8; 32] = ["
+         pub static WINDOW: [u8; {n}] = ["
     );
     let mut windows = Vec::new();
     let mut seqs = Vec::new();
@@ -409,7 +410,7 @@ pub fn table() -> String {
         s,
         "/// Packed sequences, indexed by `version - 1`. Bit `i` of the slice is position\n\
          /// `i` around the ring; set means light.\n\
-         pub static SEQUENCES: [&[u8]; 32] = ["
+         pub static SEQUENCES: [&[u8]; {n}] = ["
     );
     for seq in &seqs {
         let mut bytes = vec![0u8; seq.len().div_ceil(8)];
@@ -478,10 +479,11 @@ pub fn report() -> String {
     }
 
     let _ = writeln!(s);
+    let n = sides().count();
     if failures == 0 {
         let _ = writeln!(
             s,
-            "All 32 versions generated and verified: every cyclic window is distinct, no run\n\
+            "All {n} versions generated and verified: every cyclic window is distinct, no run\n\
              exceeds {MAX_RUN}, and the checks are brute force over the extracted windows\n\
              rather than an appeal to the construction."
         );

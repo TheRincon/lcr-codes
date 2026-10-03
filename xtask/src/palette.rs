@@ -196,6 +196,45 @@ fn best_for_levels(
     Some(best)
 }
 
+/// Best common `C*` for `k` hues shared across an arbitrary set of `L*` levels.
+///
+/// [`best_for_levels`] generalised from a pair to any set: `m(h)` is the minimum over
+/// *every* level, because a hue state is one angle used at all of them. No floor — the
+/// caller wants to see the number even when it misses §4.2, since the point is to price a
+/// trade rather than to ship a palette.
+fn best_for_level_set(
+    g: &Gamut,
+    levels: &[usize],
+    k: usize,
+    step: usize,
+) -> Option<(f32, Vec<usize>)> {
+    let m: Vec<f32> = (0..g.nh)
+        .map(|h| {
+            levels
+                .iter()
+                .map(|&li| g.at(li, h))
+                .fold(f32::INFINITY, f32::min)
+        })
+        .collect();
+    let ub = m.iter().copied().fold(f32::MIN, f32::max);
+    if ub <= 0.0 {
+        return None;
+    }
+    let mut best = feasible(&m, g.nh, k, step, 0.0).map(|hs| (0.0, hs))?;
+    let (mut lo, mut hi) = (0.0f32, ub);
+    for _ in 0..30 {
+        let mid = 0.5 * (lo + hi);
+        match feasible(&m, g.nh, k, step, mid) {
+            Some(hs) => {
+                best = (mid, hs);
+                lo = mid;
+            }
+            None => hi = mid,
+        }
+    }
+    Some(best)
+}
+
 /// Search every level pair meeting `required_gap` for the largest common `C*`.
 ///
 /// `required_gap` is the gap the *shipped* palette must show, so [`GAP_MARGIN`] is added
@@ -350,11 +389,146 @@ pub fn report() -> String {
     );
     let c4 = search(&g, 2, MIN_GAP);
     let c8 = search(&g, 4, MIN_GAP);
+    // k = 8 is the proposed `C4`. Reported alongside the shipped configurations so the
+    // cost of the extra hue bit is a measurement rather than an estimate: the binding
+    // constraint is a *single common* C* reachable at all 2k corners, and adding hues
+    // forces directions where the sRGB gamut is tight.
+    let c16 = search(&g, 8, MIN_GAP);
     if let Some(sol) = &c4 {
         report_solution(&mut s, "k = 2  (C1 / C2)", sol);
     }
     if let Some(sol) = &c8 {
         report_solution(&mut s, "k = 4  (C3)", sol);
+    }
+    match &c16 {
+        Some(sol) => report_solution(&mut s, "k = 8  (C4, proposed)", sol),
+        None => {
+            let _ = writeln!(
+                s,
+                "k = 8  (C4, proposed): **no solution** at the §4.2 floors                  (gap >= {MIN_GAP:.0}, separation >= {:.1}deg, C* >= 35).\n",
+                300.0 / 8.0
+            );
+        }
+    }
+
+    // ---- evenly-spaced hues: the ceiling for a k-hue profile -------------------
+    //
+    // The searches above place hues where the gamut is roomiest, which is why `C3`'s are
+    // uneven. This asks the blunter question the `C4` proposal turns on: with k hues
+    // spaced evenly around the circle, what single C* does sRGB reach at **all** 2k
+    // corners? That is the ceiling any k-hue palette must live under, and it is what
+    // collapses as k grows — the constraint is not the angular separation but the fact
+    // that one common C* must clear the gamut's tightest direction.
+    let _ = writeln!(
+        s,
+        "\nEvenly-spaced hues — best common C* over all 2k corners, searched over both\n\
+         L* levels and the starting hue offset. §4.2 requires C* >= 35:\n\n\
+           | k | colours | bits/module | best C* | L* | offset | meets C* >= 35 |\n\
+           |---:|---:|---:|---:|:---|---:|:---|"
+    );
+    for k in [2usize, 4, 8, 16] {
+        let step = g.nh / k;
+        let mut best: Option<(f32, f32, f32, f32)> = None;
+        for off in 0..step {
+            for li0 in 0..g.nl {
+                let l0 = g.l_of(li0);
+                for li1 in (li0 + 1)..g.nl {
+                    let l1 = g.l_of(li1);
+                    if l1 - l0 < MIN_GAP {
+                        continue;
+                    }
+                    let mut c = f32::INFINITY;
+                    for j in 0..k {
+                        let hj = (off + j * step) % g.nh;
+                        c = c.min(g.at(li0, hj)).min(g.at(li1, hj));
+                    }
+                    if best.is_none_or(|b| c > b.0) {
+                        best = Some((c, l0, l1, off as f32 * H_STEP));
+                    }
+                }
+            }
+        }
+        if let Some((c, l0, l1, off)) = best {
+            let _ = writeln!(
+                s,
+                "  | {k} | {} | {} | {c:.1} | {l0:.1}/{l1:.1} | {off:.1} | {} |",
+                2 * k,
+                1 + (k as f32).log2() as usize,
+                if c >= MIN_CHROMA { "yes" } else { "**no**" }
+            );
+        }
+    }
+
+    // ---- C4b: four luma levels x four hues --------------------------------------
+    //
+    // The alternative to eight hues: spend the extra bit on luma. The luma axis becomes
+    // hierarchical — an MSB split with §4.2's >= 40 gap, so a monochrome reader still
+    // recovers the top bit, and an LSB step `g` inside each half:
+    //
+    //     L0 --g-- L1 ======= MSB gap >= 40 ======= L2 --g-- L3
+    //
+    // Chroma does *not* come free. Hue states are shared across all four levels, and the
+    // outer two reach toward black and white where sRGB has almost no chroma to give, so
+    // the common C* is set by the extremes. This is the trade that decides whether C4b is
+    // worth building, so it is swept rather than asserted.
+    let _ = writeln!(
+        s,
+        "\nC4b — four luma levels x four hues (MSB gap >= 40, symmetric LSB step g).\n\
+         L* table spans {L_MIN}..{L_MAX}, so 2g + 40 <= {:.0} caps g at {:.0}.\n\n\
+           | LSB g | MSB gap | best C* | L* levels | hues | chroma d | luma LSB vs C3 | chroma vs C3 |\n\
+           |---:|---:|---:|:---|:---|---:|---:|---:|",
+        L_MAX - L_MIN,
+        ((L_MAX - L_MIN) - MIN_GAP) / 2.0
+    );
+    let step4 = ((300.0 / 4.0 + HUE_MARGIN) / H_STEP).ceil() as usize;
+    // Shipped C3 references: inter-level gap 40.77, chroma distance at C* 42.7 / 75deg.
+    let c3_luma = 40.77f32;
+    let c3_d = 2.0 * 42.7f32 * (75.0f32.to_radians() / 2.0).sin();
+    for g_lsb in [8.0f32, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0] {
+        let gi = (g_lsb / L_STEP).round() as usize;
+        let mut best: Option<(f32, f32, [f32; 4], Vec<usize>)> = None;
+        let min_msb = (MIN_GAP / L_STEP).round() as usize;
+        for msb in min_msb..g.nl {
+            for l0 in 0..g.nl {
+                let lv = [l0, l0 + gi, l0 + gi + msb, l0 + 2 * gi + msb];
+                if lv[3] >= g.nl {
+                    break;
+                }
+                if let Some((c, hs)) = best_for_level_set(&g, &lv, 4, step4)
+                    && best.as_ref().is_none_or(|b| c > b.0)
+                {
+                    best = Some((
+                        c,
+                        msb as f32 * L_STEP,
+                        [g.l_of(lv[0]), g.l_of(lv[1]), g.l_of(lv[2]), g.l_of(lv[3])],
+                        hs,
+                    ));
+                }
+            }
+        }
+        match best {
+            Some((c, msb, lv, hs)) => {
+                let hues: Vec<String> = hs
+                    .iter()
+                    .map(|&h| format!("{:.0}", h as f32 * H_STEP))
+                    .collect();
+                let d = 2.0 * c * (75.0f32.to_radians() / 2.0).sin();
+                let _ = writeln!(
+                    s,
+                    "  | {g_lsb:.0} | {msb:.1} | {c:.1} | {:.0}/{:.0}/{:.0}/{:.0} | {} | {d:.1} | {:+.1} dB | {:+.1} dB |",
+                    lv[0],
+                    lv[1],
+                    lv[2],
+                    lv[3],
+                    hues.join("/"),
+                    20.0 * (g_lsb / c3_luma).log10(),
+                    20.0 * (d / c3_d).log10(),
+                );
+            }
+            None => {
+                let _ = writeln!(s, "  | {g_lsb:.0} | — | — | — | — | — | — | — |");
+            }
+        }
     }
 
     // ---- what luma margin costs in chroma -------------------------------------
@@ -364,7 +538,7 @@ pub fn report() -> String {
          above it is paid for in chroma, and this is the exchange rate. The gap column is\n\
          what the shipped 8-bit palette realises, not the nominal level difference:\n"
     );
-    for k in [2usize, 4] {
+    for k in [2usize, 4, 8] {
         let _ = writeln!(
             s,
             "  k = {k}\n  | gap | C* | L* | hues |\n  |---:|---:|---:|:---|"
