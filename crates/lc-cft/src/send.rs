@@ -68,6 +68,26 @@ pub fn split(
     // cost most of the ratio at these sizes.
     let stream = compression.compress(file)?;
 
+    // One message when the whole stream fits beside the metadata: same filename, same
+    // hash, same verification — one symbol instead of two.
+    if stream.len() <= chunk_size as usize {
+        return Ok(Transfer {
+            manifest: Manifest {
+                transfer_id,
+                filename,
+                original_size: file.len() as u64,
+                compressed_size: stream.len() as u64,
+                hash_alg,
+                hash,
+                chunk_size,
+                compression,
+                total_chunks: 1,
+                inline: Some(stream),
+            },
+            chunks: Vec::new(),
+        });
+    }
+
     let chunks: Vec<Chunk> = stream
         .chunks(chunk_size as usize)
         .enumerate()
@@ -107,6 +127,7 @@ pub fn split(
         chunk_size,
         compression,
         total_chunks: total,
+        inline: None,
     };
 
     Ok(Transfer { manifest, chunks })

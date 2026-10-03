@@ -15,13 +15,14 @@ std = ["lc-core/std"]
 # scoped: `lc-wasm` must not enable it, because zstd-sys cannot build for
 # wasm32-unknown-unknown. See the note in `codec.rs`.
 zstd = ["dep:zstd", "std"]
-deflate = ["lc-core/deflate"]
+deflate = ["dep:miniz_oxide"]
 brotli = ["lc-core/brotli"]
 
 [dependencies]
 lc-core = { workspace = true }
 sha2 = { workspace = true }
 zstd = { version = "0.13", optional = true }
+miniz_oxide = { workspace = true, optional = true }
 
 [dev-dependencies]
 lc-core = { workspace = true, features = ["std", "deflate"] }

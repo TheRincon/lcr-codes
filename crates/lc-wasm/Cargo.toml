@@ -16,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 # by accident. The `scanner` world in wit/lc.wit exports only `decoder` to match.
 default = ["decode", "encode"]
 decode = []
-encode = ["dep:lc-encode", "dep:lc-render"]
+encode = ["dep:lc-encode", "dep:lc-render", "dep:lc-cft"]
 # QR generation, for the side-by-side comparison in `web/display.html` only.
 #
 # **Off by default, and neither shipped artifact has it.** `just component` builds the
@@ -35,6 +35,9 @@ compare = ["encode", "lc-render/qr"]
 lc-core = { workspace = true, features = ["std", "deflate"] }
 lc-decode = { workspace = true, features = ["std", "deflate"] }
 lc-encode = { workspace = true, optional = true }
+# CFT with the pure-Rust codec only: `zstd-sys` compiles C and cannot target
+# wasm32-unknown-unknown. See `cft_impl::CODEC`.
+lc-cft = { workspace = true, optional = true, default-features = false, features = ["std", "deflate"] }
 lc-render = { workspace = true, optional = true }
 
 # Component Model bindings. Generates the guest side of wit/lc.wit; the `wasm32-wasip2`

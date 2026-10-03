@@ -69,10 +69,23 @@ impl Compression {
         match self {
             Compression::None => Ok(data.to_vec()),
             #[cfg(feature = "zstd")]
+            // Level 19, and **not** 20–22. CFT compresses once, offline, so a slow level
+            // costs nothing at transfer time and the temptation is to turn it up. Measured
+            // on 2026-09-24, 19 → 22 is worth nothing at all:
+            //
+            //   tikz.pdf      17,992 → 17,992   ( 0.00%)
+            //   kino_ticket   98,547 → 98,542   (-0.01%)
+            //   5.2 MB manual  5,092,997 → 5,092,993  (+0.00%)
+            //   685 KB source    168,545 →   168,543  (-0.00%)
+            //
+            // Four bytes on five megabytes. `--ultra` also raises the decoder's window to
+            // 128 MB, which is a real cost on a phone for no measurable gain.
             Compression::Zstd => zstd::encode_all(data, 19).map_err(|_| CftError::Codec),
             #[cfg(feature = "deflate")]
-            Compression::Deflate => lc_core::frame::compress(lc_core::Compression::Deflate, data)
-                .map_err(|_| CftError::Codec),
+            // miniz_oxide directly, not `lc_core::frame::compress`. The frame helpers are
+            // sized for what one symbol carries; CFT compresses a whole file. See the
+            // matching note in `decompress`.
+            Compression::Deflate => Ok(miniz_oxide::deflate::compress_to_vec(data, 10)),
             #[cfg(feature = "brotli")]
             Compression::Brotli => lc_core::frame::compress(lc_core::Compression::Brotli, data)
                 .map_err(|_| CftError::Codec),
@@ -103,8 +116,19 @@ impl Compression {
                 out
             }
             #[cfg(feature = "deflate")]
-            Compression::Deflate => lc_core::frame::decompress(lc_core::Compression::Deflate, data)
-                .map_err(|_| CftError::Codec)?,
+            // **Not** `lc_core::frame::decompress`: that caps output at `MAX_PAYLOAD`
+            // (65,532 bytes), which is the most a single LC Code frame can hold and has
+            // nothing to do with the size of a transferred file. Borrowing it silently
+            // capped every CFT transfer at 64 KB.
+            //
+            // The limit here is the manifest's declared original size — already bounded
+            // against `Limits` — plus one byte, so an overlong stream is reported as
+            // `SizeMismatch` by the check below rather than as an opaque codec failure.
+            Compression::Deflate => {
+                let cap = usize::try_from(max_output.saturating_add(1)).unwrap_or(usize::MAX);
+                miniz_oxide::inflate::decompress_to_vec_with_limit(data, cap)
+                    .map_err(|_| CftError::Codec)?
+            }
             #[cfg(feature = "brotli")]
             Compression::Brotli => lc_core::frame::decompress(lc_core::Compression::Brotli, data)
                 .map_err(|_| CftError::Codec)?,

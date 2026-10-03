@@ -181,7 +181,10 @@ pub fn sequence_light(side: u16, position: usize) -> bool {
 /// Zero-based version for a side length, per §6.1's `side = 21 + 4·(v−1)`.
 #[inline]
 fn version_index(side: u16) -> usize {
-    ((side.saturating_sub(21) / 4) as usize).min(31)
+    // Clamped to the table rather than to a literal: the ceiling moved from 32 to 64 and
+    // a hard-coded 31 silently returned v32's sequence for every larger version — a
+    // shorter sequence than that ring has positions, so it indexed past the end.
+    ((side.saturating_sub(21) / 4) as usize).min(crate::border_seq::SEQUENCES.len() - 1)
 }
 
 /// The colour of a border cell, or `None` if the coordinate is not on the border.

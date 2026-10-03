@@ -554,7 +554,8 @@ mod tests {
     use crate::grid::ModuleRole::*;
 
     fn all_layouts() -> impl Iterator<Item = Layout> {
-        Version::all().flat_map(|v| Profile::ALL.into_iter().map(move |p| Layout::new(v, p)))
+        Version::all_classic()
+            .flat_map(|v| Profile::ALL.into_iter().map(move |p| Layout::new(v, p)))
     }
 
     #[test]
@@ -598,7 +599,7 @@ mod tests {
     /// decoder that worked on one profile and not the others.
     #[test]
     fn format_cells_do_not_depend_on_the_profile() {
-        for v in Version::all() {
+        for v in Version::all_classic() {
             let reference = Layout::new(v, Profile::M).format_cells.clone();
             for p in Profile::ALL {
                 assert_eq!(
@@ -735,7 +736,9 @@ mod tests {
 
     #[test]
     fn alignment_spacing_stays_within_28_modules() {
-        for v in Version::all() {
+        // Classic only: alignment patterns belong to the finder-bearing layout, which
+        // §7's format word caps at `MAX_CLASSIC`. The ring layout has none.
+        for v in Version::all_classic() {
             let c = alignment_centers(v);
             if c.is_empty() {
                 continue;
@@ -778,7 +781,7 @@ mod tests {
 
     #[test]
     fn c1_loses_no_chroma_capacity() {
-        for v in Version::all() {
+        for v in Version::all_classic() {
             let l = Layout::new(v, Profile::C1);
             assert_eq!(l.chroma_cells.len(), l.payload.len(), "v{}", v.get());
         }

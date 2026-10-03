@@ -120,8 +120,8 @@ pub struct RingFix {
 ///
 /// `gray` is the frame's greyscale plane, `width × height`. The ring detector reads greyscale
 /// throughout, never the adaptive binary — see [`ring_lumas`] and [`MIN_INK_CONTRAST`].
-pub fn detect_ring(gray: &[u8], width: u32, height: u32) -> Option<RingFix> {
-    trace(gray, width, height).fix
+pub fn detect_ring(gray: &[u8], width: u32, height: u32, max_version: Version) -> Option<RingFix> {
+    trace(gray, width, height, max_version).fix
 }
 
 /// Everything [`detect_ring`] looked at, for diagnosing why it did or did not find a ring.
@@ -151,7 +151,7 @@ pub struct RingTrace {
 /// region, all ink together is tried last: a symbol at a large pitch can fall apart into a
 /// main region and a detached corner, and only the union has the right hull.
 #[doc(hidden)]
-pub fn trace(gray: &[u8], width: u32, height: u32) -> RingTrace {
+pub fn trace(gray: &[u8], width: u32, height: u32, max_version: Version) -> RingTrace {
     let ink = InkMap::new(gray, width, height);
     let (regions, total) = ink.regions();
     let mut labels: Vec<Option<u32>> = regions
@@ -173,7 +173,7 @@ pub fn trace(gray: &[u8], width: u32, height: u32) -> RingTrace {
             None => (0, 0, width, height),
         };
         let points = boundary_points(&ink, label, bbox);
-        let mut t = attempt(gray, width, height, &points);
+        let mut t = attempt(gray, width, height, &points, max_version);
         t.regions = total;
         if t.fix.is_some() {
             return t;
@@ -193,7 +193,13 @@ pub fn trace(gray: &[u8], width: u32, height: u32) -> RingTrace {
 }
 
 /// One hull, correlated against every version.
-fn attempt(gray: &[u8], width: u32, height: u32, points: &[(f32, f32)]) -> RingTrace {
+fn attempt(
+    gray: &[u8],
+    width: u32,
+    height: u32,
+    points: &[(f32, f32)],
+    max_version: Version,
+) -> RingTrace {
     let hull = convex_hull(points);
     let hull_len = hull.len();
     let Some(q) = quad(&hull).map(|q| refine_quad(points, q)) else {
@@ -212,6 +218,9 @@ fn attempt(gray: &[u8], width: u32, height: u32, points: &[(f32, f32)]) -> RingT
 
     let mut scores = Vec::new();
     for version in Version::all() {
+        if version > max_version {
+            break;
+        }
         let side = version.side();
         // Versions only get denser, so once positions are too small to sample, stop.
         if span / (side as f32 + 8.0) < MIN_PITCH_PX {

@@ -330,7 +330,11 @@ pub fn estimate_version(finders: &[Finder; 3]) -> Option<Version> {
     };
     let side = (edge(tl, tr) + edge(tl, bl)) / 2.0 + 7.0;
     let v = ((side - 21.0) / 4.0).round() as i32 + 1;
-    Version::new(v.clamp(1, 32) as u8).ok()
+    // Clamped to the *classic* ceiling, and that is not an approximation: this function
+    // is reached only from three located finders, and a finder-bearing symbol cannot be
+    // above `MAX_CLASSIC` because §7's format word has five version bits. Extended
+    // versions are finder-less and are identified by the ring instead (`ring.rs`).
+    Version::new(v.clamp(1, Version::MAX_CLASSIC.get() as i32) as u8).ok()
 }
 
 /// Search for the alignment marker near a predicted position.
@@ -836,7 +840,8 @@ mod tests {
 
     #[test]
     fn version_estimate_inverts_the_geometry() {
-        for v in Version::all() {
+        // Finders exist only on classic symbols, so this is the range that can reach here.
+        for v in Version::all_classic() {
             let side = v.side() as f32;
             let module = 6.0f32;
             let f = |x: f32, y: f32| Finder {

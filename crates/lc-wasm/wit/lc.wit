@@ -31,7 +31,7 @@ interface types {
     c1,
     /// Print default: 4 colours, 2x2 chroma cells.
     c2,
-    /// 8 colours, 2x2 cells. Optional.
+    /// 8 colours, co-sited chroma. Optional.
     c3,
   }
 
@@ -240,6 +240,19 @@ interface encoder {
   /// Encode opaque bytes.
   encode-bytes: func(data: list<u8>, opts: options, module-px: u32) -> result<rendered, string>;
 
+  /// Largest framed body a symbol with these settings holds, in bytes.
+  ///
+  /// Exposed because a caller splitting a file across symbols (see `cft`) has to size its
+  /// chunks from the carrier, and the alternative — encode, catch the failure, try a
+  /// smaller chunk — turns a lookup into a search.
+  capacity: func(
+    profile: profile,
+    version: u8,
+    ecc-luma: u8,
+    ecc-chroma: u8,
+    reference-border: bool,
+  ) -> result<u32, string>;
+
   /// Encode JSON and render to SVG rather than pixels.
   encode-json-svg: func(json: string, opts: options, module-px: u32) -> result<string, string>;
 }
@@ -286,6 +299,70 @@ interface compare {
   qr-encode: func(data: list<u8>, ecl: qr-ecc) -> result<qr-symbol, string>;
 }
 
+/// Chunked file transfer (docs/CFT.md), so a payload larger than one symbol can cross as
+/// a sequence of them.
+///
+/// **Deflate, not Zstandard.** CFT.md makes zstd the codec and the project grants it a C
+/// exception, but `zstd-sys` compiles C and there is no C toolchain for
+/// `wasm32-unknown-unknown`. The manifest names whichever codec was used, so a browser
+/// sender and a browser receiver agree without either being told.
+///
+/// Exported by the encode-bearing worlds only. A scanner build would want the receiving
+/// half, but §14.2's size budget has no room for it — a shipping scanner should reassemble
+/// host-side.
+interface cft {
+  /// A file, compressed and split. One symbol per message, manifest first.
+  record transfer {
+    messages: list<list<u8>>,
+    total-chunks: u32,
+    original-size: u64,
+    compressed-size: u64,
+  }
+
+  /// How much of a transfer has arrived.
+  variant status {
+    /// No manifest yet, so chunks cannot be counted. Carries how many are held.
+    awaiting-manifest(u32),
+    receiving(progress),
+    complete,
+  }
+
+  record progress {
+    have: u32,
+    total: u32,
+  }
+
+  /// Compress `file` and split it into chunks of at most `chunk-size` payload bytes.
+  ///
+  /// `chunk-size` comes from the carrier's capacity, not from CFT.md §7's fixed 4096 —
+  /// no LC Code symbol below v29 at profile C3 could hold that.
+  split: func(
+    file: list<u8>,
+    filename: string,
+    transfer-id: list<u8>,
+    chunk-size: u32,
+  ) -> result<transfer, string>;
+
+  /// Collects messages in any order and reconstructs the file.
+  resource receiver {
+    constructor();
+    /// Feed one decoded CFT message — manifest or chunk, in any order.
+    accept: func(bytes: list<u8>) -> result<status, string>;
+    status: func() -> status;
+    /// Chunk indices still outstanding (CFT.md §10).
+    missing: func() -> list<u32>;
+    /// The manifest's filename, if it is safe to use as one.
+    filename: func() -> option<string>;
+    /// Bytes the manifest promised, for a progress readout before completion.
+    original-size: func() -> u64;
+    /// Reassemble, decompress and verify against the manifest's hash.
+    ///
+    /// Returns bytes only when the digest matches, so a caller cannot hand a user a file
+    /// that did not survive the trip.
+    finish: func() -> result<list<u8>, string>;
+  }
+}
+
 /// Decode only — the scanner build. §14.1 keeps the encoder out so a scanner cannot
 /// acquire it by accident.
 world scanner {
@@ -297,6 +374,7 @@ world lc-code {
   export decoder;
   export encoder;
   export codec;
+  export cft;
 }
 
 /// The demo build: everything above plus QR generation. Built only by `just web`, never
@@ -306,4 +384,5 @@ world lc-code-compare {
   export encoder;
   export codec;
   export compare;
+  export cft;
 }

@@ -85,12 +85,15 @@ pub fn body_bytes_for(info_bits: usize) -> usize {
 }
 
 /// The smallest version that can carry a `body_len`-byte body.
+///
+/// Classic layout, so bounded by [`Version::MAX_CLASSIC`]: §7's format word has five
+/// version bits and a finder-bearing symbol cannot signal anything larger.
 pub fn smallest_version(
     body_len: usize,
     profile: Profile,
     ecc: EccLevel,
 ) -> Result<Version, LcError> {
-    Version::all()
+    Version::all_classic()
         .find(|&v| capacity(v, profile, ecc).body_bytes >= body_len)
         .ok_or(LcError::TooLarge(body_len))
 }
@@ -108,13 +111,25 @@ pub fn capacity_for_symbol(
 }
 
 /// Smallest version that holds `body_len` bytes, for the layout the symbol will use.
+///
+/// Ringed symbols reach [`Version::MAX`]; classic ones stop at [`Version::MAX_CLASSIC`].
+/// Selecting past that ceiling for a classic symbol would hand the caller a version its
+/// format word cannot express, which `FormatInfo::to_codeword` refuses — so the ceiling
+/// is applied here, where a too-large payload can still be reported as `TooLarge`.
 pub fn smallest_version_for_symbol(
     body_len: usize,
     profile: Profile,
     ecc: EccLevel,
     reference_border: bool,
 ) -> Result<Version, LcError> {
+    let ringed = Layout::is_finderless(profile, reference_border);
+    let ceiling = if ringed {
+        Version::MAX
+    } else {
+        Version::MAX_CLASSIC
+    };
     Version::all()
+        .take_while(|&v| v <= ceiling)
         .find(|&v| capacity_for_symbol(v, profile, ecc, reference_border).body_bytes >= body_len)
         .ok_or(LcError::TooLarge(body_len))
 }

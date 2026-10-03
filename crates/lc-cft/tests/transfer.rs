@@ -108,7 +108,8 @@ fn missing_chunks_are_reported() {
 #[test]
 fn a_duplicate_chunk_is_fine_but_a_conflicting_one_is_not() {
     let data = file();
-    let t = split(&data, None, ID.to_vec(), Compression::Zstd, 4096).unwrap();
+    // Stored, so the stream is genuinely larger than one chunk.
+    let t = split(&data, None, ID.to_vec(), Compression::None, 4096).unwrap();
     let mut r = Reassembler::default();
     r.accept(&t.manifest.to_vec()).unwrap();
     r.accept(&t.chunks[0].to_vec()).unwrap();
@@ -145,8 +146,11 @@ fn a_corrupted_payload_fails_the_end_to_end_hash() {
 /// implemented here is that key 0 is text in one and bytes in the other.
 #[test]
 fn a_manifest_and_a_chunk_are_never_confused() {
-    let t = split(b"hello", None, ID.to_vec(), Compression::None, 16).unwrap();
+    // chunk_size below the stream length, so this really does produce chunks rather
+    // than an inline manifest.
+    let t = split(b"hello", None, ID.to_vec(), Compression::None, 2).unwrap();
     let limits = Limits::default();
+    assert!(!t.chunks.is_empty());
 
     assert!(matches!(
         parse(&t.manifest.to_vec(), &limits).unwrap(),
@@ -367,4 +371,85 @@ fn garbage_is_refused() {
     ] {
         assert!(parse(bad, &limits).is_err(), "accepted {bad:?}");
     }
+}
+
+/// A file larger than one LC Code *frame* must still transfer.
+///
+/// Regression: `codec.rs` reused `lc_core::frame::decompress`, whose output cap is
+/// `MAX_PAYLOAD` (65,532) — the most a single symbol can hold. Borrowing it silently
+/// limited every CFT transfer to 64 KB, and the earlier round-trip tests all used files
+/// under that, so nothing caught it until a real PDF came through.
+#[test]
+fn a_file_larger_than_one_frame_round_trips() {
+    // Compressible, so the *stream* stays small while the original is well over the cap.
+    let data: Vec<u8> = (0..200_000u32).map(|i| (i / 31) as u8).collect();
+    assert!(
+        data.len() > 65_532,
+        "must exceed MAX_PAYLOAD to be the regression"
+    );
+
+    for c in [Compression::None, Compression::Deflate, Compression::Zstd] {
+        if !c.available() {
+            continue;
+        }
+        let t = split(&data, None, ID.to_vec(), c, 2048).unwrap();
+        let r = deliver(&t, 0..t.message_count());
+        assert_eq!(r.finish().unwrap(), data, "{c:?}");
+    }
+}
+
+/// A stream that fits beside the metadata travels as **one** message, and still carries
+/// the filename and the end-to-end hash.
+///
+/// The alternative — sending raw bytes with no manifest — costs exactly the two things
+/// CFT exists to provide, which is how "received.bin" happens.
+#[test]
+fn a_small_file_is_one_self_contained_message() {
+    let data = b"%PDF-1.4 a small document that compresses well ".repeat(40);
+    let t = split(
+        &data,
+        Some("invoice.pdf".into()),
+        ID.to_vec(),
+        Compression::Zstd,
+        4096,
+    )
+    .unwrap();
+
+    assert_eq!(t.message_count(), 1, "should be a single message");
+    assert!(t.chunks.is_empty());
+    assert_eq!(t.manifest.total_chunks, 1);
+    assert!(t.manifest.inline.is_some());
+
+    let mut r = Reassembler::default();
+    let st = r.accept(&t.messages()[0]).unwrap();
+    assert_eq!(st, Status::Complete, "one message completes the transfer");
+    assert_eq!(r.manifest().unwrap().safe_filename(), Some("invoice.pdf"));
+    assert_eq!(r.finish().unwrap(), data);
+}
+
+/// An inline manifest still verifies: corrupt the stream and the hash must catch it.
+#[test]
+fn an_inline_transfer_is_still_hash_checked() {
+    let data = b"the quick brown fox ".repeat(20);
+    let t = split(&data, None, ID.to_vec(), Compression::None, 4096).unwrap();
+    let mut m = t.manifest.clone();
+    m.inline.as_mut().unwrap()[5] ^= 0xFF;
+
+    let mut r = Reassembler::default();
+    r.accept(&m.to_vec()).unwrap();
+    assert_eq!(r.finish(), Err(CftError::HashMismatch));
+}
+
+/// A manifest claiming inline data that disagrees with its own `compressed_size`, or
+/// that claims more than one chunk, is self-contradictory.
+#[test]
+fn an_inconsistent_inline_manifest_is_refused() {
+    let t = split(b"hello world", None, ID.to_vec(), Compression::None, 4096).unwrap();
+
+    let mut m = t.manifest.clone();
+    m.inline.as_mut().unwrap().push(0);
+    assert!(matches!(
+        Manifest::from_slice(&m.to_vec(), &Limits::default()),
+        Err(CftError::BadField(10))
+    ));
 }

@@ -11,7 +11,7 @@
 
 #![allow(dead_code)]
 
-use lc_core::{Compression, Packet, Profile};
+use lc_core::{Compression, Packet, Profile, Version};
 use lc_decode::image::{ImageView, PixelFormat};
 use lc_decode::{Decoder, ring};
 use lc_encode::EncodeOptions;
@@ -92,7 +92,7 @@ fn true_ring(side: u16, px: u32, off: u32) -> ((f32, f32), (f32, f32)) {
 fn report(name: &str, r: &Raster, truth: Option<((f32, f32), (f32, f32))>, true_v: u8) {
     let view = ImageView::new(&r.data, r.width, r.height, r.width * 3, PixelFormat::Rgb8).unwrap();
     let gray = view.gray_buffer();
-    let t = ring::trace(&gray, r.width, r.height);
+    let t = ring::trace(&gray, r.width, r.height, Version::MAX);
 
     let quad = t.quad.map_or("NO QUAD".to_string(), |q| {
         q.iter()

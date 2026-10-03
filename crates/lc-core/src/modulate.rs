@@ -99,11 +99,20 @@ pub fn modulate(
     }
 
     // Format region: both copies of the same BCH codeword, luma-only.
-    let cw = format.to_codeword();
-    for copy in &layout.format_cells {
-        for (bit, &(x, y)) in copy.iter().enumerate() {
-            let l = (cw >> (FORMAT_BITS - 1 - bit)) & 1 == 1;
-            modules.set(x, y, l as u8 * hues_u8);
+    //
+    // Guarded, because a finder-less symbol (§6.4) has no format region — its format word
+    // rides on the ring's hue choices instead (D21). Computing the classic codeword
+    // anyway was harmless while every version fit in its five version bits; above
+    // `Version::MAX_CLASSIC` it is a panic for a codeword that then goes nowhere.
+    // `format_cells` is `[Vec<_>; 2]`, so `.is_empty()` would ask whether the *array* is
+    // empty — always false. The two copies are what can be empty.
+    if layout.format_cells.iter().any(|c| !c.is_empty()) {
+        let cw = format.to_codeword();
+        for copy in &layout.format_cells {
+            for (bit, &(x, y)) in copy.iter().enumerate() {
+                let l = (cw >> (FORMAT_BITS - 1 - bit)) & 1 == 1;
+                modules.set(x, y, l as u8 * hues_u8);
+            }
         }
     }
 

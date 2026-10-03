@@ -21,6 +21,9 @@ mod key {
     pub const TRANSFER_ID: i64 = 8;
     /// **[CFT.md §3]** Added: authoritative chunk count.
     pub const TOTAL_CHUNKS: i64 = 9;
+    /// **[CFT.md §3]** Added: the whole compressed stream, when it fits beside the
+    /// metadata. Makes a small transfer one message instead of two.
+    pub const INLINE: i64 = 10;
 }
 
 /// Hash algorithm for the end-to-end check (CFT.md §11).
@@ -87,6 +90,18 @@ pub struct Manifest {
     pub compression: Compression,
     /// How many chunks there are. Authoritative; chunks restating it must agree.
     pub total_chunks: u32,
+    /// The entire compressed stream, carried in the manifest itself.
+    ///
+    /// **Not in CFT.md.** The document always sends a manifest *and* at least one chunk,
+    /// so the smallest possible transfer costs two messages — two symbols, two scans —
+    /// even for a file that would fit in one. Worse, the obvious workaround is to send
+    /// the file as raw bytes with no manifest at all, which silently drops the filename
+    /// and the end-to-end hash: the two things §3 and §11 exist to provide.
+    ///
+    /// When present, `total_chunks` is 1, there are no separate chunk messages, and the
+    /// length must equal `compressed_size`. Everything else — hash, filename, verify —
+    /// works exactly as it does for a chunked transfer.
+    pub inline: Option<Vec<u8>>,
 }
 
 impl Manifest {
@@ -128,6 +143,9 @@ impl Manifest {
                 Value::Uint(self.total_chunks as u64),
             ),
         ]);
+        if let Some(inline) = &self.inline {
+            entries.push((Value::from_i64(key::INLINE), Value::Bytes(inline.clone())));
+        }
         Value::Map(entries).to_vec()
     }
 
@@ -186,6 +204,12 @@ impl Manifest {
             return Err(CftError::BadField(key::TOTAL_CHUNKS as u8));
         }
 
+        let inline = match value.get_int_key(key::INLINE) {
+            Some(Value::Bytes(b)) => Some(b.clone()),
+            Some(_) => return Err(CftError::BadField(key::INLINE as u8)),
+            None => None,
+        };
+
         let manifest = Manifest {
             transfer_id,
             filename,
@@ -196,6 +220,7 @@ impl Manifest {
             chunk_size: chunk_size as u32,
             compression,
             total_chunks: total_chunks as u32,
+            inline,
         };
         manifest.check_self_consistent()?;
         Ok(manifest)
@@ -218,6 +243,13 @@ impl Manifest {
     fn check_self_consistent(&self) -> Result<(), CftError> {
         if self.implied_chunks() != self.total_chunks as u64 {
             return Err(CftError::BadField(key::TOTAL_CHUNKS as u8));
+        }
+        if let Some(inline) = &self.inline {
+            // An inline transfer is one message by definition, and the bytes it carries
+            // must be the whole stream it claims.
+            if self.total_chunks != 1 || inline.len() as u64 != self.compressed_size {
+                return Err(CftError::BadField(key::INLINE as u8));
+            }
         }
         Ok(())
     }

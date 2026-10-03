@@ -89,7 +89,18 @@ impl Interleaver {
         if self.n == 0 {
             0
         } else {
-            (self.a * j) % self.n
+            // 64-bit intermediate, and it is load-bearing rather than defensive.
+            //
+            // `a ≈ 0.618·n`, so `a·j` reaches about `0.618·n²`, which passes 2³² once a
+            // layer exceeds roughly 83,000 bits. `usize` is **32 bits on wasm32** and 64
+            // on the hosts the tests run on, so in a release wasm build this multiply
+            // wrapped silently and produced a different — still bijective — permutation.
+            // The symbol then decoded to a plausible wrong payload and only the §9.1 CRC
+            // noticed, which looked exactly like a marginal capture rather than a bug.
+            //
+            // Unreachable below v50 at profile C3, which is why it stayed hidden until
+            // the version ceiling moved past 32. See `the_multiply_needs_64_bits`.
+            ((self.a as u64 * j as u64) % self.n as u64) as usize
         }
     }
 
@@ -187,5 +198,51 @@ mod tests {
                 assert!(il.position(j) < n);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+
+    /// The 64-bit intermediate in [`Interleaver::position`] is required, not defensive.
+    ///
+    /// These tests run on a 64-bit host, where the bug is invisible — so instead of trying
+    /// to observe the overflow they assert the *condition* for it. If `a·j` exceeds
+    /// `u32::MAX` then a 32-bit `usize` (wasm32) would wrap, and the permutation a decoder
+    /// computes would differ from the one the encoder used.
+    #[test]
+    fn the_multiply_needs_64_bits() {
+        // A v56 C3 chroma layer is around here.
+        let n = 120_000usize;
+        let a = multiplier(n);
+        let worst = a as u64 * (n as u64 - 1);
+        assert!(
+            worst > u32::MAX as u64,
+            "n={n} a={a} peaks at {worst}, which still fits 32 bits — this test no longer \
+             guards anything and the sizes it assumes have changed"
+        );
+        // And the real thing stays a bijection at that size.
+        let it = Interleaver::new(n);
+        let mut seen = alloc::vec![false; n];
+        for j in 0..n {
+            let p = it.position(j);
+            assert!(!seen[p], "position collided at j={j}");
+            seen[p] = true;
+        }
+    }
+
+    /// Spot-check that a 32-bit multiply really would disagree, so the comment above is
+    /// not just a story.
+    #[test]
+    fn a_32_bit_multiply_would_disagree() {
+        let n = 120_000usize;
+        let it = Interleaver::new(n);
+        let a = multiplier(n);
+        let wrapped = |j: usize| ((a as u32).wrapping_mul(j as u32) % n as u32) as usize;
+        assert!(
+            (0..n).any(|j| wrapped(j) != it.position(j)),
+            "a 32-bit multiply agreed everywhere, so this size cannot expose the hazard"
+        );
     }
 }

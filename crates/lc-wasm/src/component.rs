@@ -208,6 +208,94 @@ mod codec_impl {
     }
 }
 
+// ---------------------------------------------------------------- cft
+
+/// Chunked file transfer (docs/CFT.md). Gated like `codec`: on the *world*, not on
+/// encoding — see the interface note in `wit/lc.wit`.
+#[cfg(feature = "encode")]
+mod cft_impl {
+    use super::Component;
+    use super::exports;
+    use core::cell::RefCell;
+    use exports::lc::code::cft::{
+        Guest as CftGuest, GuestReceiver, Progress, Status as WitStatus, Transfer as WitTransfer,
+    };
+    use lc_cft::{Compression, Reassembler, Status};
+
+    /// **Deflate, not Zstandard.** `zstd-sys` compiles C and there is no C toolchain for
+    /// `wasm32-unknown-unknown`, so the browser build uses the pure-Rust codec. The
+    /// manifest records the choice, so a receiver is never guessing.
+    const CODEC: Compression = Compression::Deflate;
+
+    fn status_out(s: Status) -> WitStatus {
+        match s {
+            Status::AwaitingManifest { held } => WitStatus::AwaitingManifest(held as u32),
+            Status::Receiving { have, total } => WitStatus::Receiving(Progress { have, total }),
+            Status::Complete => WitStatus::Complete,
+        }
+    }
+
+    impl CftGuest for Component {
+        type Receiver = Rx;
+
+        fn split(
+            file: Vec<u8>,
+            filename: String,
+            transfer_id: Vec<u8>,
+            chunk_size: u32,
+        ) -> Result<WitTransfer, String> {
+            let name = (!filename.is_empty()).then_some(filename);
+            let t = lc_cft::split(&file, name, transfer_id, CODEC, chunk_size)
+                .map_err(|e| e.to_string())?;
+            Ok(WitTransfer {
+                messages: t.messages(),
+                total_chunks: t.manifest.total_chunks,
+                original_size: t.manifest.original_size,
+                compressed_size: t.manifest.compressed_size,
+            })
+        }
+    }
+
+    pub struct Rx(RefCell<Reassembler>);
+
+    impl GuestReceiver for Rx {
+        fn new() -> Self {
+            Rx(RefCell::new(Reassembler::default()))
+        }
+
+        fn accept(&self, bytes: Vec<u8>) -> Result<WitStatus, String> {
+            self.0
+                .borrow_mut()
+                .accept(&bytes)
+                .map(status_out)
+                .map_err(|e| e.to_string())
+        }
+
+        fn status(&self) -> WitStatus {
+            status_out(self.0.borrow().status())
+        }
+
+        fn missing(&self) -> Vec<u32> {
+            self.0.borrow().missing()
+        }
+
+        fn filename(&self) -> Option<String> {
+            self.0
+                .borrow()
+                .manifest()
+                .and_then(|m| m.safe_filename().map(String::from))
+        }
+
+        fn original_size(&self) -> u64 {
+            self.0.borrow().manifest().map_or(0, |m| m.original_size)
+        }
+
+        fn finish(&self) -> Result<Vec<u8>, String> {
+            self.0.borrow().finish().map_err(|e| e.to_string())
+        }
+    }
+}
+
 // ---------------------------------------------------------------- encoder
 
 #[cfg(feature = "encode")]
@@ -258,6 +346,20 @@ mod encoder_impl {
     }
 
     impl EncoderGuest for Component {
+        fn capacity(
+            profile: WitProfile,
+            version: u8,
+            ecc_luma: u8,
+            ecc_chroma: u8,
+            reference_border: bool,
+        ) -> Result<u32, String> {
+            let version = lc_core::Version::new(version).map_err(|e| e.to_string())?;
+            let ecc = lc_core::EccLevel::new(ecc_luma, ecc_chroma).map_err(|e| e.to_string())?;
+            let cap =
+                lc_encode::capacity_for_symbol(version, profile_in(profile), ecc, reference_border);
+            Ok(cap.body_bytes as u32)
+        }
+
         fn encode_json(json: String, opts: Options, module_px: u32) -> Result<WitRendered, String> {
             crate::encode_json(&json, &options_in(opts), module_px)
                 .map(rendered_out)

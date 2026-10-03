@@ -82,6 +82,12 @@ impl Reassembler {
             return Err(CftError::Unsupported(manifest.compression.to_u8()));
         }
         self.slots = alloc::vec![None; manifest.total_chunks as usize];
+        // An inline manifest carries the stream itself, so the transfer is complete the
+        // moment it arrives.
+        if let Some(inline) = manifest.inline.clone() {
+            self.slots[0] = Some(inline);
+            self.have = 1;
+        }
         self.manifest = Some(manifest);
 
         // Re-offer anything that arrived early, now that it can be validated.

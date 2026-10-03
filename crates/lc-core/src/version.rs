@@ -13,11 +13,21 @@ impl Version {
     /// Smallest symbol: 21×21.
     pub const MIN: Version = Version(1);
     /// Largest symbol: 145×145.
-    pub const MAX: Version = Version(32);
+    pub const MAX: Version = Version(64);
+
+    /// The largest version a **classic**, finder-bearing symbol can signal.
+    ///
+    /// §7's format word spends five bits on `version − 1`, so 32 is a hard ceiling there.
+    /// The §6.4 ring carries no version field at all — D21 moved it into the de Bruijn
+    /// position sequence, which a decoder reads from the geometry — so ringed symbols are
+    /// bounded only by [`Version::MAX`]. Versions above this are therefore **ring-only**,
+    /// and [`crate::FormatInfo::to_codeword`] refuses them rather than silently truncating
+    /// into the profile bits.
+    pub const MAX_CLASSIC: Version = Version(32);
 
     /// Construct from the wire value, validating the `1..=32` range.
     pub const fn new(v: u8) -> Result<Version, LcError> {
-        if v >= 1 && v <= 32 {
+        if v >= 1 && v <= Version::MAX.0 {
             Ok(Version(v))
         } else {
             Err(LcError::BadVersion(v as u32))
@@ -50,12 +60,22 @@ impl Version {
 
     /// Iterator over every version, smallest first.
     pub fn all() -> impl Iterator<Item = Version> {
-        (1u8..=32).map(Version::new_unchecked)
+        (1u8..=Version::MAX.0).map(Version::new_unchecked)
+    }
+
+    /// Every version a **classic**, finder-bearing symbol can take.
+    ///
+    /// Distinct from [`Version::all`] because §7's five version bits cap the classic
+    /// format word at [`Version::MAX_CLASSIC`], and the classic layout's alignment grid
+    /// is only defined that far. Anything iterating over classic geometry or the classic
+    /// format word wants this; the ring (§6.4) wants [`Version::all`].
+    pub fn all_classic() -> impl Iterator<Item = Version> {
+        (1u8..=Version::MAX_CLASSIC.0).map(Version::new_unchecked)
     }
 
     /// The smallest version whose `side` is at least `side`, if one exists.
     pub fn from_side(side: u16) -> Option<Version> {
-        if !(21..=145).contains(&side) || !(side - 21).is_multiple_of(4) {
+        if !(21..=Version::MAX.side()).contains(&side) || !(side - 21).is_multiple_of(4) {
             return None;
         }
         Some(Version(((side - 21) / 4 + 1) as u8))
@@ -220,8 +240,9 @@ mod tests {
         assert_eq!(Version::new(1).unwrap().side(), 21);
         assert_eq!(Version::new(2).unwrap().side(), 25);
         assert_eq!(Version::new(32).unwrap().side(), 145);
+        assert_eq!(Version::new(64).unwrap().side(), 273);
         assert!(Version::new(0).is_err());
-        assert!(Version::new(33).is_err());
+        assert!(Version::new(65).is_err());
     }
 
     #[test]

@@ -62,7 +62,20 @@ impl FormatInfo {
     }
 
     /// Encode to the 30-bit BCH codeword actually placed in the symbol.
+    /// The classic §7 codeword.
+    ///
+    /// # Panics
+    /// Above [`Version::MAX_CLASSIC`]. The version field is five bits, so a larger
+    /// version would silently overflow into the profile bits and produce a codeword
+    /// describing a *different, valid* symbol — the worst possible failure for the one
+    /// field every other decode depends on. Extended versions are ring-only; use
+    /// [`FormatInfo::to_ring_codeword`].
     pub fn to_codeword(self) -> u32 {
+        assert!(
+            self.version <= crate::Version::MAX_CLASSIC,
+            "version {} needs the §6.4 ring: the classic format word has 5 version bits",
+            self.version.get()
+        );
         bch::encode(self.to_bits())
     }
 
@@ -142,8 +155,10 @@ impl FormatInfo {
 mod tests {
     use super::*;
 
+    /// Classic-only: the §7 word has five version bits, so these tests cover the range
+    /// that word can express. The ring word (D21) carries no version at all.
     fn samples() -> impl Iterator<Item = FormatInfo> {
-        Version::all().flat_map(|version| {
+        Version::all_classic().flat_map(|version| {
             Profile::ALL.into_iter().flat_map(move |profile| {
                 (0..4u8).flat_map(move |luma| {
                     (0..4u8).flat_map(move |chroma| {
