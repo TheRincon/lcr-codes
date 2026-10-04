@@ -24,10 +24,24 @@
 //! estimator, so one blown-out reference cannot inflate the scale and flatten every LLR
 //! in the symbol. A capture with clean colour produces confident LLRs and converges in a
 //! few iterations; a marginal one produces cautious LLRs and lets the LDPC decoder work.
+//!
+//! ## Luma is read twice: globally, and against its own neighbourhood (D22)
+//!
+//! The global read above is only as good as the §12.3 surface, and a specular highlight
+//! is sharper than any low-order surface can follow. Inside its halo the corrected sample
+//! matches no palette colour, [`ChannelStats::reliability`] rightly erases it, and under a
+//! large highlight a third of the luma layer goes that way — more than the code can fill.
+//!
+//! But glare is *additive* in linear light, so it shifts both levels by the same amount
+//! and leaves the gap between them alone. [`add_local_luma`] fits that directly: around every
+//! module, an additive plane plus a level step over its 7×7 neighbourhood of payload
+//! modules, and an LLR from where the module sits against the local step. The two reads
+//! are added. Measured in D22: luma convergence under a 0.6-strength highlight across half
+//! the frame goes from 0/16 to 16/16, on `C1` and `C3` alike.
 
 use crate::illum::IlluminationModel;
 use crate::image::ImageView;
-use crate::math::{mad_sigma, median};
+use crate::math::{mad_sigma, median, solve};
 use crate::sample::{sample_chroma_cell, sample_module};
 use crate::transform::Transform;
 use alloc::vec;
@@ -65,6 +79,28 @@ const MIN_SIGMA_AB: f32 = 0.75;
 /// by 20 and inflates the measured noise by an order of magnitude. On a pristine render
 /// that alone took the reported SNR from 27 dB to 7.
 const MAX_LEVEL_DEVIATION: f32 = 12.0;
+
+/// Half-width, in modules, of the neighbourhood [`local_luma`] fits over.
+///
+/// 7×7 is ~49 samples for a four-parameter fit: enough that both levels are well
+/// represented after masking, small enough that a highlight's gradient across it is close
+/// to planar.
+const LOCAL_RADIUS: i32 = 3;
+/// Fewest payload neighbours a local fit is attempted from; below this the module keeps
+/// only its global LLR.
+const LOCAL_MIN: usize = 12;
+/// Largest magnitude a local LLR may contribute. Below [`LLR_CLAMP`], so the global read
+/// stays the stronger voice wherever it is confident.
+const LOCAL_CLAMP: f32 = 8.0;
+/// Global LLR magnitude at and above which the local read is not computed.
+///
+/// The local fit is ~2 µs a module, a third of a v32 decode if run everywhere, and it can
+/// only matter where the global read is unsure: a module the global read already holds at
+/// 12 or more is one [`LOCAL_CLAMP`] could not overturn. On a capture that decodes anyway
+/// almost every module is there, so the cost follows the damage.
+const LOCAL_SKIP: f32 = 12.0;
+/// Most refit passes [`local_fit`] makes before settling for the classification it has.
+const LOCAL_PASSES: usize = 8;
 
 /// Measured decision statistics for one capture.
 #[derive(Copy, Clone, Debug)]
@@ -343,9 +379,14 @@ pub fn demodulate(
     with_chroma: bool,
 ) -> Demodulation {
     let mut luma = Vec::with_capacity(layout.payload.len());
+    // Every luma module's position and corrected linear luminance, in LLR order, for the
+    // local read (D22).
+    let mut at = Vec::with_capacity(layout.payload.len());
     for &(x, y) in &layout.payload {
         let raw = sample_module(img, t, x as i32, y as i32);
-        let lab = color::linear_to_lab(illum.correct(x as f32 + 0.5, y as f32 + 0.5, raw));
+        let corrected = illum.correct(x as f32 + 0.5, y as f32 + 0.5, raw);
+        at.push((x as i32, y as i32, corrected));
+        let lab = color::linear_to_lab(corrected);
         let weight = if with_chroma {
             stats.reliability(lab, palette)
         } else {
@@ -384,7 +425,9 @@ pub fn demodulate(
         let mut bits = Vec::with_capacity(bpc);
         for (x, y) in border::payload_cells(layout.side) {
             let raw = sample_module(img, t, x, y);
-            let lab = color::linear_to_lab(illum.correct(x as f32 + 0.5, y as f32 + 0.5, raw));
+            let corrected = illum.correct(x as f32 + 0.5, y as f32 + 0.5, raw);
+            at.push((x, y, corrected));
+            let lab = color::linear_to_lab(corrected);
             let weight = if with_chroma {
                 stats.reliability(lab, palette)
             } else {
@@ -402,11 +445,191 @@ pub fn demodulate(
         }
     }
 
+    // D22: add the local read. Two observations of one bit, so the LLRs add.
+    add_local_luma(&mut luma, &at, layout.side, palette, stats, with_chroma);
+
     Demodulation {
         luma,
         chroma,
         stats: *stats,
     }
+}
+
+/// Luma LLRs read against each module's own neighbourhood rather than the global fit (D22).
+///
+/// `luma` holds the global LLRs and `at` the matching `(x, y, colour)` per luma module —
+/// module coordinates, which may be negative for ring cells, and the §12.3-corrected linear
+/// colour. Each local LLR is added to its global one in place, positive meaning dark as
+/// [`ChannelStats::luma_llr`], wherever the global one is below [`LOCAL_SKIP`].
+///
+/// Around each module the model is
+///
+/// ```text
+/// Y  =  p0 + p1·dx + p2·dy  +  p3·bit        bit 1 = light level
+/// ```
+///
+/// fitted by least squares over its payload neighbours' luminance, re-classifying the
+/// neighbours against the fit a few times. The plane is whatever additive light the global
+/// surface missed — a highlight's halo, mostly — and `p3` is the level gap, which additive
+/// light does not change. A flat two-level split was tried first and is not enough: across
+/// a steep halo a dark module on the bright side outshines a light one on the dim side.
+///
+/// **Luminance alone cannot tell glare from an occluder**, so the fit is not trusted on its
+/// own. A finger is dark, and would read as a confident run of dark modules — exactly the
+/// confidently-wrong input [`ChannelStats::reliability`] exists to keep from the decoder.
+/// So the fit's additive offset is subtracted from the module's full colour, and the
+/// de-glared colour must look like a palette entry to the same [`ChannelStats::reliability`]
+/// test the global read uses. A glared module de-glares back to itself; a finger, a crease
+/// or a grey patch does not. `chroma` false — a monochrome capture or profile `M` — skips
+/// the test, as the global read does, because there is no colour to check against.
+///
+/// **Clipped samples stay in the fit.** Clipping looked like an erasure and measured as
+/// evidence: a light module clipped to white is still brighter than a dark one that did
+/// not clip, so excluding clipped samples lost decodes it should have kept (D22). Where
+/// *both* levels clip, the fitted step collapses and the `(p3 / gap)²` factor takes the LLR
+/// to zero on its own.
+pub fn add_local_luma(
+    luma: &mut [f32],
+    at: &[(i32, i32, Linear)],
+    side: u16,
+    palette: &Palette,
+    stats: &ChannelStats,
+    chroma: bool,
+) {
+    let level_y = |l: f32| color::lab_to_linear(Lab::new(l, 0.0, 0.0)).luminance();
+    let dark_y = level_y(palette.level_l[0]);
+    let gap = level_y(palette.level_l[1]) - dark_y;
+
+    // Dense lookup over the grid plus the ring's band, NaN where nothing is.
+    let m = LOCAL_RADIUS + border::GAP + 2;
+    let dim = side as i32 + 2 * m;
+    let mut grid = vec![f32::NAN; (dim * dim) as usize];
+    let index = |x: i32, y: i32| ((y + m) * dim + (x + m)) as usize;
+    for &(x, y, c) in at {
+        if (-m..side as i32 + m).contains(&x) && (-m..side as i32 + m).contains(&y) {
+            grid[index(x, y)] = c.luminance();
+        }
+    }
+
+    let mut near: Vec<(f32, f32, f32)> = Vec::with_capacity(49);
+    let mut bits: Vec<bool> = Vec::with_capacity(49);
+    let mut dev: Vec<f32> = Vec::with_capacity(49);
+    for (llr, &(x, y, c)) in luma.iter_mut().zip(at) {
+        if llr.abs() >= LOCAL_SKIP {
+            continue;
+        }
+        near.clear();
+        for dy in -LOCAL_RADIUS..=LOCAL_RADIUS {
+            for dx in -LOCAL_RADIUS..=LOCAL_RADIUS {
+                let (u, v) = (x + dx, y + dy);
+                if !(-m..dim - m).contains(&u) || !(-m..dim - m).contains(&v) {
+                    continue;
+                }
+                let s = grid[index(u, v)];
+                if !s.is_nan() {
+                    near.push((dx as f32, dy as f32, s));
+                }
+            }
+        }
+        if near.len() < LOCAL_MIN {
+            continue;
+        }
+        let Some((mut local, base, step)) =
+            local_fit(&near, &mut bits, &mut dev, c.luminance(), gap)
+        else {
+            continue;
+        };
+        if chroma {
+            // Undo the local fit — offset, then gain — and ask whether what is left is a
+            // palette colour. The offset is treated as neutral light, which is what a
+            // reflection off a screen mostly is.
+            let gain = (step / gap).clamp(0.25, 4.0);
+            let offset = base - gain * dark_y;
+            let deglared = Linear::new(
+                (c.r - offset) / gain,
+                (c.g - offset) / gain,
+                (c.b - offset) / gain,
+            );
+            local *= stats.reliability(color::linear_to_lab(deglared), palette);
+        }
+        *llr = (*llr + local).clamp(-LLR_CLAMP, LLR_CLAMP);
+    }
+}
+
+/// One neighbourhood's fit and the LLR it gives the module at the origin.
+fn local_fit(
+    near: &[(f32, f32, f32)],
+    bits: &mut Vec<bool>,
+    dev: &mut Vec<f32>,
+    y0: f32,
+    gap: f32,
+) -> Option<(f32, f32, f32)> {
+    // Seed the classes with one Ridler–Calvard split of the raw values.
+    let mean = near.iter().map(|n| n.2).sum::<f32>() / near.len() as f32;
+    let (mut lo, mut hi, mut nl, mut nh) = (0.0, 0.0, 0usize, 0usize);
+    for n in near {
+        if n.2 < mean {
+            lo += n.2;
+            nl += 1;
+        } else {
+            hi += n.2;
+            nh += 1;
+        }
+    }
+    if nl == 0 || nh == 0 {
+        return None;
+    }
+    let split = (lo / nl as f32 + hi / nh as f32) / 2.0;
+    bits.clear();
+    bits.extend(near.iter().map(|n| n.2 > split));
+
+    let mut p = [0f64; 4];
+    // Refit until the classification stops moving. Usually two passes; a steep halo with
+    // an uneven level mix in the window can need more, and stopping early leaves the plane
+    // biased by the misclassified neighbours — which the de-glared colour check then
+    // (rightly) refuses.
+    for _ in 0..LOCAL_PASSES {
+        let mut ata = [0f64; 16];
+        let mut atb = [0f64; 4];
+        for (n, &bit) in near.iter().zip(bits.iter()) {
+            let row = [1.0, n.0 as f64, n.1 as f64, f64::from(u8::from(bit))];
+            for i in 0..4 {
+                atb[i] += row[i] * n.2 as f64;
+                for j in 0..4 {
+                    ata[i * 4 + j] += row[i] * row[j];
+                }
+            }
+        }
+        let sol = solve(&mut ata, &mut atb, 4)?;
+        p = [sol[0], sol[1], sol[2], sol[3]];
+        if p[3] <= 0.0 {
+            return None;
+        }
+        let mut moved = false;
+        for (n, bit) in near.iter().zip(bits.iter_mut()) {
+            let base = p[0] + p[1] * n.0 as f64 + p[2] * n.1 as f64;
+            let now = n.2 as f64 - base > p[3] / 2.0;
+            moved |= now != *bit;
+            *bit = now;
+        }
+        if !moved {
+            break;
+        }
+    }
+
+    let (base, step) = (p[0] as f32, p[3] as f32);
+    dev.clear();
+    dev.extend(near.iter().zip(bits.iter()).map(|(n, &bit)| {
+        let fit = base + p[1] as f32 * n.0 + p[2] as f32 * n.1 + if bit { step } else { 0.0 };
+        n.2 - fit
+    }));
+    let sigma = mad_sigma(dev).max(0.02 * gap);
+    // A step much smaller than nominal means the levels have merged — both clipped, or no
+    // symbol here at all — and the read should fade out rather than amplify noise.
+    let c = (step / gap).clamp(0.0, 1.0);
+    let mid = base + step / 2.0;
+    let llr = (step * (mid - y0) / (sigma * sigma) * c * c).clamp(-LOCAL_CLAMP, LOCAL_CLAMP);
+    Some((llr, base, step))
 }
 
 /// Remove the §8.5 luma mask from a demodulated layer.
@@ -736,6 +959,67 @@ mod tests {
         };
         // The same deviation is damning on a clean capture and unremarkable on a noisy one.
         assert!(clean.reliability(off, &p) < noisy.reliability(off, &p));
+    }
+
+    /// Ground-truth levels (true = light), module positions and colours, global LLRs.
+    type Field = (Vec<bool>, Vec<(i32, i32, Linear)>, Vec<f32>);
+
+    /// An 11×11 field of `C1` payload modules in a fixed pseudo-random level pattern, with
+    /// `f(x, y, colour)` applied, and global LLRs of zero — everything erased.
+    fn local_field(f: impl Fn(i32, i32, Linear) -> Linear) -> Field {
+        let p = palette();
+        let (mut light, mut at) = (Vec::new(), Vec::new());
+        for y in 0..11i32 {
+            for x in 0..11i32 {
+                let bit = (x * 7 + y * 13 + x * y) % 3 == 0;
+                let c = p.linear[usize::from(bit) * p.hues + (x + y) as usize % p.hues];
+                light.push(bit);
+                at.push((x, y, f(x, y, c)));
+            }
+        }
+        let llrs = vec![0.0; at.len()];
+        (light, at, llrs)
+    }
+
+    /// D22's premise: additive light shifts both levels together, so the local read recovers
+    /// every module the global read has given up on — here a steep 0.6-per-symbol ramp of
+    /// white, enough to put dark modules on one side above light ones on the other.
+    #[test]
+    fn local_read_sees_through_additive_glare() {
+        let ramp = |x: i32, _y: i32, c: Linear| {
+            let g = 0.06 * x as f32;
+            Linear::new(c.r + g, c.g + g, c.b + g)
+        };
+        let (light, at, mut llrs) = local_field(ramp);
+        add_local_luma(&mut llrs, &at, 11, &palette(), &stats(), true);
+        for (i, (&bit, &v)) in light.iter().zip(&llrs).enumerate() {
+            // Positive means dark.
+            assert!(
+                (v > 1.0 && !bit) || (v < -1.0 && bit),
+                "module {i}: light={bit} llr={v}"
+            );
+        }
+    }
+
+    /// Luminance alone would read a dark finger as a confident run of dark modules. The
+    /// de-glared colour check must refuse it: a near-black neutral is no palette colour.
+    #[test]
+    fn local_read_does_not_vouch_for_a_dark_occluder() {
+        let inside = |x: i32, y: i32| (3..8).contains(&x) && (3..8).contains(&y);
+        let finger = |x: i32, y: i32, c: Linear| {
+            if inside(x, y) {
+                Linear::new(0.06, 0.045, 0.04)
+            } else {
+                c
+            }
+        };
+        let (_, at, mut llrs) = local_field(finger);
+        add_local_luma(&mut llrs, &at, 11, &palette(), &stats(), true);
+        for (&(x, y, _), &v) in at.iter().zip(&llrs) {
+            if inside(x, y) {
+                assert!(v.abs() < 1.0, "occluded ({x},{y}) read with confidence {v}");
+            }
+        }
     }
 
     #[test]

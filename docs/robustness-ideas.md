@@ -222,6 +222,15 @@ succeeds. That case is exactly what `Partial` exists for today.
 
 ### 3.4 Glare-robust chroma: trust hue angle when saturation collapses
 
+> **Outcome (2026-10-04): investigated; a different fix shipped as D22.** In the harness,
+> glare never broke the chroma layer. Every glared failure was luma, so the hue-angle
+> likelihood had nothing to fix and was not built. Clipping erasures measured *worse*, since
+> one-sided clipping still carries the luma bit. What shipped is the luma analogue of the
+> idea below: glare is additive, so the level gap survives it, and a local plane-plus-step
+> fit recovers the modules the global read erases. Specular-radius m50 went from 0.34–0.37
+> to beyond the swept range on every profile. See `docs/decisions.md` D22. The text below is
+> the original proposal, kept for the reasoning.
+
 **From:** JABCode's max-channel normalisation (`decoder.c:434`). It throws away brightness
 on purpose, so that shading and exposure cannot move a decision.
 
@@ -451,8 +460,8 @@ this codebase is a reference for *ideas*, not for behaviour.
 
 Ordered by expected gain against measured failures, per unit of effort and budget:
 
-1. **§3.4 glare-robust chroma and clipping erasures.** Smallest change, aimed directly at the
-   5% face-on bin.
+1. ~~**§3.4 glare-robust chroma and clipping erasures.**~~ Done differently, as D22's local
+   luma read. Next step for glare is a real capture: sweep run 4 (`glare-c1`).
 2. **§4.1 identity-keyed accumulation and tracking.** A correctness issue for file transfer,
    not just a robustness one.
 3. **§3.1 + §3.3 escalation ladder with decision-directed refit.** Biggest expected gain for

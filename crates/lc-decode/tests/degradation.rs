@@ -285,10 +285,12 @@ fn multi_frame_beats_single_frame() {
     let glared = |k: u64| {
         // Golden-angle steps put each frame's highlight somewhere new.
         let a = k as f32 * 2.399;
-        // Radius 0.35 at strength 1.2. Both have had to grow as the symbol shrank: D18's
-        // canvas and then D19's smaller version leave a fixed-fraction blob covering less of
-        // the symbol. Measured by `ring_diag::defocus_and_glare_envelope`.
-        specular(&base, 0.5 + 0.25 * a.cos(), 0.5 + 0.25 * a.sin(), 0.35, 1.2)
+        // Radius 0.45 at strength 1.6. Both have had to grow three times: D18's canvas and
+        // D19's smaller version left a fixed-fraction blob covering less of the symbol, and
+        // D22's local luma read decodes 9 of 12 frames single-handed at the previous 0.35 /
+        // 1.2. Here no frame decodes alone (0/12 from radius 0.40 / strength 1.4) and
+        // accumulation still does up to 0.50 / 2.0 — this sits mid-window.
+        specular(&base, 0.5 + 0.25 * a.cos(), 0.5 + 0.25 * a.sin(), 0.45, 1.6)
     };
     for k in 1..=12u64 {
         assert!(

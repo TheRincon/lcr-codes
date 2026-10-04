@@ -1050,6 +1050,141 @@ a contributor without it still builds; with it, a failure is a hard failure rath
 silently unoptimised artifact. The budget figures above and in D19 assume it is present,
 which is worth remembering if CI ever runs somewhere it is not.
 
+### D22. Luma is read a second time, against its own neighbourhood
+
+**Status:** implemented. `crates/lc-decode/src/demod.rs` (`add_local_luma`, `local_fit`).
+Decoder-only; no wire-format change.
+
+**How it was found.** `docs/robustness-ideas.md` §3.4 proposed a hue-angle chroma
+likelihood for glare, borrowed from JABCode's brightness-normalised classifier: glare adds
+white, white pulls `C*` toward zero but mostly keeps hue angle, so read the angle. Before
+building it, `--example glare` split every glared failure by the stage that gave up. **Not
+one failure was chroma's.** Across `C1`/`C2`/`C3` at v4 and every specular strength and
+radius swept, a located symbol failed on the luma layer or not at all. The hue-angle idea
+has no target in the harness, and was not built.
+
+**Why luma, measured per module.** A throwaway autopsy scored each glared LLR against the
+clean render's decisions (`C1`, strength 1.2, radius 0.3, 8 trials):
+
+| | luma | chroma |
+|---|---:|---:|
+| LLRs with the wrong sign | 9.6% | 1.7% |
+| …of those, with confidence (`\|llr\| > 4`) | **0** | **0** |
+| luma modules effectively erased (`\|llr\| < 1`) | 33% | — |
+| wrong luma modules that were *not* clipped | 693 of 897 | — |
+
+`ChannelStats::reliability` was already doing its job: nothing went in confidently wrong.
+The problem is volume. Inside a highlight's halo no low-order §12.3 surface can follow the
+blob, the corrected sample matches no palette colour, and a third of the luma layer is
+erased. Chroma's two-step stronger code (D10) absorbs its 1.7%; luma's cannot absorb 33%.
+And most of the damage is in the *unclipped* halo, not the clipped core.
+
+**The fix: glare is additive, so the level gap survives it.** In linear light a reflection
+adds the same light to a dark module and a light one, so the *difference* between the
+levels is unchanged even where the global fit has lost both. Around every module,
+`local_fit` fits
+
+```text
+Y  =  p0 + p1·dx + p2·dy  +  p3·bit        over its 7×7 payload neighbours
+```
+
+(an additive plane for the halo, plus a level step), refits until the classification stops
+moving, and gives the module an LLR from where it sits against the local step. That LLR is
+**added** to the global one.
+
+**Each design choice was measured, and several plausible ones lost.** Luma convergence out of
+16 trials (`C1` unless marked):
+
+| variant | 1.2 / 0.30 | 1.6 / 0.30 | 0.8 / 0.6 | 0.6 / 0.50 | `C3` 0.9 / 0.30 |
+|---|---:|---:|---:|---:|---:|
+| global only (before) | 6 | 1 | 0 | 0 | 8 |
+| flat two-level split, blended | 10 | — | — | 16 | 16 |
+| plane + step, clipped samples excluded from the fit *and* clipped modules erased | 13 | — | — | 15 | 16 |
+| plane + step, clipped modules erased | 14 | 9 | — | 16 | — |
+| plane + step, local LLR **replaces** global | 9 | 0 | 16 | 16 | 16 |
+| plane + step, local blended in where global is weak | 16 | 3 | 7 | 16 | 16 |
+| **plane + step, local added to global** | **16** | **8** | **16** | **16** | **16** |
+
+(columns: specular strength / radius. These came from the autopsy harness, before the colour
+check below existed; the shipped version's figures are under *Result*.)
+
+- **A plane, not a flat split.** Across a steep halo a dark module on the bright side outshines
+  a light one on the dim side. The harness's radius-0.3 highlight peaks at ~0.06 linear per
+  module, which is enough for that to happen.
+- **Clipping is evidence, not an erasure.** JABCode-style clipping erasures were the second
+  half of §3.4, and they measured *worse*. A light module clipped to white is still brighter
+  than a dark one that did not clip. Information is only lost where both levels clip, and
+  there the fitted step collapses and the `(p3 / gap)²` factor fades the LLR out by itself.
+  The one cell where erasing clipped modules won, strength 1.6 (9 against 8), is past where
+  anything decodes reliably; it lost at 1.2, the cell that matters.
+- **Added, not substituted.** When a wide highlight half-fits the global surface, the global
+  read is confidently wrong (|LLR| ≈ 5) and the local read is right. A sum lets the local read
+  overrule it; a blend weighted by global confidence cannot.
+
+**Luminance alone cannot tell glare from an occluder.** The first working version regressed
+occlusion badly: the harness's grey patch at 0.35 of the symbol went 100% → 34% on `C1`. A
+dark finger, which matches the dark level's luminance, went 100% → 72% at 0.30. The local
+read was vouching for exactly the modules `reliability` exists to erase. The fix reuses
+that test. The fit's additive offset and gain are undone on the module's full colour, and
+the de-glared colour must look like a palette entry to `ChannelStats::reliability`. A glared
+module de-glares back to itself; a finger does not. A monochrome capture or profile `M`
+skips the check, as the global read does. Both cases are pinned by unit tests
+(`local_read_sees_through_additive_glare`, `local_read_does_not_vouch_for_a_dark_occluder`).
+The second of those also caught a real bug: three fixed refit passes, with no refit after
+the last reclassification, left the plane biased on a steep ramp.
+
+**Result.** `--example glare`, v4 at full capacity, 32 trials per point:
+
+| | before | after |
+|---|---|---|
+| `C1` strength 1.0 / 1.2 (radius 0.3) | 91% / 34% | 100% / 100% |
+| `C1` radius 0.40 / 0.50 (strength 0.6) | 19% / 0% | 100% / 100% |
+| `C3` strength 0.9 / 1.0 / 1.2 | 56% / 28% / 19% | 100% / 100% / 100% |
+| `C3` radius 0.35 / 0.40 / 0.50 | 28% / 0% / 0% | 100% / 100% / 100% |
+
+All 48 glare cells across the three profiles now decode 32/32. `just profiles 32`:
+
+| m50 | `C1` | `C2` | `C3` |
+|---|---|---|---|
+| specular radius | 0.370 → **> 0.40** | 0.366 → **> 0.40** | 0.342 → **> 0.40** |
+| blur radius | 4.758 → 4.758 | 5.864 → **> 6.0** | 4.704 → 4.704 |
+| noise, specular strength, shading, occlusion | unchanged | unchanged | unchanged |
+
+`C2`'s blur gain was not aimed at and is not explained yet. Its luma is 89% of its payload,
+and defocus also leaves a smooth local bias that a plane absorbs, which is a plausible
+account but not a measured one. `just envelope 32` (`C1`, 96 B) moves specular strength 0.9
+from 75% to 100% and radius 0.40 from 16% to 100%. Occlusion at 0.30 / 0.35 reads 94% / 84%
+against 97% / 81% before: one trial each way, inside the ±9-point error bar. `--example ab`,
+which adds a dark occluder, shows nothing else moved beyond one trial.
+
+**Cost.** The local fit is ~2 µs a module, a third of a v32 decode if run everywhere, so it
+is skipped wherever the global LLR is already ≥ 12 (`LOCAL_SKIP`); a module that confident
+is one `LOCAL_CLAMP` = 8 could not overturn. Native, `--example decode_time`:
+
+| | v4 clean | v4 glared | v32 clean | v32 glared |
+|---|---:|---:|---:|---:|
+| before | 26 ms | 95–100 ms | 147–154 ms | 360 ms |
+| after | 26 ms | 28 ms | 146–151 ms | 176 ms |
+
+Clean frames are unchanged. Glared frames got *faster*, because a frame that decodes stops
+early, where the old one burned LDPC iterations and D13's candidate retries on failing.
+**Scanner: 185,771 → 190,203 bytes, 90% → 92% raw, 83% → 85% gzip.**
+
+`multi_frame_beats_single_frame` needed its glare raised a third time, from radius 0.35 /
+strength 1.2 to 0.45 / 1.6. At the old setting 9 of 12 frames now decode on their own.
+
+**Limits, stated plainly.**
+
+- **The harness's glare is neutral white.** The de-glare treats the offset as neutral light. A
+  tinted reflection, such as warm ceiling lights, will de-glare imperfectly. The colour check
+  then fades the local read out, which is the safe direction, but the gain will be smaller
+  than measured here. Sweep run 4 (`glare-c1`) is the test.
+- **Unmeasured on a real capture**, like everything since D17. The face-on sweep bins (5%
+  decoded) are what this is aimed at, and only a sweep can say how much of that was this
+  failure mode rather than detection.
+- **Ring detection under glare is untouched.** Every harness failure here was a located
+  symbol. On real captures, 57–64% of frames found nothing, and this does nothing for those.
+
 ## Pinned — filling holes the draft left open
 
 | # | Spec item | Pinned as | Where |
