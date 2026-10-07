@@ -100,10 +100,8 @@ pub enum Message {
 /// Decide what a CFT message is and parse it.
 ///
 /// **[CFT.md §3/§6]** The document gives no way to tell a manifest from a chunk: both are
-/// CBOR maps keyed from zero, and a receiver pulling one symbol out of the air has to
-/// guess. The rule here is a consequence of the types already in the document — **key 0
-/// is a text string in a manifest and a byte string in a chunk** — so it costs no bytes
-/// and a well-formed message of one kind can never be read as the other.
+/// CBOR maps keyed from zero. The rule: **key 0
+/// is a text string in a manifest and a byte string in a chunk**.
 pub fn parse(bytes: &[u8], limits: &Limits) -> Result<Message, CftError> {
     let value = Value::from_slice(bytes).map_err(|_| CftError::Malformed)?;
     match value.get_int_key(0) {

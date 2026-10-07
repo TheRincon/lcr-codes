@@ -7,8 +7,6 @@
 //! * **CRC-32/ISO-HDLC** — poly `0xEDB88320` reflected, init/xor-out `0xFFFFFFFF`.
 //!   Used by the extended frame.
 //!
-//! ## Pinned: what the CRC covers
-//!
 //! §9.1 draws the frame as `header | body | CRC` without saying how a CRC over a
 //! non-byte-aligned prefix is defined — the compact header is 15 bits, so `header|body`
 //! is never byte-aligned. This implementation pins it:

@@ -1,16 +1,6 @@
 //! Compression, CFT.md §5.
 //!
-//! ## The C exception, and why it is scoped
-//!
-//! CFT.md makes Zstandard the codec, and this project grants it an explicit exception to
-//! §14.2's "no C dependencies anywhere in the decode path". The exception is real but it
-//! is *scoped*, for a mechanical reason rather than a policy one: `zstd-sys` compiles C,
-//! and there is no C toolchain targeting `wasm32-unknown-unknown` in this build. So
-//! `lc-wasm` must not enable the `zstd` feature — not because the rule forbids it, but
-//! because the build would fail.
-//!
-//! Everything here goes through [`Compression`], so swapping the backing implementation —
-//! for a different zstd crate, or a pure-Rust one — is a change to two match arms.
+//! ZALT will be the compression lib. Forthcoming change.
 
 use crate::CftError;
 use alloc::vec::Vec;
