@@ -1,4 +1,4 @@
-//! Wall time of one decode, by version — clean, and under a large highlight.
+//! Wall time of one decode, by version — clean, under a large highlight, and defocused.
 //!
 //! `cargo run -p lc-decode --release --example decode_time`
 //!
@@ -43,12 +43,27 @@ fn main() {
             },
         );
         let decoder = Decoder::new();
+        let d = decoder
+            .decode_rgb(&r.data, r.width, r.height, r.width * 3)
+            .unwrap()
+            .diagnostics;
         let clean = time(&decoder, &r);
         // The case the local luma read (D22) does the most work in.
         let glared = time(&decoder, &specular(&r, 0.5, 0.5, 0.45, 0.6));
+        // The case D24's equalising retries do their work in.
+        let b5 = blur(&r, 5);
+        let blurred = time(&decoder, &b5);
+        let blur_ok = decoder
+            .decode_rgb(&b5.data, b5.width, b5.height, b5.width * 3)
+            .is_ok();
         println!(
-            "v{v:<3} {}×{} px  clean {clean:>7.2} ms  glared {glared:>7.2} ms",
-            r.width, r.height
+            "v{v:<3} {}×{} px  clean {clean:>7.2} ms (LDPC {}+{} it)  glared {glared:>7.2} ms  \
+             blurred {blurred:>7.2} ms ({})",
+            r.width,
+            r.height,
+            d.luma_iterations,
+            d.chroma_iterations,
+            if blur_ok { "decoded" } else { "failed" }
         );
     }
 }

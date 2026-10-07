@@ -8,21 +8,47 @@
 //! guidance tells users to hold.
 //!
 //! Module `(x, y)` is addressed at its **centre**, `(x + 0.5, y + 0.5)`.
+//!
+//! ## Lens distortion (D23)
+//!
+//! A homography is exact for a pinhole camera and nothing else. A phone's lens bends straight
+//! lines by ~1% of the frame radius even after its own correction, and on a large symbol that
+//! is enough: a v32 ring fills a frame 157 modules across, so 2% of barrel at the corners
+//! moves interior modules by about one, and v32 decoded 8/8 at 1% and 0/8 at 2%. A transform
+//! may therefore carry one radial coefficient: the homography maps into an *undistorted*
+//! image, and the distortion is applied on the way out. See
+//! [`Transform::with_radial`].
 
 use crate::math::solve;
 use alloc::vec;
 
-/// A projective transform from module space to pixel space.
+/// A projective transform from module space to pixel space, optionally followed by radial
+/// lens distortion.
 #[derive(Copy, Clone, Debug)]
 pub struct Transform {
     m: [f64; 8],
+    /// `(cx, cy, κ)`: distortion centre in pixels, and the coefficient in pixels⁻². `κ = 0`
+    /// is a plain homography.
+    radial: [f64; 3],
 }
 
 impl Transform {
     /// Identity.
     pub const IDENTITY: Transform = Transform {
         m: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        radial: [0.0; 3],
     };
+
+    /// The same homography, followed by radial distortion about `(cx, cy)`.
+    ///
+    /// The model is the one-coefficient form of Brown's: a sensor position at offset `d`
+    /// from the centre sees the undistorted position `centre + d · (1 + κ·|d|²)`. `κ > 0` is
+    /// barrel. [`Transform::apply`] inverts that, since it maps *into* the sensor.
+    #[must_use]
+    pub fn with_radial(mut self, cx: f32, cy: f32, kappa: f32) -> Transform {
+        self.radial = [cx as f64, cy as f64, kappa as f64];
+        self
+    }
 
     /// Fit from four module→pixel correspondences.
     ///
@@ -44,6 +70,7 @@ impl Transform {
         let h = solve(&mut a, &mut b, 8)?;
         Some(Transform {
             m: [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]],
+            radial: [0.0; 3],
         })
     }
 
@@ -66,6 +93,7 @@ impl Transform {
         let h = solve(&mut a, &mut b, 6)?;
         Some(Transform {
             m: [h[0], h[1], h[2], h[3], h[4], h[5], 0.0, 0.0],
+            radial: [0.0; 3],
         })
     }
 
@@ -75,10 +103,22 @@ impl Transform {
         let (u, v) = (u as f64, v as f64);
         let w = self.m[6] * u + self.m[7] * v + 1.0;
         let w = if w.abs() < 1e-9 { 1e-9 } else { w };
-        (
-            ((self.m[0] * u + self.m[1] * v + self.m[2]) / w) as f32,
-            ((self.m[3] * u + self.m[4] * v + self.m[5]) / w) as f32,
-        )
+        let x = (self.m[0] * u + self.m[1] * v + self.m[2]) / w;
+        let y = (self.m[3] * u + self.m[4] * v + self.m[5]) / w;
+        let [cx, cy, k] = self.radial;
+        if k == 0.0 {
+            return (x as f32, y as f32);
+        }
+        // Undistorted offset `du`; find the sensor offset `dd` with `dd·(1 + κ|dd|²) = du`.
+        // A fixed-point iteration converges in a few steps at any distortion a usable lens
+        // has, where `κ|d|²` is a few hundredths.
+        let (ux, uy) = (x - cx, y - cy);
+        let (mut dx, mut dy) = (ux, uy);
+        for _ in 0..4 {
+            let s = 1.0 + k * (dx * dx + dy * dy);
+            (dx, dy) = (ux / s, uy / s);
+        }
+        ((cx + dx) as f32, (cy + dy) as f32)
     }
 
     /// Pixel position of the centre of module `(x, y)`.
@@ -229,6 +269,31 @@ mod tests {
         assert!(close(t.module_center(0, 0), (5.0, 5.0), 1e-3));
         assert!(close(t.module_center(20, 20), (205.0, 205.0), 1e-3));
         assert!((t.local_pitch(10, 10) - 10.0).abs() < 1e-3);
+    }
+
+    /// `apply` must invert the distortion model `with_radial` documents: a sensor point
+    /// mapped through the model lands back on the undistorted point the homography gave.
+    #[test]
+    fn radial_distortion_round_trips() {
+        let src = [(0.0, 0.0), (20.0, 0.0), (0.0, 20.0), (20.0, 20.0)];
+        let dst = [
+            (100.0, 100.0),
+            (500.0, 100.0),
+            (100.0, 500.0),
+            (500.0, 500.0),
+        ];
+        let plain = Transform::from_quad(src, dst).unwrap();
+        let (cx, cy, k) = (300.0f32, 300.0f32, 0.05 / (300.0f32 * 300.0));
+        let bent = plain.with_radial(cx, cy, k);
+        for (u, v) in [(0.0, 0.0), (10.0, 3.0), (20.0, 20.0), (7.5, 18.0)] {
+            let (px, py) = bent.apply(u, v);
+            let (dx, dy) = (px - cx, py - cy);
+            let s = 1.0 + k * (dx * dx + dy * dy);
+            assert!(close((cx + dx * s, cy + dy * s), plain.apply(u, v), 1e-2));
+        }
+        // Barrel pulls the corners in toward the centre and leaves the centre alone.
+        assert!(bent.apply(0.0, 0.0).0 > plain.apply(0.0, 0.0).0);
+        assert!(close(bent.apply(10.0, 10.0), plain.apply(10.0, 10.0), 1e-3));
     }
 
     #[test]

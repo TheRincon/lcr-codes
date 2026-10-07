@@ -327,6 +327,38 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
 
 ---
 
+## Robustness round — 2026-10-03 to 2026-10-07 (D22–D26)
+
+Prompted by a read of the JABCode reference implementation (`docs/robustness-ideas.md`).
+Every change below was measured with the §15 harness before and after; the full figures
+and the ideas that measured worse are in [`docs/decisions.md`](docs/decisions.md).
+
+- **D22, glare.** Luma is read a second time against its own neighbourhood: an additive
+  plane plus a level step, checked against the palette after de-glaring so an occluder is
+  not mistaken for a level. Specular-radius m50 went from 0.34–0.37 to beyond the swept
+  range on every profile.
+- **D23, ring geometry.** Edges fitted by consensus instead of trusting hull corners, and a
+  one-coefficient lens model estimated from how the edges bow. A patch or highlight on one
+  ring corner went from 0% to 100%; v32 went from failing at 2% lens distortion to decoding
+  at 10%.
+- **D24, blur.** After the CRC rejects a frame, neighbour bleed is measured and subtracted
+  using the decoded luma levels. Blur radius 5–7 went from 0% to 100% on `C1` and `C3`.
+- **D25, blur further.** `C2` included, turbo rounds (equalise against the decoder's own
+  posterior), equalisation for `FrameAccumulator` (which had decoded 0% under any blur),
+  a two-rung kernel fit, and a defocus fallback for ring acceptance. At blur radius 9, 48
+  trials: `C1` 88%, `C2` 98%, `C3` 79%, from 0%.
+- **D26, display.** `transfer.html` gained an integer-scaled full-screen presentation mode.
+  A v40 `C3` transfer that failed once moved to its own page now decodes; the cause was
+  the page scaling the symbol by a non-integer factor.
+
+**Scanner budget raised** from 200 KB to 250 KB raw (256,000), 125 KB gzipped, for D23–D25.
+The scanner is at 222,107 bytes, 86%.
+
+**Still unmeasured on real captures**: D22's glare gain face-on, D23's lens model, and
+D24/D25 against real defocus. The harness's blur is a box and its glare is neutral white.
+
+---
+
 ## First real-world decode — 2026-09-04
 
 **A laptop screen displayed a symbol and an iPhone decoded it**, through `web/display.html`

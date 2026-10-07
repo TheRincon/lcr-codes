@@ -41,6 +41,7 @@ extern crate alloc;
 
 pub mod demod;
 pub mod detect;
+pub mod equalize;
 pub mod error;
 pub mod illum;
 pub mod image;
@@ -57,7 +58,7 @@ use image::{ImageView, PixelFormat};
 use lc_core::bch;
 use lc_core::bits::BitVec;
 use lc_core::border;
-use lc_core::ecc::ldpc::{CHROMA_RATE_INDEX, Code, LUMA_RATE_INDEX, MAX_ITERATIONS};
+use lc_core::ecc::ldpc::{CHROMA_RATE_INDEX, Code, DecodeResult, LUMA_RATE_INDEX, MAX_ITERATIONS};
 use lc_core::interleave::Interleaver;
 use lc_core::layout::Layout;
 use lc_core::palette::Palette;
@@ -310,7 +311,7 @@ impl<V: PacketVerifier> Decoder<V> {
         match prepare_ring(img, &gray, self.options.max_version) {
             Ok(prepared) => {
                 let demodulation = prepared.demodulate(img);
-                match self.finish(&prepared, &demodulation, 1) {
+                match self.finish(&prepared, &demodulation, 1, None, Some(img)) {
                     Ok(out) => return Ok(out),
                     Err(e) => {
                         first_err = Some(e);
@@ -337,7 +338,7 @@ impl<V: PacketVerifier> Decoder<V> {
                 }
             };
             let demodulation = prepared.demodulate(img);
-            match self.finish(&prepared, &demodulation, 1) {
+            match self.finish(&prepared, &demodulation, 1, None, Some(img)) {
                 Ok(out) => return Ok(out),
                 Err(e) => {
                     first_err.get_or_insert(e);
@@ -375,12 +376,105 @@ impl<V: PacketVerifier> Decoder<V> {
         })
     }
 
+    /// One rung of D24's equalising retry against `obs`: turbo-equalised luma until it
+    /// converges, then turbo-equalised chroma if luma converged and chroma did not. Returns
+    /// whether either layer changed.
+    fn equalising_retry(
+        &self,
+        p: &Prepared,
+        d: &Demodulation,
+        obs: &equalize::Observation,
+        luma_code: &Code,
+        luma_out: &mut DecodeResult,
+        chroma_out: &mut Option<DecodeResult>,
+    ) -> Result<bool, DecodeError> {
+        let cap = p.layout.capacity();
+        let ecc = p.format.ecc;
+        let mut changed = false;
+        // Turbo equalisation (D25): each round equalises against the levels the last
+        // decode settled on — the channel's own decisions in the first round — so the
+        // decoder's corrections feed back into the neighbour estimates.
+        let mut prior: Option<Vec<bool>> = None;
+        for _ in 0..TURBO_ROUNDS {
+            if luma_out.converged {
+                break;
+            }
+            let Some(mut llrs) = equalize::luma(
+                obs,
+                &p.layout,
+                &p.palette,
+                &d.stats,
+                p.ring,
+                &d.luma,
+                prior.as_deref(),
+            ) else {
+                break;
+            };
+            demod::unmask_luma(&mut llrs, &p.layout, p.format.mask);
+            let out = luma_code.decode(
+                &Interleaver::new(cap.luma_bits).deinterleave(&llrs),
+                self.options.max_iterations,
+            )?;
+            if out.converged {
+                *luma_out = out;
+                changed = true;
+                break;
+            }
+            let next = equalize::luma_levels(&out.codeword, &p.layout, p.format.mask);
+            // A fixed point: the next round would equalise against the same levels.
+            if prior.as_ref() == Some(&next) {
+                break;
+            }
+            prior = Some(next);
+        }
+        if luma_out.converged && chroma_out.as_ref().is_some_and(|c| !c.converged) {
+            let light = equalize::luma_levels(&luma_out.codeword, &p.layout, p.format.mask);
+            let code = Code::new(CHROMA_RATE_INDEX[ecc.chroma as usize & 3], cap.chroma_bits)?;
+            // Turbo again: later rounds take neighbour hues from the last decode.
+            let mut prior: Option<Vec<usize>> = None;
+            for _ in 0..TURBO_ROUNDS {
+                let Some(llrs) = equalize::chroma(
+                    obs,
+                    &p.layout,
+                    &p.palette,
+                    &d.stats,
+                    p.ring,
+                    &light,
+                    prior.as_deref(),
+                ) else {
+                    break;
+                };
+                let out = code.decode(
+                    &Interleaver::new(cap.chroma_bits).deinterleave(&llrs),
+                    self.options.max_iterations,
+                )?;
+                if out.converged {
+                    *chroma_out = Some(out);
+                    changed = true;
+                    break;
+                }
+                let next = equalize::chroma_hues(&out.codeword, &p.layout, p.palette.hues);
+                if prior.as_ref() == Some(&next) {
+                    break;
+                }
+                prior = Some(next);
+            }
+        }
+        Ok(changed)
+    }
+
     /// Turn demodulated LLRs into a packet: LDPC, frame, CRC, then optionally verify.
+    ///
+    /// `mean` is the accumulated observation of many frames, for D24's equalising retry when
+    /// the CRC rejects the first pass (D25); `None` reads `d`'s own colours instead. `img` is
+    /// the single frame `d` came from, when there is one, for the retry's second rung.
     fn finish(
         &self,
         p: &Prepared,
         d: &Demodulation,
         frames: u8,
+        mean: Option<&equalize::Observation>,
+        img: Option<&ImageView>,
     ) -> Result<DecodeOutput, DecodeError> {
         let cap = p.layout.capacity();
         let ecc = p.format.ecc;
@@ -389,7 +483,7 @@ impl<V: PacketVerifier> Decoder<V> {
         let mut luma_llrs = d.luma.clone();
         demod::unmask_luma(&mut luma_llrs, &p.layout, p.format.mask);
         let luma_code = Code::new(LUMA_RATE_INDEX[ecc.luma as usize & 3], cap.luma_bits)?;
-        let luma_out = luma_code.decode(
+        let mut luma_out = luma_code.decode(
             &Interleaver::new(cap.luma_bits).deinterleave(&luma_llrs),
             self.options.max_iterations,
         )?;
@@ -403,6 +497,43 @@ impl<V: PacketVerifier> Decoder<V> {
                 self.options.max_iterations,
             )?;
             chroma_out = Some(out);
+        }
+
+        // §12.5 step 3: concatenate luma-first, then the CRC decides.
+        let mut parsed = Frame::from_bits(&layer_bits(&luma_out, chroma_out.as_ref(), cap.total()));
+
+        // D24: the CRC rejected the first pass. Re-read with neighbour bleed removed — luma
+        // first if it did not converge, its own confident decisions standing in for the
+        // levels; then chroma, if luma converged and chroma did not, with every level now
+        // known exactly. Only after the CRC, because a non-converged layer can still carry the
+        // right bits and the CRC is what says so: gating on convergence instead re-read
+        // frames that were already decoding.
+        //
+        // Two rungs (D25). First from the payload colours demodulation already sampled, or the
+        // accumulated mean of many frames: free, and its kernel fit is not biased by the
+        // white gap and quiet zone, which cost `C1` half its decodes at blur radius 9. Then,
+        // for a single frame only, with every surrounding cell sampled too, which `C3`
+        // needs at the same blur — the known cells steady a fit that few of its payload
+        // decisions are confident enough to join.
+        if parsed.is_err() {
+            let own = match mean {
+                Some(_) => None,
+                None => equalize::Observation::new(&p.layout, p.ring.is_some(), &d.colours),
+            };
+            if let Some(obs) = mean.or(own.as_ref())
+                && self.equalising_retry(p, d, obs, &luma_code, &mut luma_out, &mut chroma_out)?
+            {
+                parsed = Frame::from_bits(&layer_bits(&luma_out, chroma_out.as_ref(), cap.total()));
+            }
+            if parsed.is_err()
+                && let (Some(img), Some(mut full)) = (img, own)
+            {
+                full.surround(img, &p.transform, &p.layout, &p.illum);
+                if self.equalising_retry(p, d, &full, &luma_code, &mut luma_out, &mut chroma_out)? {
+                    parsed =
+                        Frame::from_bits(&layer_bits(&luma_out, chroma_out.as_ref(), cap.total()));
+                }
+            }
         }
 
         let pitch = p.transform.pitch_range(p.layout.side);
@@ -422,18 +553,7 @@ impl<V: PacketVerifier> Decoder<V> {
             capture_pitch_max: pitch.1,
         };
 
-        // §12.5 step 3: concatenate luma-first, then the CRC decides.
-        let mut bits = BitVec::with_capacity(cap.total());
-        for b in &luma_out.bits {
-            bits.push(*b);
-        }
-        if let Some(c) = &chroma_out {
-            for b in &c.bits {
-                bits.push(*b);
-            }
-        }
-
-        match Frame::from_bits(&bits) {
+        match parsed {
             Ok((frame, _)) => {
                 let body = frame.payload()?;
                 let packet = if frame.ctype == ContentType::CoseSign1 {
@@ -475,6 +595,24 @@ impl<V: PacketVerifier> Decoder<V> {
     }
 }
 
+/// Equalise-then-decode rounds each retry makes before giving up (D25). Three left `C3` at
+/// 31% under blur radius 9, five reached 88%, and eight gained nothing over five. A round
+/// whose decisions match the last one's ends the loop early.
+const TURBO_ROUNDS: usize = 5;
+
+/// Both layers' information bits, luma first, as §12.5 step 3 concatenates them.
+fn layer_bits(luma: &DecodeResult, chroma: Option<&DecodeResult>, total: usize) -> BitVec {
+    let mut bits = BitVec::with_capacity(total);
+    for &b in luma
+        .bits
+        .iter()
+        .chain(chroma.map_or(&[][..], |c| &c.bits[..]))
+    {
+        bits.push(b);
+    }
+    bits
+}
+
 /// Everything established about a symbol before demodulation: geometry, format, palette
 /// and the illumination model.
 ///
@@ -491,6 +629,9 @@ struct Prepared {
     stats: ChannelStats,
     with_chroma: bool,
     alignment_found: bool,
+    /// The symbol's ring, as its colours are known after the format read; `None` without
+    /// one. Kept for D24's equaliser, which needs every cell's nominal colour.
+    ring: Option<border::RingMode>,
 }
 
 impl Prepared {
@@ -682,6 +823,7 @@ fn prepare_ring(
         with_chroma,
         // A full homography, fitted from the ring's four corners.
         alignment_found: true,
+        ring: ring_mode,
     })
 }
 
@@ -726,6 +868,7 @@ fn prepare_from(
         stats,
         with_chroma,
         alignment_found,
+        ring: ring_mode,
     })
 }
 
@@ -816,6 +959,10 @@ pub struct FrameAccumulator {
     chroma: Vec<f32>,
     stats: Option<ChannelStats>,
     frames: u8,
+    /// Every cell's colour summed over the frames taken, for D24's equalising retry (D25).
+    /// Blur is the same in every frame of a preview and noise is not, so the mean is what
+    /// to equalise.
+    observed: Option<equalize::Observation>,
 }
 
 impl Default for FrameAccumulator {
@@ -844,6 +991,7 @@ impl FrameAccumulator {
             chroma: Vec::new(),
             stats: None,
             frames: 0,
+            observed: None,
         }
     }
 
@@ -879,6 +1027,12 @@ impl FrameAccumulator {
         }
         let prepared = self.prepared.as_ref().expect("just set");
         let d = prepared.demodulate(img);
+        let o = equalize::Observation::new(&prepared.layout, prepared.ring.is_some(), &d.colours);
+        match (&mut self.observed, o) {
+            (Some(sum), Some(o)) => sum.add(&o),
+            (None, o) => self.observed = o,
+            _ => {}
+        }
 
         // Independent observations of the same bit: LLRs add.
         for (acc, v) in self.luma.iter_mut().zip(&d.luma) {
@@ -917,7 +1071,8 @@ impl FrameAccumulator {
             luma: self.luma.iter().map(avg).collect(),
             chroma: self.chroma.iter().map(avg).collect(),
             stats,
+            colours: Vec::new(),
         };
-        decoder.finish(prepared, &d, self.frames)
+        decoder.finish(prepared, &d, self.frames, self.observed.as_ref(), None)
     }
 }

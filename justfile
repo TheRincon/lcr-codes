@@ -27,12 +27,14 @@ set shell := ["bash", "-uc"]
 # Gating on only one was hiding the other: at 199,453 bytes the scanner read 97% of budget
 # raw and 38% gzipped. Both now have a limit and both are reported.
 #
-# The raw limit is §14.2's number taken literally. **The compressed limit is a proposal**,
-# not a measurement: half the raw budget, on the grounds that ~75 KB gzipped is already a
-# heavy web dependency and a gate that never fires is decoration. It wants justifying
-# against a real embedder's constraint before #16 can actually close.
-scanner_budget_raw := "204800"
-scanner_budget_gz := "102400"
+# The raw limit started as §14.2's 200 KB taken literally, and was **raised to 250 KB** on
+# 2026-10-05 for D23/D24: ring geometry that survives damaged corners and lens distortion,
+# and decision-feedback equalisation against blur, which together took the scanner past
+# 200 KB. **The compressed limit is a proposal**, not a measurement: half the raw budget, on
+# the grounds that a gate that never fires is decoration, and it moved with the raw one. It
+# wants justifying against a real embedder's constraint before #16 can actually close.
+scanner_budget_raw := "256000"
+scanner_budget_gz := "128000"
 
 wasm_target := "wasm32-unknown-unknown"
 wasm_out := "target/wasm32-unknown-unknown/release/lc_wasm.wasm"

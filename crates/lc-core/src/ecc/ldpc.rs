@@ -380,8 +380,17 @@ impl Code {
         }
 
         let bits: Vec<bool> = total[..self.k].iter().map(|&l| l < 0.0).collect();
+        // Transmitted order: information bits, then parity, which sits after the shortened
+        // zeros in the lifted layout (see `channel_llrs`).
+        let parity = self.base.k_b * self.z;
+        let codeword = bits
+            .iter()
+            .copied()
+            .chain(total[parity..].iter().map(|&l| l < 0.0))
+            .collect();
         Ok(DecodeResult {
             bits,
+            codeword,
             iterations,
             converged,
         })
@@ -410,6 +419,10 @@ impl Code {
 pub struct DecodeResult {
     /// Recovered information bits.
     pub bits: Vec<bool>,
+    /// Hard decision on every transmitted bit, in transmission order. When `converged`, this
+    /// *is* the codeword — which lets a decoder recover what was sent without linking the
+    /// encoder (D24).
+    pub codeword: Vec<bool>,
     /// Iterations spent.
     pub iterations: u16,
     /// Whether every parity check was satisfied. Not a decode verdict on its own —
@@ -420,6 +433,27 @@ pub struct DecodeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A converged decode's `codeword` must be the codeword that was sent, bit for bit —
+    /// D24 re-derives every module's luma level from it instead of re-encoding.
+    #[test]
+    fn converged_codeword_is_the_transmitted_one() {
+        let code = Code::new(1, 700).unwrap();
+        let info: Vec<bool> = (0..code.k).map(|i| (i * 7 + i / 3) % 5 < 2).collect();
+        let sent = code.encode(&info).unwrap();
+        // A few weak, wrong LLRs for the decoder to correct.
+        let rx: Vec<f32> = sent
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| {
+                let v = if b { -4.0 } else { 4.0 };
+                if i % 37 == 0 { -0.5 * v } else { v }
+            })
+            .collect();
+        let out = code.decode(&rx, 50).unwrap();
+        assert!(out.converged);
+        assert_eq!(out.codeword, sent);
+    }
 
     /// Deterministic xorshift, so failures are reproducible.
     struct Rng(u64);

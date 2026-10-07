@@ -148,6 +148,11 @@ None of these touch the wire format.
 
 ### 3.1 An escalation ladder for "found, not decoded"
 
+> **Outcome (2026-10-05): partly done, as D24.** The ladder exists in `Decoder::finish` and
+> runs only after the CRC rejects the first pass. It has two rungs, both equalisation:
+> luma, then chroma. The geometry rung turned out to belong in detection instead (D23). The
+> sub-module phase search was not built: nothing in the breakdown pointed at it.
+
 **From:** JABCode's two-stage sampling (`detectMaster`, `detector.c:3410`) and its
 Part I → default-metadata fallback.
 
@@ -172,6 +177,10 @@ time budget so a live preview stays responsive.
 `just sweep`.
 
 ### 3.2 Use the ring for geometry, not only its corners
+
+> **Outcome (2026-10-05): done, as D23.** Edges are fitted by consensus, and a one-coefficient
+> lens model is estimated from how the edges bow. v32 went from failing at 2% barrel
+> distortion to decoding at 10%. The piecewise/quadrant homography was not needed.
 
 **From:** JABCode's piecewise per-alignment-pattern homographies (`detector.c:2944`).
 
@@ -200,6 +209,12 @@ succeeds. As a §3.1 rung, it runs only after the first decode fails.
 impairment** to §15, which we do not have, plus large-version captures in the sweep.
 
 ### 3.3 Decision-directed refit: decoded bits become references
+
+> **Outcome (2026-10-05): done differently, as D24.** Blur, not illumination, was what failed
+> chroma after luma converged. So the decoded levels are used to fit and cancel the blur
+> kernel (neighbour bleed), not to refit illumination. Blur radius 5–7 went from 0% to 100%
+> on `C1` and `C3`. An illumination refit from decoded modules is still unbuilt, and no
+> measured failure currently asks for it.
 
 **From:** the idea behind JABCode's embedded palettes (more known colours, better
 classification), taken further than JABCode does.
@@ -258,6 +273,10 @@ Two complementary changes:
 **Measure:** face-on sweep bins, where the 5% lives; harness glare m50.
 
 ### 3.5 Recover a ring with a corner missing
+
+> **Outcome (2026-10-05): done, as D23.** A patch or highlight on one ring corner took decoding
+> from 100% to 0%; edge-fitted quads take it back to 100%. Neither JABCode's local re-search
+> nor parallelogram completion was needed: two fitted edges intersect at the missing corner.
 
 **From:** JABCode's estimate-then-local-search for one missing finder (`detector.c:1745`,
 `detector.c:1338`).
@@ -464,13 +483,14 @@ Ordered by expected gain against measured failures, per unit of effort and budge
    luma read. Next step for glare is a real capture: sweep run 4 (`glare-c1`).
 2. **§4.1 identity-keyed accumulation and tracking.** A correctness issue for file transfer,
    not just a robustness one.
-3. **§3.1 + §3.3 escalation ladder with decision-directed refit.** Biggest expected gain for
-   `C3` and partial glare.
-4. **§3.5 corner recovery and §3.2 ring-based geometry refinement.** Glare-on-corner and
-   lens distortion at large versions. Add a distortion impairment to §15 first.
+3. ~~**§3.1 + §3.3 escalation ladder with decision-directed refit.**~~ Done as D24:
+   equalising neighbour bleed after the CRC rejects. Extension: equalise per frame inside
+   `FrameAccumulator`.
+4. ~~**§3.5 corner recovery and §3.2 ring-based geometry refinement.**~~ Done as D23, with a
+   lens-distortion impairment added to the harness.
 5. **§4.3 fountain coding in CFT.** Transfer time and robustness for whole files.
 6. **§6 stricter finder confirmation.** Preview frame rate.
 7. Everything in Tier 3, after a sweep says it's needed.
 
-Each Tier 1 item adds decode-path code. With the scanner at 89% of the raw budget, measure
-`just wasm-size` after each one, as D12–D20 did.
+Each Tier 1 item adds decode-path code. The raw budget was raised to 250 KB for D23/D24, and the
+scanner is at ~84% of it; keep measuring `just wasm-size` after each one, as D12–D24 did.

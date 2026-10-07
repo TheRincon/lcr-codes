@@ -189,6 +189,53 @@ fn color_cast(r: &Raster, gains: [f32; 3]) -> Raster {
     map_linear(r, |_, _, c| std::array::from_fn(|i| c[i] * gains[i]))
 }
 
+/// Radial lens distortion about the frame centre: barrel for `k > 0`, pincushion for
+/// `k < 0`.
+///
+/// `k` is the fractional displacement at the frame's corner — `0.02` puts the corner 2%
+/// of its radius further in than a pinhole camera would. A phone's main camera after the
+/// ISP's own correction leaves on the order of 1%; an uncorrected wide lens several times
+/// that. A homography cannot represent any of it, which is why it is here: every geometry
+/// the decoder fits is projective, and this is the cheapest realistic thing that is not.
+///
+/// Same canvas and supersampling discipline as [`perspective`]: the module pitch at the
+/// centre is preserved, and each output pixel averages its own footprint.
+fn barrel(r: &Raster, k: f32) -> Raster {
+    let (w, h) = (r.width as f32, r.height as f32);
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    let rmax2 = cx * cx + cy * cy;
+    let n = SUPERSAMPLE as f32;
+    let mut out = r.clone();
+    for py in 0..r.height {
+        for px in 0..r.width {
+            let mut acc = [0f32; 3];
+            for sy in 0..SUPERSAMPLE {
+                for sx in 0..SUPERSAMPLE {
+                    let ox = px as f32 + (sx as f32 + 0.5) / n - 0.5 - cx;
+                    let oy = py as f32 + (sy as f32 + 0.5) / n - 0.5 - cy;
+                    // Where in the undistorted scene this sensor position looks.
+                    let s = 1.0 + k * (ox * ox + oy * oy) / rmax2;
+                    let (u, v) = (cx + ox * s, cy + oy * s);
+                    let lin = if (0.0..w).contains(&u) && (0.0..h).contains(&v) {
+                        bilinear(r, u, v)
+                    } else {
+                        [1.0, 1.0, 1.0]
+                    };
+                    for c in 0..3 {
+                        acc[c] += lin[c];
+                    }
+                }
+            }
+            let i = ((py * r.width + px) * 3) as usize;
+            let taps = n * n;
+            for (c, slot) in out.data[i..i + 3].iter_mut().enumerate() {
+                *slot = linear_to_srgb(acc[c] / taps);
+            }
+        }
+    }
+    out
+}
+
 /// A saturating specular highlight — the dominant screen impairment per §3.
 fn specular(r: &Raster, cx: f32, cy: f32, radius: f32, strength: f32) -> Raster {
     map_linear(r, |u, v, c| {

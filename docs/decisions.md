@@ -1185,6 +1185,300 @@ strength 1.2 to 0.45 / 1.6. At the old setting 9 of 12 frames now decode on thei
 - **Ring detection under glare is untouched.** Every harness failure here was a located
   symbol. On real captures, 57–64% of frames found nothing, and this does nothing for those.
 
+### D23. Ring geometry from edges, and a lens model
+
+**Status:** implemented. `crates/lc-decode/src/ring.rs` (`edge_quad`, `estimate_lens`),
+`crates/lc-decode/src/transform.rs` (`Transform::with_radial`). Decoder-only.
+
+**How it was found.** `--example stages` bins every failed trial by the first stage that gave
+up, across impairments the §15 envelope did not have: damage *at a ring corner*, and lens
+distortion (`barrel` in `tests/support/ops.rs`, new). Both were severe:
+
+| v4, 16 trials | before |
+|---|---|
+| a patch 6% of the canvas wide over one ring corner (~2.6 modules) | **0%**, `C1` and `C3` |
+| a highlight on one ring corner, strength 0.8 | 6% / 0% |
+| 10% barrel distortion | 0% `C1` |
+| v32 at **2%** barrel — a phone main camera's residual after its own correction | 0% |
+
+**Why corners.** The ring's quad came from the four extreme points of its ink hull. A patch
+over a corner is ink and pulled that corner outward (24 px → 9 px on a 516 px canvas). A
+highlight erased the corner and chopped it inward (24 → 47 px). `refine_quad` could not
+repair either, because it starts from the hull's corners and refuses to move one more than 8
+px. The occluded case was worse than a rejection: the ring was *accepted* at 0.875 agreement
+with a wrong transform, and the format or payload failed downstream.
+
+**Edges, not corners.** `edge_quad` fits each edge by consensus: deterministic trial lines
+through pairs of boundary points near the hull's version of the edge, keeping the line most
+points agree with. It then refits over the edge's middle and intersects neighbouring edges.
+An occluded or erased corner is reconstructed from the two edges that meet there; every
+corner case above lands exactly on the true corner.
+
+**Two measured refinements.**
+
+- **Used only when the two quads disagree** (> 3 px, `CORNER_AGREE_PX`). Used everywhere, it
+  cost `C3` half its blur-radius-4 decodes (88% → 44%). Under blur, light and dark ring cells
+  smear the boundary into two parallel populations, and the consensus line ran through one
+  of them. On an undamaged ring, `refine_quad`'s corners are the more precise.
+- **The refit centres the line.** After the consensus, a wide band then a tight one, as
+  `refine_quad` does. That removes the one-population bias.
+
+**Lens distortion.** `Transform` may now carry one radial coefficient, Brown's first-order
+model about the frame centre. The homography maps into an undistorted image and `apply`
+re-distorts. Estimating it is closed-form: a straight edge at distance `h` from the centre,
+of length `L`, bows by `κ·h·L²·t(1 − t)`. `estimate_lens` fits that per edge, alongside free
+line terms so corner positions drop out, and refines once on straightened points. The
+boundary points are undistorted before any quad is fitted. Three things had to be right,
+and each was found by a regression:
+
+- **Free line terms, not the hull's chord.** Measured against the chord, a chopped glare
+  corner read as distortion and cost `C3` 100% → 69% under strong corner glare.
+- **All four edges must agree.** A lens bends every edge; damage bends one. Each edge's κ
+  carries a standard error from its own residuals, edges combine by inverse variance, and an
+  edge more than 3σ + 25% from the estimate vetoes it.
+- **Agreement against the total κ.** The refining pass measures a small residual. Slack
+  proportional to that rejected every real lens on its second look, which broke
+  distortion-plus-blur entirely until it was fixed.
+
+Below `κ·R² = 0.004` (`LENS_MIN`) the estimate is dropped, and an undistorted capture takes
+exactly its old path. Every non-distortion row of the breakdown is identical with and
+without the lens model.
+
+**Result.** `--example stages`, v4, 16 trials (lens rows at v16/v32 are 8 trials):
+
+| | before | after |
+|---|---|---|
+| corner occlusion 0.06 / 0.10 / 0.14 | 0 / 0 / 0% | 100 / 100 / 100% (`C1`, `C3`) |
+| corner glare 0.8 / 1.2 / 1.6 | 6 / 0 / 0% `C1`, 0 / 0 / 0% `C3` | 100% all |
+| shading 0.80 (`--example ab`, 32 trials) | 47% `C1`, 0% `C3` | 100%, 100% |
+| shading 0.85 (`stages`) | 0%, 0% | 88% `C1`, 75% `C3` |
+| barrel 0.10, v4 | 0% `C1` | 100% |
+| barrel 0.05, v16 | 0% | 100% (and 0.10) |
+| barrel 0.02 / 0.05 / 0.10, v32 | 0 / 0 / 0% | 100 / 100 / 100% |
+| pincushion, and a symbol off-centre in a frame twice its size, to 0.10 | — | 100% at v4 |
+| barrel + blur 3, 0.05 / 0.10 | 0 / 0% `C3`, 100 / 0% `C1` | 100% all |
+
+The shading gain was not aimed at: a dark corner under 80% shading falls below the ink map's
+contrast floor and chops the hull exactly as glare does. Pincushion 0.10 at v16 still fails,
+because it pushes the ring's corners off the frame; a real camera framed that way would clip
+them too.
+
+**Cost.** Edge fit 3.4 KB and lens 3.5 KB of scanner. Clean decode time +1–4%, as both run
+on every located ring.
+
+### D24. Neighbour bleed removed by decision feedback, after the CRC rejects
+
+**Status:** implemented. `crates/lc-decode/src/equalize.rs`, the retry in `Decoder::finish`,
+and `DecodeResult::codeword` in `lc-core`. Decoder-only.
+
+**How it was found.** The same breakdown: at blur radius ≥ 5 on v4, **every** lost decode had
+a converged luma layer and a failed chroma layer, on `C1` and `C3` alike (16/16 each).
+`robustness-ideas.md` §3.3's "decision-directed refit" was the starting point, but blur's
+damage is not an illumination error. It is inter-symbol interference: each module's colour
+carries a few per cent of each neighbour's, and `C1`'s two hues are near-opposites.
+
+**An oracle first.** A throwaway probe equalised chroma using the *true* neighbour colours, to
+find the ceiling before building anything. At radius 5, 85–112 of 1,170 chroma bits were
+wrong; equalised, 0–13, and every trial converged. A realistic variant was then given only
+what a decoder has: levels from luma, hues from a crude first-pass decision. **It matched the
+oracle to within two bits on every trial**, at radius 5 and 6. The fitted kernel is small
+(centre ≈ 0.93, each edge neighbour ≈ 0.08), and that is enough to flip `C1`'s hue decisions.
+
+**The mechanism.** Once luma converges, the decoder knows:
+- every payload module's level, from the codeword;
+- every cell's nominal luminance, because the hue states are iso-luminant (§4.1) and the
+  fixed cells, ring, gap and quiet zone are known a priori;
+- so the blur kernel itself — centre, edge and diagonal weights plus a bias, fitted on
+  luminance over thousands of cells.
+
+It then subtracts each chroma module's estimated neighbours and re-decides, twice. The same
+idea also rescues **luma** when luma fails, using its own confident decisions
+(|LLR| ≥ 4) for the kernel fit. That moved the limit from radius 6 to 7.
+
+**Two implementation findings.**
+
+- **The CRC gates the retry, not convergence.** The first version retried whenever chroma did
+  not converge. On a v8 frame that had always decoded, chroma ran 50 iterations
+  unconverged, *and the CRC passed anyway*, because the bits were right. Retrying there added
+  12 ms for nothing. Now the retries run only after the CRC rejects the first pass, so every
+  frame that decoded before takes exactly its old path.
+- **No encoder in the scanner.** Re-deriving each module's level first used `Code::encode`,
+  which brought the LDPC encoder into the decode build. A converged decoder's hard
+  decisions on every transmitted bit *are* the codeword, so `DecodeResult` now carries them
+  (`codeword`), pinned by `converged_codeword_is_the_transmitted_one`. That saved 2.7 KB.
+
+**Result.** `--example stages`, v4, 16 trials:
+
+| blur radius | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|
+| `C1` before → after | 100 → 100 | 0 → **100** | 0 → **100** | 56 → **100** | 0 → **69** |
+| `C3` before → after | 88 → **100** | 0 → **100** | 0 → **100** | 0 → **100** | 0 → **88** |
+
+`--example ab` agrees: blur 5 goes 3% → 100% on `C1` and 0% → 100% on `C3`. 4:2:0 plus blur 4
+on `C3` goes 94% → 100%. Noise is unchanged, as it should be, because noise is not bleed.
+Nothing else moved.
+
+**Cost.** ~14 KB of scanner, mostly unrolled three-channel arithmetic and ring-colour lookups.
+With D23's 7 KB, that took the scanner from **190,203 to 215,546 bytes**, past §14.2's 200 KB.
+**The budget was raised to 250 KB raw (256,000), and 125 KB gzipped, on 2026-10-05**
+(`justfile`; D15's half-of-raw rule for the compressed limit). Time, native, min of four
+interleaved runs:
+
+| | clean | blur 5 |
+|---|---|---|
+| v8 | 42.6 → 43.4 ms | 48.4 → 49.0 ms (decodes either way) |
+| v16 | 67.5 → 68.6 ms | 231 ms failing → **114 ms decoding** |
+| v32 | 145 → 151 ms | 494 → 555 ms, failing either way |
+
+**Limits, stated plainly.**
+
+- **Single-frame only.** `FrameAccumulator` has no single frame to go back to, so it passes
+  `None` and never retries. Equalising each frame before accumulating would be the natural
+  extension.
+- **`C2` is excluded.** Its 2×2 chroma cell averages over its own four modules, and it
+  measured no chroma-only blur failures.
+- **The harness's blur is a box.** A real defocus kernel is closer to a disc with soft edges.
+  The kernel is *fitted*, not assumed, so the shape matters less than the extent. Still
+  unmeasured on a real capture.
+- **The finder path also passes its ring mode** and would equalise a classic symbol, but no
+  classic-symbol case was measured.
+
+### D25. Equalisation for `C2` and for accumulated frames, turbo rounds, and a defocus fallback
+
+**Status:** implemented. `crates/lc-decode/src/equalize.rs` (`Observation`, `Hue`,
+`chroma_hues`), the retry loops in `Decoder::finish`, `FrameAccumulator`, and
+`ring::accept`'s relaxed rule. Decoder-only.
+
+Four additions to D24, each measured with `--example stages` (v4, 16 trials) and the new
+`--example multiframe`, plus four things that were tried and lost.
+
+**1. `C2`.** D24 left `C2` out, because its 2×2 chroma cell averages its own modules. The
+luma half of D24 already applied, and it was most of `C2`'s gain: blur radius 6 / 7 / 8 went
+69 / 6 / 0% → 100 / 100 / 69%. Chroma now works for `C2` too. Each payload module's hue has
+a *source*:
+- shared with its chroma cell, decided from the mean of the cell's equalised modules;
+- its own, for the ring's cells on one-module profiles;
+- or fixed at 0, for modules outside any chroma cell and `C2`'s ring cells, which the encoder
+  always draws at hue 0.
+
+A `C2` cell is read from the mean of its equalised modules. That took blur 8 from 69% to 75%
+on its own.
+
+**2. Turbo rounds.** The luma retry started from the channel's own decisions, and past
+radius 8 too many of those are wrong for the neighbour estimates to help. A decode that does
+not converge still has far better posterior decisions than the channel, and
+`DecodeResult::codeword` carries them. So each round equalises against the levels the last
+decode settled on, then decodes again. Chroma does the same with hues, mapped back from its
+posterior by `chroma_hues`. `levels_and_hues_invert_modulate` pins both inverse mappings
+against `modulate` on every profile.
+
+| blur (48 trials, final build) | `C1` | `C2` | `C3` |
+|---|---|---|---|
+| 8, before → after | 69 → **100** | 75 → **100** | 88 → **98** |
+| 9, before → after | 0 → **88** | 0 → **98** | 0 → **79** |
+| 10, before → after | 0 → **25** | 0 → **31** | 0 → 0 |
+
+("Before" is D24 at 16 trials. The final figures include item 5 below.)
+
+Three rounds left `C3` at 31% at radius 9; five reached 88%; eight gained nothing over five.
+`TURBO_ROUNDS = 5`, and a round whose decisions equal the last one's ends the loop.
+
+**3. Accumulated frames.** Accumulating LLRs averages away noise, but blur is a bias that is
+the same in every frame, so **`FrameAccumulator` decoded 0% under blur radius 7–8 even where
+single frames decoded 100%.** It had no frame to go back to for D24's retry. It now keeps an
+`Observation`: every payload module's corrected colour, summed over frames. That costs
+nothing per frame, because demodulation already samples exactly those colours
+(`Demodulation::colours`); `push` timed the same as before at v4, v16 and v32. `try_decode`
+runs the same retry against the mean. `--example multiframe`, 8 trials × 12 frames, blur
+fixed, fresh sensor noise each frame:
+
+| | single frames | accumulator before | after |
+|---|---|---|---|
+| `C1` blur 8, σ 0.05 | 100% | 0% | **100%** |
+| `C1` blur 9, σ 0.10 | 23% | 0% | **50%** |
+| `C1` blur 8 + glare wandering between frames | 0% | 0% | **100%** |
+| `C3` blur 8, σ 0.10 | 14% | 0% | **88%** |
+| `C3` blur 9, σ 0.05 | 39% | 0% | **75%** |
+| `C3` blur 8 + wandering glare | 0% | 0% | **75%** |
+
+**4. A defocus fallback for the ring.** At radius 9–10 the right version correlated at
+0.84–0.93, below `MIN_AGREEMENT`, while leading the runner-up by 0.25 or more. Ink that is
+not this ring reads near 0.5 on every version. `accept` therefore also takes agreement ≥ 0.75
+with a lead ≥ 0.2. This is applied **only after no candidate in the frame passes the ordinary
+rule**. Applied per candidate first, it let an earlier, worse quad pre-empt a later good one,
+and cost `C2` a trial at radius 8. It decodes nothing by itself: those frames now fail at
+luma rather than at detection. But `probe` can now say "found, hold steadier" instead of
+"nothing here", and an accumulator can lock onto a frame it previously ignored.
+
+**5. Which cells the kernel is fitted on, and a second rung.** Fitting the blur kernel on
+payload modules alone — free, since they are already sampled — turned out better than
+sampling every cell for `C1` and worse for `C3`. At blur radius 9, 48 trials: `C1` 88%
+against 38%, `C3` 54% against 79%. Excluding only the white gap and quiet zone from the full
+fit restored `C1` to 88%, so white targets were what biased it: after colour correction,
+white is not exactly nominal white. `C3` gains from the extra known cells, because few of its
+payload decisions are confident enough to join the fit at that blur. So the retry has two
+rungs. The first uses payload colours (or an accumulator's mean). If the CRC still rejects a
+single frame, a second samples the surround (`Observation::surround`) and fits on
+everything. That gives both profiles their better figure.
+
+**Tried and rejected, all measured:**
+
+| idea | result |
+|---|---|
+| 5×5 kernel, for bleed two modules out | worse everywhere: `C3` blur 8 **88% → 6%**. Twenty-four neighbour estimates carry more decision error than the outer weights remove. |
+| no reliability weight in the luma retry | `C3` blur 9 **88% → 0%** |
+| accumulating observations weighted by per-frame reliability, against wandering glare | blur 7 + glare **100% → 0%**. Neighbouring cells end up averaged over different frames, so the residue is no longer spatially smooth. |
+| sampling every cell for every accumulated frame | 34 ms more per v32 frame; kept only as the single-frame second rung (item 5) |
+
+**Cost.** Scanner 215,875 → **222,107 bytes, 86% raw and 78% gzip** of D24's raised budget.
+Frames that decoded before take exactly their old path, and the A/B bench and every non-blur
+row of the breakdown are unchanged. `push` costs the same. A located frame that still fails
+pays for up to five rounds per layer per rung: 11.2 → 17.4 ms for a v4 frame at blur 12. At
+that blur v16 and v32 frames are never located, and cost the same as before.
+
+### D26. `transfer.html` presents full screen, at whole device pixels only
+
+**Status:** implemented and confirmed on a real capture (2026-10-07). `web/transfer.html`.
+
+**How it was found.** A v40 `C3` file transfer (15,716 B original, 6,992 B compressed) at
+ECC 1 and 2 decoded from `transfer.html` itself, but failed every time once the symbol was
+moved to a page of its own. The decoder was not at fault. The page draws one canvas pixel
+per *device* pixel, which is what §13.1.3's integer-multiple rule asks for; a separate page
+or an image viewer scales the image to fit its window instead. At a non-integer ratio — 11.3
+device pixels per module rather than 8 or 16 — every module is resampled into its
+neighbours. A large symbol at the 8 px/module floor has no margin for that, and no amount of
+camera distance recovers it.
+
+**What it does.** A *Present full screen* button appears once a symbol is rendered:
+
+- **The symbol on a white ground and nothing else**, full screen where the browser allows,
+  with a screen wake lock so the display does not dim mid-scan. The lock is re-taken when the
+  tab returns from the background, since browsers drop it then.
+- **Enlarged by whole numbers only.** It picks the largest integer device pixels per canvas
+  pixel that fits the screen, so 8 px/module becomes 16 or 24, never anything between. The
+  tab title reports the result, for example `v40 — 16 device px/module`.
+- **Placed at a whole device-pixel offset.** Ordinary centring can put the canvas on a half
+  pixel, which resamples every module exactly as scaling does. The page computes the offset
+  in device pixels.
+- **Warns rather than shrinks.** If the symbol is larger than the screen even at 1×, a bar
+  says so and suggests a smaller version or a bigger display. Shrinking to fit would break
+  §13.1.3.
+- **Esc, leaving full screen, or clicking the symbol** ends the presentation. The last is for
+  a tablet or phone used as the display, which may have no Esc key.
+
+**Result.** The same v40 transfer that failed from a separate page decodes from
+presentation mode, and is easier to scan, being larger at a whole-number scale.
+
+**Limits the page cannot see.**
+
+- **macOS "Looks like …" scaled display modes** render at 2× and then resample to the panel,
+  which undoes the whole-pixel guarantee below anything the browser can detect. Use the
+  display's *Default* resolution for scanning.
+- **Browser zoom** other than 100% changes `devicePixelRatio`. The page follows it, but a
+  fractional ratio can still resample. Scan at 100%.
+- `display.html` has had an equivalent presentation mode since the capture sweep;
+  `transfer.html` now matches it. The two are separate implementations and could be shared.
+
 ## Pinned — filling holes the draft left open
 
 | # | Spec item | Pinned as | Where |

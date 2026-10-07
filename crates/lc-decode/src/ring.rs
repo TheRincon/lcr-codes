@@ -27,6 +27,7 @@
 use crate::demod;
 use crate::illum::{IlluminationModel, Reference};
 use crate::image::ImageView;
+use crate::math::solve;
 use crate::sample::sample_module;
 use crate::transform::Transform;
 use alloc::vec::Vec;
@@ -44,6 +45,12 @@ const MIN_AGREEMENT: f32 = 0.85;
 /// How far the best version must beat the runner-up. Guards against a geometry so degraded
 /// that two versions look alike, where committing to either would be a guess.
 const MIN_LEAD: f32 = 0.08;
+
+/// Agreement accepted when the lead is at least [`STRONG_LEAD`] (D25).
+const RELAXED_AGREEMENT: f32 = 0.75;
+
+/// A lead over the runner-up version that chance does not produce (D25).
+const STRONG_LEAD: f32 = 0.2;
 
 /// Below this many pixels per module a ring position cannot be sampled at all.
 const MIN_PITCH_PX: f32 = 2.0;
@@ -142,6 +149,9 @@ pub struct RingTrace {
     pub scores: Vec<(Version, f32, usize, bool)>,
     /// The accepted detection, if the best score cleared both thresholds.
     pub fix: Option<RingFix>,
+    /// The detection under the relaxed rule for a defocused ring — used only when no
+    /// attempt anywhere in the frame passes the ordinary one (D25).
+    pub fallback: Option<RingFix>,
 }
 
 /// Run detection and keep the working. See [`RingTrace`].
@@ -183,12 +193,19 @@ pub fn trace(gray: &[u8], width: u32, height: u32, max_version: Version) -> Ring
             best = Some(t);
         }
     }
+    // Nothing passed the ordinary rule: the best attempt's relaxed fix, if it has one.
+    if let Some(b) = best.as_mut()
+        && b.fix.is_none()
+    {
+        b.fix = b.fallback.take();
+    }
     best.unwrap_or(RingTrace {
         regions: total,
         hull_len: 0,
         quad: None,
         scores: Vec::new(),
         fix: None,
+        fallback: None,
     })
 }
 
@@ -200,18 +217,68 @@ fn attempt(
     points: &[(f32, f32)],
     max_version: Version,
 ) -> RingTrace {
+    // Lens distortion first (D23): if the ring's edges bow, straighten the boundary before
+    // anything fits lines or corners to it, and carry the coefficient into every transform.
+    let lens = estimate_lens(points, (width as f32 / 2.0, height as f32 / 2.0));
+    let straightened;
+    let points = if lens.2 == 0.0 {
+        points
+    } else {
+        straightened = undistort(points, lens);
+        &straightened[..]
+    };
     let hull = convex_hull(points);
     let hull_len = hull.len();
-    let Some(q) = quad(&hull).map(|q| refine_quad(points, q)) else {
+    let Some(hull_quad) = quad(&hull) else {
         return RingTrace {
             regions: 0,
             hull_len,
             quad: None,
             scores: Vec::new(),
             fix: None,
+            fallback: None,
         };
     };
 
+    // Two candidate quads (D23). The refined hull is what every symbol decoded with before,
+    // and on an undamaged ring its corners are the more precise — under blur, light and dark
+    // ring cells smear the boundary differently, and the edge fit's consensus line settles on
+    // one of them, which cost `C3` half its blur-radius-4 decodes when it was used everywhere.
+    // So the edge fit only leads when the two *disagree*, which is what a damaged corner
+    // looks like; otherwise the refined hull is used alone.
+    let refined = refine_quad(points, hull_quad);
+    let edges = edge_quad(points, hull_quad).filter(|e| !same_quad(e, &refined, CORNER_AGREE_PX));
+    let mut tried: Option<RingTrace> = None;
+    for q in [edges, Some(refined)].into_iter().flatten() {
+        let t = correlate_quad(gray, width, height, q, lens, hull_len, max_version);
+        if t.fix.is_some() {
+            return t;
+        }
+        let top = |t: &RingTrace| t.scores.iter().map(|s| s.1).fold(0.0f32, f32::max);
+        if tried.as_ref().is_none_or(|b| top(&t) > top(b)) {
+            tried = Some(t);
+        }
+    }
+    tried.expect("the refined quad is always tried")
+}
+
+/// Whether two quads agree to within `tol` pixels at every corner.
+fn same_quad(a: &[(f32, f32); 4], b: &[(f32, f32); 4], tol: f32) -> bool {
+    a.iter()
+        .zip(b)
+        .all(|(p, q)| (p.0 - q.0).abs() <= tol && (p.1 - q.1).abs() <= tol)
+}
+
+/// One candidate quad, correlated against every version.
+fn correlate_quad(
+    gray: &[u8],
+    width: u32,
+    height: u32,
+    q: [(f32, f32); 4],
+    lens: Lens,
+    hull_len: usize,
+    max_version: Version,
+) -> RingTrace {
     // Approximate outer side length in pixels: mean diagonal over √2.
     let diag = |a: (f32, f32), b: (f32, f32)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
     let span = (diag(q[0], q[2]) + diag(q[1], q[3])) / 2.0 / core::f32::consts::SQRT_2;
@@ -226,7 +293,7 @@ fn attempt(
         if span / (side as f32 + 8.0) < MIN_PITCH_PX {
             break;
         }
-        let Some(t) = ring_transform(&q, side) else {
+        let Some(t) = ring_transform(&q, side, lens) else {
             continue;
         };
         let bits = classify(&ring_lumas(gray, width, height, &t, side));
@@ -234,19 +301,30 @@ fn attempt(
         scores.push((version, score, r, rev));
     }
 
-    let fix = accept(&q, &scores);
+    let fix = accept(&q, &scores, lens, false);
+    let fallback = if fix.is_none() {
+        accept(&q, &scores, lens, true)
+    } else {
+        None
+    };
     RingTrace {
         regions: 0,
         hull_len,
         quad: Some(q),
         scores,
         fix,
+        fallback,
     }
 }
 
 /// Accept the best version if it clears [`MIN_AGREEMENT`] and leads the runner-up by
 /// [`MIN_LEAD`], and resolve its orientation into a transform.
-fn accept(q: &[(f32, f32); 4], scores: &[(Version, f32, usize, bool)]) -> Option<RingFix> {
+fn accept(
+    q: &[(f32, f32); 4],
+    scores: &[(Version, f32, usize, bool)],
+    lens: Lens,
+    relaxed: bool,
+) -> Option<RingFix> {
     let (best_i, &(version, agreement, r, rev)) = scores
         .iter()
         .enumerate()
@@ -257,7 +335,14 @@ fn accept(q: &[(f32, f32); 4], scores: &[(Version, f32, usize, bool)]) -> Option
         .filter(|(i, _)| *i != best_i)
         .map(|(_, s)| s.1)
         .fold(0.0f32, f32::max);
-    if agreement < MIN_AGREEMENT || agreement - runner_up < MIN_LEAD {
+    let lead = agreement - runner_up;
+    let ordinary = agreement >= MIN_AGREEMENT && lead >= MIN_LEAD;
+    // Heavy defocus smears ring cells into their neighbours and agreement sags below
+    // `MIN_AGREEMENT` while the right version still leads by a margin no other ink produces:
+    // at blur radius 9–10 the true version read 0.84–0.93 against a runner-up near 0.6, where
+    // anything that is not this ring reads near 0.5 on every version (D25).
+    let defocused = relaxed && agreement >= RELAXED_AGREEMENT && lead >= STRONG_LEAD;
+    if !ordinary && !defocused {
         return None;
     }
 
@@ -272,7 +357,7 @@ fn accept(q: &[(f32, f32); 4], scores: &[(Version, f32, usize, bool)]) -> Option
     let dst = [q[order[0]], q[order[1]], q[order[2]], q[order[3]]];
     Some(RingFix {
         version,
-        transform: ring_transform(&dst, version.side())?,
+        transform: ring_transform(&dst, version.side(), lens)?,
         agreement,
     })
 }
@@ -743,14 +828,194 @@ fn quad(hull: &[(f32, f32)]) -> Option<[(f32, f32); 4]> {
     Some(if area >= 0.0 { q } else { [a, d, b, c] })
 }
 
-/// Homography taking the ring's outer square, in module space, onto four image corners.
+/// Homography taking the ring's outer square, in module space, onto four image corners —
+/// in the *undistorted* image when `lens` carries a coefficient, with the distortion then
+/// applied on the way out (D23).
 ///
 /// Module space puts cell `x` at `[x, x + 1)`, so the outer edges of the ring's outer layer
 /// are at `-(QUIET + WIDTH)` and `side + QUIET + WIDTH`.
-fn ring_transform(corners: &[(f32, f32); 4], side: u16) -> Option<Transform> {
+fn ring_transform(corners: &[(f32, f32); 4], side: u16, lens: Lens) -> Option<Transform> {
     let lo = -(border::GAP + border::WIDTH) as f32;
     let hi = side as f32 + (border::GAP + border::WIDTH) as f32;
-    Transform::from_quad([(lo, lo), (hi, lo), (hi, hi), (lo, hi)], *corners)
+    Transform::from_quad([(lo, lo), (hi, lo), (hi, hi), (lo, hi)], *corners).map(|t| {
+        if lens.2 == 0.0 {
+            t
+        } else {
+            t.with_radial(lens.0, lens.1, lens.2)
+        }
+    })
+}
+
+/// Radial distortion as `(cx, cy, κ)`, the model of [`Transform::with_radial`].
+type Lens = (f32, f32, f32);
+
+/// Least distortion worth modelling, as the fraction `κ·R²` by which it displaces the ring's
+/// farthest corner. Below this a clean render's estimate is quantisation noise, and leaving
+/// `κ = 0` keeps an undistorted capture on exactly the path it always took.
+const LENS_MIN: f32 = 0.004;
+
+/// Estimate radial distortion about `centre` from how a ring's edges bow (D23).
+///
+/// Under the [`Transform::with_radial`] model a straight edge at perpendicular distance `h`
+/// from the centre, with chord length `L`, bows by
+///
+/// ```text
+/// offset(t)  ≈  c0 + c1·t  +  κ · h · L² · t(1 − t)          t ∈ [0, 1] along the edge
+/// ```
+///
+/// — outward for barrel, inward for pincushion — whatever the edge's direction or where it
+/// sits in the frame. The line terms `c0 + c1·t` are fitted alongside the bow rather than
+/// taken from the hull's corners, so a corner that is occluded, glared away or merely
+/// imprecise moves the line and not the curvature. Each edge then gives its own `κ`.
+///
+/// **A lens bends all four edges; damage bends one.** The estimate is accepted only when the
+/// four edges agree, which is what keeps a damaged corner from reading as distortion — the
+/// first version measured the bow against the hull's chord, and a glared corner's chopped
+/// chord came out as `κ` and cost `C3` a third of its decodes under strong corner glare.
+/// Distances are taken on the distorted image, so the estimate is refined once on the
+/// straightened points.
+///
+/// Returns `κ = 0` when the bow is below [`LENS_MIN`], the edges disagree, or any edge is
+/// too thin to measure.
+fn estimate_lens(points: &[(f32, f32)], centre: (f32, f32)) -> Lens {
+    let none = (centre.0, centre.1, 0.0);
+    let mut kappa = 0.0f32;
+    let mut reach = 0.0f32;
+    let mut sel: Vec<(f32, f32)> = Vec::new();
+    for _ in 0..2 {
+        let pts = if kappa == 0.0 {
+            points.to_vec()
+        } else {
+            undistort(points, (centre.0, centre.1, kappa))
+        };
+        let Some(q) = quad(&convex_hull(&pts)) else {
+            return none;
+        };
+        // Per edge: (κ, standard error of κ).
+        let mut edges = [(0.0f32, 0.0f32); 4];
+        for (e, slot) in edges.iter_mut().enumerate() {
+            let (a, b) = (q[e], q[(e + 1) % 4]);
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 16.0 {
+                return none;
+            }
+            let (ux, uy) = (dx / len, dy / len);
+            // Outward normal: away from the distortion centre.
+            let (mut nx, mut ny) = (uy, -ux);
+            let h0 = (a.0 - centre.0) * nx + (a.1 - centre.1) * ny;
+            if h0 < 0.0 {
+                (nx, ny) = (-nx, -ny);
+            }
+            sel.clear();
+            sel.extend(pts.iter().filter_map(|&(px, py)| {
+                let t = ((px - a.0) * ux + (py - a.1) * uy) / len;
+                let o = (px - a.0) * nx + (py - a.1) * ny;
+                ((0.1..=0.9).contains(&t) && o.abs() <= 0.05 * len).then_some((t, o))
+            }));
+            if (sel.len() as f32) < 0.3 * len {
+                return none;
+            }
+            // Fit o = c0 + c1·t + α·t(1−t), then once more without the points that sit off
+            // that curve — what is left of a damaged corner inside the window.
+            let Some((first, _)) = bow_fit(&sel, None) else {
+                return none;
+            };
+            let Some((fit, se)) = bow_fit(&sel, Some(first)) else {
+                return none;
+            };
+            // This edge's own κ and its standard error: α = κ·h·L².
+            let w = h0.abs() * len * len;
+            *slot = (fit[2] / w, (se / w).max(f32::MIN_POSITIVE));
+            for &c in &[a, b] {
+                reach = reach.max((c.0 - centre.0).powi(2) + (c.1 - centre.1).powi(2));
+            }
+        }
+        // Inverse-variance mean: a blurred, wavy edge measures its bow less precisely and
+        // counts for less, rather than vetoing the estimate.
+        let (num, den) = edges.iter().fold((0.0f32, 0.0f32), |(n, d), &(k, se)| {
+            (n + k / (se * se), d + 1.0 / (se * se))
+        });
+        if den == 0.0 || !den.is_finite() {
+            return none;
+        }
+        let step = num / den;
+        // Agreement: every edge within three of its own standard errors of the estimate, plus
+        // a quarter of the *total* κ — a lens bends all four edges, damage bends one. Total,
+        // not this pass's step: the refining pass measures a small residual, and slack
+        // proportional to that rejected every real lens on its second look.
+        let total = (kappa + step).abs();
+        if edges
+            .iter()
+            .any(|&(k, se)| (k - step).abs() > 3.0 * se + 0.25 * total)
+        {
+            return none;
+        }
+        kappa += step;
+    }
+    if (kappa * reach).abs() < LENS_MIN {
+        return none;
+    }
+    (centre.0, centre.1, kappa)
+}
+
+/// Distance, in pixels, beyond which a point is dropped from an edge's second bow fit.
+const BOW_INLIER_PX: f32 = 2.0;
+
+/// Least-squares `[c0, c1, α]` for `o = c0 + c1·t + α·t(1 − t)` over `(t, o)` samples, using
+/// only the samples within [`BOW_INLIER_PX`] of `prev` when one is given — and the standard
+/// error of `α`, from the fit's own residuals.
+fn bow_fit(sel: &[(f32, f32)], prev: Option<[f32; 3]>) -> Option<([f32; 3], f32)> {
+    let mut ata = [0f64; 9];
+    let mut atb = [0f64; 3];
+    let mut n = 0usize;
+    for &(t, o) in sel {
+        let g = t * (1.0 - t);
+        if let Some([c0, c1, a]) = prev
+            && (o - c0 - c1 * t - a * g).abs() > BOW_INLIER_PX
+        {
+            continue;
+        }
+        let row = [1.0, t as f64, g as f64];
+        for i in 0..3 {
+            atb[i] += row[i] * o as f64;
+            for j in 0..3 {
+                ata[i * 3 + j] += row[i] * row[j];
+            }
+        }
+        n += 1;
+    }
+    if n < 8 {
+        return None;
+    }
+    let normal = ata;
+    let x = solve(&mut ata, &mut atb, 3)?;
+    let fit = [x[0] as f32, x[1] as f32, x[2] as f32];
+    // Var(α) = σ² · [(AᵀA)⁻¹]₂₂, the last diagonal entry found by solving against e₂.
+    let mut a2 = normal;
+    let inv = solve(&mut a2, &mut [0.0, 0.0, 1.0], 3)?;
+    let mut rss = 0.0f32;
+    for &(t, o) in sel {
+        let r = o - fit[0] - fit[1] * t - fit[2] * t * (1.0 - t);
+        if prev.is_none() || r.abs() <= BOW_INLIER_PX {
+            rss += r * r;
+        }
+    }
+    let var = rss / (n - 3) as f32 * inv[2].max(0.0) as f32;
+    Some((fit, var.sqrt()))
+}
+
+/// Sensor points to where an undistorted camera would have put them, under `lens`.
+fn undistort(points: &[(f32, f32)], lens: Lens) -> Vec<(f32, f32)> {
+    let (cx, cy, k) = lens;
+    points
+        .iter()
+        .map(|&(x, y)| {
+            let (dx, dy) = (x - cx, y - cy);
+            let s = 1.0 + k * (dx * dx + dy * dy);
+            (cx + dx * s, cy + dy * s)
+        })
+        .collect()
 }
 
 /// Mean greyscale luma of each ring position, over both layers and a small cross of points.
@@ -884,6 +1149,129 @@ fn refine_quad(points: &[(f32, f32)], q: [(f32, f32); 4]) -> [(f32, f32); 4] {
         }
     }
     out
+}
+
+/// Corner disagreement, in pixels, below which the edge fit and the refined hull are taken to
+/// describe the same undamaged ring, and the refined hull's corners are used.
+const CORNER_AGREE_PX: f32 = 3.0;
+
+/// Fraction of an edge's length a point may sit off the hull's version of that edge and still
+/// be a candidate for the true one. Covers a corner displaced by a sixth of the symbol.
+const EDGE_SEARCH: f32 = 0.15;
+
+/// Distance, in pixels, within which a boundary point agrees with a candidate edge line.
+const EDGE_INLIER_PX: f32 = 1.5;
+
+/// Half-width, in pixels, of the band the first refit around a consensus line gathers from.
+const EDGE_REFIT_PX: f32 = 3.0;
+
+/// Consensus trials per edge.
+const EDGE_TRIALS: usize = 96;
+
+/// Least fraction of an edge's length that must lie on one straight line for the edge to be
+/// believed. A ring edge is straight end to end, so a clean one scores near 1.
+const EDGE_SUPPORT: f32 = 0.35;
+
+/// Four corners from four robustly fitted edges, ignoring where the hull put its corners (D23).
+///
+/// The hull's corners are its weakest part. Its four extreme points are taken as the ring's
+/// corners, so anything that moves an extreme point moves a corner, and corners are where
+/// damage lands. A patch over a corner is ink, and pulls that corner outward. A highlight
+/// erases the ring's corner and chops it inward. [`refine_quad`] cannot repair either,
+/// because it starts from the hull's corners and refuses to move one far.
+///
+/// An *edge* is long and straight, and damage near a corner touches only its end. So each
+/// edge is fitted by consensus — many trial lines through pairs of boundary points near the
+/// hull's version of the edge, keeping the one the most points agree with — and refitted by
+/// total least squares to its agreeing points. Corners come from intersecting neighbouring
+/// edges. A corner that is occluded, glared away or simply missing is reconstructed from the
+/// two edges that meet there.
+///
+/// `None` when an edge has too little straight support or the result is not a sane convex
+/// quad near the hull's, and the caller falls back to [`refine_quad`].
+fn edge_quad(points: &[(f32, f32)], q: [(f32, f32); 4]) -> Option<[(f32, f32); 4]> {
+    let mut lines = [((0.0f32, 0.0f32), (0.0f32, 0.0f32)); 4];
+    let mut cand: Vec<(f32, f32)> = Vec::new();
+    let mut inliers: Vec<(f32, f32)> = Vec::new();
+    for (e, line) in lines.iter_mut().enumerate() {
+        let (a, b) = (q[e], q[(e + 1) % 4]);
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 16.0 {
+            return None;
+        }
+        let (ux, uy) = (dx / len, dy / len);
+        cand.clear();
+        cand.extend(points.iter().copied().filter(|&(px, py)| {
+            let along = ((px - a.0) * ux + (py - a.1) * uy) / len;
+            let off = ((px - a.0) * uy - (py - a.1) * ux).abs();
+            (-0.05..=1.05).contains(&along) && off <= EDGE_SEARCH * len
+        }));
+        let n = cand.len();
+        if n < 8 {
+            return None;
+        }
+
+        // Deterministic trials: index pairs from two coprime strides, so a failure is
+        // reproducible and no RNG reaches the scanner.
+        let (mut best, mut best_count) = (None, 0usize);
+        for k in 0..EDGE_TRIALS {
+            let (i, j) = ((k * 7919 + 13) % n, (k * 104_729 + n / 2) % n);
+            let (p, r) = (cand[i], cand[j]);
+            let (lx, ly) = (r.0 - p.0, r.1 - p.1);
+            let l = (lx * lx + ly * ly).sqrt();
+            // Short baselines give wild directions; a trial must span a third of the edge.
+            if l < len / 3.0 {
+                continue;
+            }
+            let (fx, fy) = (lx / l, ly / l);
+            let count = cand
+                .iter()
+                .filter(|&&(px, py)| ((px - p.0) * fy - (py - p.1) * fx).abs() <= EDGE_INLIER_PX)
+                .count();
+            if count > best_count {
+                (best, best_count) = (Some((p, (fx, fy))), count);
+            }
+        }
+        // Points per unit length: rows and columns both contribute an extreme per pixel, so
+        // a fully supported axis-aligned edge offers about one point per pixel of length.
+        let mut fit = best?;
+        if (best_count as f32) < EDGE_SUPPORT * len {
+            return None;
+        }
+        // Refit as `refine_quad` does, around the consensus line rather than the hull edge:
+        // a wide band first, then a tight one, over the edge's middle only. The consensus
+        // line itself is biased — under blur, light and dark ring cells smear the boundary
+        // into two parallel populations a pixel or so apart, and the line with most inliers
+        // runs through one of them. The wide pass centres it between both; the middle-only
+        // window keeps whatever damaged a corner out of the fit.
+        for tol in [EDGE_REFIT_PX, EDGE_INLIER_PX] {
+            let ((ox, oy), (fx, fy)) = fit;
+            inliers.clear();
+            inliers.extend(cand.iter().copied().filter(|&(px, py)| {
+                let along = ((px - a.0) * ux + (py - a.1) * uy) / len;
+                (0.15..=0.85).contains(&along) && ((px - ox) * fy - (py - oy) * fx).abs() <= tol
+            }));
+            if inliers.len() < 8 {
+                return None;
+            }
+            fit = tls_line(&inliers);
+        }
+        *line = fit;
+    }
+
+    let mut out = q;
+    let span = ((q[0].0 - q[2].0).powi(2) + (q[0].1 - q[2].1).powi(2)).sqrt();
+    for (c, corner) in out.iter_mut().enumerate() {
+        let p = intersect(lines[(c + 3) % 4], lines[c])?;
+        // A reconstructed corner may move a long way from a damaged hull corner, but not off
+        // the scale of the symbol.
+        if (p.0 - q[c].0).powi(2) + (p.1 - q[c].1).powi(2) > (0.25 * span).powi(2) {
+            return None;
+        }
+        *corner = p;
+    }
+    Some(out)
 }
 
 /// Total-least-squares line through points: `(centroid, unit direction)`.

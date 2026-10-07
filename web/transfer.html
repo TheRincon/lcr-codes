@@ -67,6 +67,34 @@
   .good { color: var(--ok); }
   .warn { color: var(--bad); }
   #display { grid-column: 1 / -1; }
+
+  button {
+    font: inherit; font-size: .85rem; margin-top: .8rem;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px; padding: .45rem .8rem; cursor: pointer;
+  }
+  button:hover { border-color: var(--ok); }
+
+  /* Presentation: the symbol on a white ground and nothing else. The canvas is placed by
+     `fitPresent()` at a whole number of device pixels per canvas pixel *and* at a whole
+     device-pixel offset — flex centring can land it on a half pixel, which resamples every
+     module exactly as scaling does. */
+  body.present { padding: 0; background: #fff; overflow: hidden; }
+  body.present .wrap > :not(.cols),
+  body.present .controls,
+  body.present .meta,
+  body.present .err,
+  body.present #present { display: none; }
+  body.present .stage {
+    position: fixed; inset: 0; min-height: 0; padding: 0; border-radius: 0;
+    background: #fff; overflow: hidden; display: block;
+  }
+  body.present .stage canvas { position: absolute; }
+  #presentWarn {
+    display: none; position: fixed; left: 0; right: 0; bottom: 0; padding: .6rem 1rem;
+    background: #3a1c10; color: #f3c9a8; font-size: .85rem; z-index: 2;
+  }
+  body.present #presentWarn.on { display: block; }
 </style>
 </head>
 <body>
@@ -79,7 +107,7 @@
   </p>
 
   <div class="cols">
-    <div>
+    <div class="controls">
       <div class="drop" id="drop">
         <b>Drop a file</b>
         <span>or click to choose</span>
@@ -123,11 +151,13 @@
 
     <div>
       <div class="stage" id="stage"><div class="idle">No file yet.</div></div>
+      <button id="present" hidden>Present full screen</button>
       <div class="meta" id="meta"></div>
       <div class="err" id="err"></div>
     </div>
   </div>
 </div>
+<div id="presentWarn"></div>
 
 <script type="module">
 import { encoder, cft } from './lc/lc-code.js';
@@ -177,13 +207,6 @@ function render(rendered) {
   const { pixels, width, height } = rendered;
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
-  // One canvas pixel per *device* pixel. On a 2x display that means a 2008px symbol
-  // occupies 1004 CSS px and still renders 8 device pixels per module; letting CSS pick
-  // the size instead would resample at a non-integer ratio, which §13.1.3 forbids
-  // precisely because it aliases against the capturing sensor.
-  const dpr = window.devicePixelRatio || 1;
-  canvas.style.width = `${width / dpr}px`;
-  canvas.style.height = `${height / dpr}px`;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(width, height);
   for (let i = 0, j = 0; i < width * height; i++) {
@@ -195,6 +218,69 @@ function render(rendered) {
   ctx.putImageData(img, 0, 0);
   return canvas;
 }
+
+// Size the symbol on screen. One canvas pixel is always a whole number of *device* pixels:
+// on a 2x display a 2008 px symbol occupies 1004 CSS px and still shows 8 device pixels per
+// module. Letting CSS pick the size would resample at a non-integer ratio, which §13.1.3
+// forbids because it aliases against the capturing sensor — and which is exactly what an
+// image viewer or a "fit to window" page does to a symbol moved out of this one.
+//
+// Inline that whole number is 1. Presenting, it is the largest that fits the screen, so a
+// v40 at 8 px/module becomes 16 or 24, never 11.3; and the canvas is placed at a whole
+// device-pixel offset, because centring alone can land it on a half pixel.
+let modulePxShown = 8;
+function fitPresent() {
+  const canvas = stage.querySelector('canvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const warn = $('presentWarn');
+  if (!document.body.classList.contains('present')) {
+    canvas.style.width = `${canvas.width / dpr}px`;
+    canvas.style.height = `${canvas.height / dpr}px`;
+    canvas.style.left = canvas.style.top = '';
+    warn.classList.remove('on');
+    return;
+  }
+  const devW = Math.floor(window.innerWidth * dpr);
+  const devH = Math.floor(window.innerHeight * dpr);
+  const k = Math.max(1, Math.floor(Math.min(devW / canvas.width, devH / canvas.height)));
+  const w = canvas.width * k, h = canvas.height * k;
+  canvas.style.width = `${w / dpr}px`;
+  canvas.style.height = `${h / dpr}px`;
+  canvas.style.left = `${Math.max(0, Math.floor((devW - w) / 2)) / dpr}px`;
+  canvas.style.top = `${Math.max(0, Math.floor((devH - h) / 2)) / dpr}px`;
+  if (w > devW || h > devH) {
+    warn.textContent =
+      `Too large for this screen: ${canvas.width}×${canvas.height} device px against ` +
+      `${devW}×${devH}. Part of the symbol is cut off. Use a smaller version or a ` +
+      `bigger display — shrinking it would break §13.1.3. Esc to leave.`;
+    warn.classList.add('on');
+  } else {
+    warn.classList.remove('on');
+  }
+  document.title = `v${current ? current.version : ''} — ${modulePxShown * k} device px/module`;
+}
+
+let wakeLock = null;
+async function present(on) {
+  document.body.classList.toggle('present', on);
+  fitPresent();
+  if (on) {
+    // Fullscreen and wake lock are niceties: presentation still works without either,
+    // and Safari refuses some requests outside a gesture it recognises.
+    try { await document.documentElement.requestFullscreen(); } catch { /* not fatal */ }
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { wakeLock = null; }
+    fitPresent();
+  } else {
+    document.title = 'LC Code file transfer — sender';
+    try { await wakeLock?.release(); } catch { /* already gone */ }
+    wakeLock = null;
+    if (document.fullscreenElement) {
+      try { await document.exitFullscreen(); } catch { /* not fatal */ }
+    }
+  }
+}
+let current = null;
 
 // §13.1.3: at least 8 device pixels per module, at an integer multiple. A symbol wider
 // than the window is the common way to violate it — the browser would scale it, and a
@@ -272,6 +358,10 @@ async function load(file) {
     const ms = performance.now() - t0;
 
     stage.replaceChildren(render(one));
+    current = one;
+    modulePxShown = modulePx;
+    fitPresent();
+    $('present').hidden = false;
     const orig = Number(transfer.originalSize);
     const ratio = orig ? streamLen / orig : 1;
     meta.innerHTML = `
@@ -285,6 +375,8 @@ async function load(file) {
       <div id="display"></div>`;
     reportDisplay(one, modulePx);
   } catch (e) {
+    current = null;
+    $('present').hidden = true;
     idle('Nothing to show.');
     err.textContent = String(e && e.message || e);
   }
@@ -308,6 +400,27 @@ for (const id of ['version', 'profile', 'ecc', 'modulePx']) {
     if (f) load(f);
   });
 }
+$('present').onclick = () => present(true);
+// Leaving fullscreen by any route — Esc, a gesture, the browser's own control — ends the
+// presentation, so the page never sits in present mode with the controls hidden.
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && document.body.classList.contains('present')) present(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.body.classList.contains('present')) present(false);
+});
+// Clicking the symbol leaves too: on a phone or tablet there may be no Esc key.
+stage.addEventListener('click', () => {
+  if (document.body.classList.contains('present')) present(false);
+});
+window.addEventListener('resize', fitPresent);
+// A wake lock is dropped when the tab is hidden; take it again on return.
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && document.body.classList.contains('present')) {
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { wakeLock = null; }
+  }
+});
+
 showCeiling();
 </script>
 </body>

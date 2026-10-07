@@ -362,6 +362,10 @@ pub struct Demodulation {
     pub chroma: Vec<f32>,
     /// The statistics the LLRs were scaled by.
     pub stats: ChannelStats,
+    /// §12.3-corrected colour of every luma position — grid payload, then ring payload
+    /// cells — as sampled for the luma read. What D24's equaliser reads, so a retry or an
+    /// accumulating preview never samples the frame twice (D25). Empty when not kept.
+    pub colours: Vec<Linear>,
 }
 
 /// Demodulate both layers (§12.4).
@@ -452,6 +456,7 @@ pub fn demodulate(
         luma,
         chroma,
         stats: *stats,
+        colours: at.into_iter().map(|(_, _, c)| c).collect(),
     }
 }
 
