@@ -1479,6 +1479,65 @@ presentation mode, and is easier to scan, being larger at a whole-number scale.
 - `display.html` has had an equivalent presentation mode since the capture sweep;
   `transfer.html` now matches it. The two are separate implementations and could be shared.
 
+### D27. Reviewer fixes: combined format copies, per-level chroma noise — and 27 KB back
+
+**Status:** implemented. `crates/lc-decode/src/{demod,ring,lib,image,math}.rs`.
+Decoder-only. Four fixes an outside reviewer proposed, each measured; two shipped, one was
+rejected on measurement, one kept on probation. Then a size scan.
+
+**1. Soft-combined format copies.** Both format readers decoded copy A and copy B separately
+and kept the larger margin. They now also decode the copies' averaged LLRs
+(`demod::format_candidates`) and keep the best of all three; averaged rather than summed,
+so the margins share a scale. `--example format_probe`, v4, 32 trials, format read correctly:
+
+| | σ 0.30 | 0.35 | 0.40 | 0.45 | 0.50 |
+|---|---|---|---|---|---|
+| `C1` | 100 → 100 | 97 → **100** | 97 → **100** | 94 → **97** | 94 → **100** |
+| `C3` | 75 → **91** | 59 → **66** | 28 → **44** | 9 → **19** | 6 → **12** |
+
+End to end, every format failure in `C3`'s noise rows disappeared.
+
+**2. Chroma noise per luma level.** One pooled `a*b*` noise scale served both levels. In
+linear light a dark colour has far less chroma signal than a light one at the same `C*`, so
+the pooled scale overstated confidence in dark hues and understated it in light ones.
+`ChannelStats::sigma_ab_level` measures each level separately. `sigma_ab_at` interpolates by
+the sample's lightness, so a `C2` cell averaged over both levels gets a scale in between;
+`hue_log_likelihoods` and `reliability` use it. **`C3` at noise σ 0.26 went from 19% to 100%**
+(16 trials; 31% → 97% at 32), and 0.22 from 94% to 100%. At 48 trials the blur edge moved
+too: `C1` blur 9 / 10 went 88 / 25% → **98 / 48%**, `C2` blur 9 98% → 100%, `C3` unchanged.
+
+**3. Blur-aware mask selection — rejected.** An oracle showed the lever is real: per
+payload, *some* luma mask decodes far more often under heavy blur (`C1` blur 10: the chosen
+mask 54%, best of 8 per trial 96%). But nothing the encoder can compute finds that mask.
+Pattern penalties (isolated modules, transitions, isolated hues) were no better than the
+current QR-derived penalty on held-out trials. Even rehearsing each mask through a blur of
+the same width but a different shape picked 47% against the oracle's 97%. Which mask
+survives depends on the exact kernel, so an encoder cannot choose for an unknown lens.
+
+**4. Illumination refit from decoded cells — on probation.** When luma converges and chroma
+does not, the last rung of the retry refits §12.3 using every payload module as a reference:
+level from the luma codeword, hue from the chroma posterior. New `stages` scenarios —
+vignetting, colour cast with shading, two highlights — at v4 and v16 found illumination
+limiting almost nowhere: 33 of 36 cells were already 100%, and the refit moved one trial.
+It costs 2.5 KB and runs only after the CRC rejects. It stays because it targets
+real-capture colour behaviour the harness cannot produce. It is the first thing to cut if
+captures never show it helping.
+
+**Size: 226,581 → 199,141 bytes (88% → 77% raw; 80% → 71% gzip).**
+
+- **One `clamp` kept the float printer alive: −23.4 KB.** `ImageView::linear_bilinear` clamped
+  with `self.width as f32 - 1.0`, a bound known only at run time. `f32::clamp` asserts
+  `min <= max`, and that assertion's panic message Debug-formats both floats. That one call
+  kept `<f32 as Debug>::fmt` and the Dragon4/Grisu printers — ~20 KB of code and ~3.5 KB of
+  their tables — reachable, which is what D17 traced and D20 believed binaryen had removed.
+  `max(0.0).min(w - 1.0)` is identical for any image `ImageView::new` accepts. **A `clamp`
+  with a non-constant bound anywhere in the scanner costs this much**; constant bounds fold
+  the assertion away.
+- **Median by quickselect: −4.0 KB.** `math::median` sorted to find a middle value, which
+  brought in the standard library's pattern-defeating quicksort and its small-sort helpers.
+  Quickselect gives the identical median; `median_matches_a_sorted_reference` checks it
+  against a full sort over 1,140 random arrays.
+
 ## Pinned — filling holes the draft left open
 
 | # | Spec item | Pinned as | Where |

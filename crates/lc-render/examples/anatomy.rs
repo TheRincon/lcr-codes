@@ -506,7 +506,7 @@ fn main() {
         JSON.len(),
         cbor.len()
     );
-    let foot = "It must be with a color camera. Grarscale will recognize the image but not successfully decode it. \
+    let foot = "It must be with a color camera. Grayscale will recognize the image but not successfully decode it. \
                 Regenerate this explanatory image with <code>just anatomy</code>.";
     let (pw, ph) = PAGE;
     let html = format!(

@@ -376,6 +376,77 @@ impl<V: PacketVerifier> Decoder<V> {
         })
     }
 
+    /// D27's last rung: refit the illumination model with every payload module as a
+    /// reference and decode chroma again. `None` when the refit's chroma does not converge.
+    fn refit_chroma(
+        &self,
+        p: &Prepared,
+        d: &Demodulation,
+        img: &ImageView,
+        luma: &DecodeResult,
+        chroma: &DecodeResult,
+    ) -> Result<Option<DecodeResult>, DecodeError> {
+        let (layout, palette) = (&p.layout, &p.palette);
+        let cap = layout.capacity();
+        let light = equalize::luma_levels(&luma.codeword, layout, p.format.mask);
+        let cell_hue = equalize::chroma_hues(&chroma.codeword, layout, palette.hues);
+        let one_module = layout.profile.chroma_cell() == 1;
+        let mut refs = demod::collect_references(img, &p.transform, layout, palette, p.ring);
+        let fixed = refs.len();
+        let grid = layout.payload.len();
+        let coords = layout
+            .payload
+            .iter()
+            .map(|&(x, y)| (x as i32, y as i32))
+            .chain(border::payload_cells(layout.side));
+        for (k, (x, y)) in coords.enumerate() {
+            // The hue a module was drawn in, as `lc-core`'s `modulate` assigns it.
+            let hue = if k < grid {
+                match *layout.chroma_of.at(x as u16, y as u16) {
+                    lc_core::layout::NO_CHROMA => 0,
+                    c => cell_hue.get(c as usize).copied().unwrap_or(0),
+                }
+            } else if one_module {
+                cell_hue
+                    .get(layout.chroma_cells.len() + k - grid)
+                    .copied()
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            let Some(&level) = light.get(k) else { break };
+            refs.push(illum::Reference {
+                x: x as f32 + 0.5,
+                y: y as f32 + 0.5,
+                observed: sample::sample_module(img, &p.transform, x, y),
+                nominal: palette.linear[usize::from(level) * palette.hues + hue],
+            });
+        }
+        let model = IlluminationModel::fit(&refs, layout.side, p.format.version.get());
+        // Noise from the fixed references only: their colours are certain, the decoded
+        // ones are guesses the robust refit tolerates but a σ estimate should not.
+        let stats = demod::measure(&refs[..fixed], &model, palette);
+        let again = demod::demodulate(
+            img,
+            &p.transform,
+            layout,
+            palette,
+            &model,
+            &stats,
+            p.with_chroma,
+        );
+        if again.chroma.len() != d.chroma.len() {
+            return Ok(None);
+        }
+        let ecc = p.format.ecc;
+        let code = Code::new(CHROMA_RATE_INDEX[ecc.chroma as usize & 3], cap.chroma_bits)?;
+        let out = code.decode(
+            &Interleaver::new(cap.chroma_bits).deinterleave(&again.chroma),
+            self.options.max_iterations,
+        )?;
+        Ok(out.converged.then_some(out))
+    }
+
     /// One rung of D24's equalising retry against `obs`: turbo-equalised luma until it
     /// converges, then turbo-equalised chroma if luma converged and chroma did not. Returns
     /// whether either layer changed.
@@ -533,6 +604,18 @@ impl<V: PacketVerifier> Decoder<V> {
                     parsed =
                         Frame::from_bits(&layer_bits(&luma_out, chroma_out.as_ref(), cap.total()));
                 }
+            }
+            // D27: luma known, chroma still failing. Every payload module is now a colour
+            // reference — level from the luma codeword, hue from the chroma decoder's
+            // posterior — so refit §12.3 from thousands of them, not ~1.5% of the area.
+            if parsed.is_err()
+                && let Some(img) = img
+                && luma_out.converged
+                && let Some(first) = chroma_out.as_ref().filter(|c| !c.converged)
+                && let Some(out) = self.refit_chroma(p, d, img, &luma_out, first)?
+            {
+                chroma_out = Some(out);
+                parsed = Frame::from_bits(&layer_bits(&luma_out, chroma_out.as_ref(), cap.total()));
             }
         }
 
@@ -924,7 +1007,7 @@ fn read_format(
         let stats = demod::measure(&refs, &identity, &mono);
 
         let copies = demod::format_llrs(img, &transform, &probe, &identity, &stats);
-        for llrs in &copies {
+        for llrs in &demod::format_candidates(&copies) {
             let (bits, margin) = bch::decode_soft(llrs);
             let Ok(info) = FormatInfo::from_bits(bits) else {
                 continue;

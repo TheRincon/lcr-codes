@@ -410,7 +410,7 @@ pub fn read_ring_format(
             }
         }
 
-        for llrs in &copies {
+        for llrs in &demod::format_candidates(&copies) {
             let (bits, margin) = bch::decode_soft(llrs);
             // `from_ring_bits`, not `from_bits`: a ringed symbol spends the version and
             // border bits on a wider profile field (D21), because the sequence correlation

@@ -84,18 +84,59 @@ pub fn least_squares(rows: &[(Vec<f64>, f64)], terms: usize) -> Option<Vec<f64>>
     solve(&mut ata, &mut atb, terms)
 }
 
-/// Median of a slice, by partial sort. Consumes a scratch copy.
+/// Median of a slice, by quickselect. Reorders its argument.
+///
+/// Quickselect rather than a sort: a median needs one order statistic, not the order, and
+/// `sort_unstable_by` brought a 3.2 KB pattern-defeating quicksort into the scanner for it.
 pub fn median(values: &mut [f32]) -> f32 {
-    if values.is_empty() {
+    let n = values.len();
+    if n == 0 {
         return 0.0;
     }
-    values.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-    let n = values.len();
+    let upper = select(values, n / 2);
     if n % 2 == 1 {
-        values[n / 2]
+        upper
     } else {
-        0.5 * (values[n / 2 - 1] + values[n / 2])
+        // `select` leaves everything below index n/2 no larger than it, so the lower middle
+        // is the largest of those.
+        let lower = values[..n / 2]
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        0.5 * (lower + upper)
     }
+}
+
+/// The `k`-th smallest value of `v` (0-based), by Hoare-partition quickselect. Leaves
+/// `v[..k]` no larger and `v[k + 1..]` no smaller than the result.
+fn select(v: &mut [f32], k: usize) -> f32 {
+    let (mut lo, mut hi) = (0isize, v.len() as isize - 1);
+    let k = k as isize;
+    while lo < hi {
+        let pivot = v[(lo + (hi - lo) / 2) as usize];
+        let (mut i, mut j) = (lo, hi);
+        while i <= j {
+            while v[i as usize] < pivot {
+                i += 1;
+            }
+            while v[j as usize] > pivot {
+                j -= 1;
+            }
+            if i <= j {
+                v.swap(i as usize, j as usize);
+                i += 1;
+                j -= 1;
+            }
+        }
+        if k <= j {
+            hi = j;
+        } else if k >= i {
+            lo = i;
+        } else {
+            break;
+        }
+    }
+    v[k as usize]
 }
 
 /// Median absolute deviation, scaled to estimate a Gaussian standard deviation.
@@ -163,6 +204,31 @@ mod tests {
     #[test]
     fn least_squares_needs_enough_rows() {
         assert!(least_squares(&[(vec![1.0, 0.0], 1.0)], 2).is_none());
+    }
+
+    /// Quickselect must agree with a full sort on every length and every arrangement,
+    /// duplicates included.
+    #[test]
+    fn median_matches_a_sorted_reference() {
+        let mut seed = 12345u32;
+        for n in 1..60usize {
+            for _ in 0..20 {
+                let v: Vec<f32> = (0..n)
+                    .map(|_| {
+                        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                        ((seed >> 16) % 17) as f32
+                    })
+                    .collect();
+                let mut sorted = v.clone();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let want = if n % 2 == 1 {
+                    sorted[n / 2]
+                } else {
+                    0.5 * (sorted[n / 2 - 1] + sorted[n / 2])
+                };
+                assert_eq!(median(&mut v.clone()), want, "{v:?}");
+            }
+        }
     }
 
     #[test]

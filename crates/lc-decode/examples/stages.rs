@@ -103,6 +103,22 @@ fn scenarios() -> Vec<Scenario> {
             let (cx, cy) = corner(rng, q);
             specular(r, cx, cy, 0.2, m)
         }),
+        ("vignetting", &[0.5, 0.7, 0.85], |r, m, _, _| {
+            // Radial light falloff about the frame centre, as every phone lens has: the
+            // frame corners lose `m` of their light.
+            map_linear(r, |u, v, c| {
+                let s = 1.0 - m * ((u - 0.5).powi(2) + (v - 0.5).powi(2)) / 0.5;
+                std::array::from_fn(|i| c[i] * s)
+            })
+        }),
+        ("cast + shading", &[0.5, 0.6, 0.7], |r, m, rng, _| {
+            shading_dir(&color_cast(r, [1.0, 0.8, 0.5]), m, rng.range(0.0, 360.0))
+        }),
+        ("two highlights", &[0.6, 0.8, 1.0], |r, m, rng, _| {
+            let (ax, ay) = (rng.range(0.2, 0.8), rng.range(0.2, 0.8));
+            let (bx, by) = (rng.range(0.2, 0.8), rng.range(0.2, 0.8));
+            specular(&specular(r, ax, ay, 0.25, m), bx, by, 0.25, m)
+        }),
         (
             "lens distortion",
             &[0.01, 0.02, 0.05, 0.10],

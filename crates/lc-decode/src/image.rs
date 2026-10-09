@@ -145,8 +145,13 @@ impl<'a> ImageView<'a> {
 
     /// Bilinearly sample linear-light RGB at fractional coordinates.
     pub fn linear_bilinear(&self, x: f32, y: f32) -> Linear {
-        let x = x.clamp(0.0, self.width as f32 - 1.0);
-        let y = y.clamp(0.0, self.height as f32 - 1.0);
+        // `max` then `min`, not `clamp`: `f32::clamp` asserts `min <= max`, and with a bound
+        // only known at run time that assertion — and the Debug formatting of two floats in
+        // its panic message — stays in the binary. That one assertion kept ~16 KB of float
+        // printing alive in the scanner. `ImageView::new` already rejects an empty image, so
+        // the bounds are always ordered here.
+        let x = x.max(0.0).min(self.width as f32 - 1.0);
+        let y = y.max(0.0).min(self.height as f32 - 1.0);
         let (x0, y0) = (x.floor() as u32, y.floor() as u32);
         let (fx, fy) = (x - x0 as f32, y - y0 as f32);
         let (x1, y1) = ((x0 + 1).min(self.width - 1), (y0 + 1).min(self.height - 1));

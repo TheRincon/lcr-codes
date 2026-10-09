@@ -80,6 +80,10 @@ const MIN_SIGMA_AB: f32 = 0.75;
 /// that alone took the reported SNR from 27 dB to 7.
 const MAX_LEVEL_DEVIATION: f32 = 12.0;
 
+/// Fewest chromatic references a luma level needs before its own chroma noise scale is
+/// measured, rather than the pooled one used (D27).
+const MIN_LEVEL_REFS: usize = 8;
+
 /// Half-width, in modules, of the neighbourhood [`local_luma`] fits over.
 ///
 /// 7×7 is ~49 samples for a four-parameter fit: enough that both levels are well
@@ -111,8 +115,16 @@ pub struct ChannelStats {
     pub l1: f32,
     /// Luma noise scale, in `L*`.
     pub sigma_l: f32,
-    /// Chroma noise scale, in `a*b*`.
+    /// Chroma noise scale, in `a*b*`, pooled over both levels. What the chroma SNR reports.
     pub sigma_ab: f32,
+    /// Chroma noise scale at each luma level, dark then light; `0.0` where not measured, in
+    /// which case [`ChannelStats::sigma_ab`] stands in (D27).
+    ///
+    /// A dark colour has much less chroma *signal* in linear light than a light one at the
+    /// same `C*`, so the same sensor noise scatters its `a*b*` further. One pooled scale
+    /// overstates confidence in dark hues and understates it in light ones; the decoder
+    /// should know which modules it can believe.
+    pub sigma_ab_level: [f32; 2],
     /// Known-colour modules the estimate is based on.
     pub samples: u32,
 }
@@ -126,8 +138,22 @@ impl ChannelStats {
             l1: palette.level_l[1],
             sigma_l: 6.0,
             sigma_ab: 6.0,
+            sigma_ab_level: [0.0; 2],
             samples: 0,
         }
+    }
+
+    /// Chroma noise scale for a sample at lightness `l`: the two levels' measured scales,
+    /// interpolated by where `l` sits between the level centroids. Interpolated rather than
+    /// switched, so a `C2` chroma cell — four modules averaged, of either level — gets a
+    /// scale between the two instead of an arbitrary one.
+    pub fn sigma_ab_at(&self, l: f32) -> f32 {
+        let [d, li] = self.sigma_ab_level;
+        if d <= 0.0 || li <= 0.0 {
+            return self.sigma_ab;
+        }
+        let t = ((l - self.l0) / (self.l1 - self.l0).max(1e-3)).clamp(0.0, 1.0);
+        d + (li - d) * t
     }
 
     /// Luma separation in units of its own noise — the honest per-module SNR, and the
@@ -195,9 +221,12 @@ impl ChannelStats {
     pub fn reliability(&self, sample: Lab, palette: &Palette) -> f32 {
         let mut best = f32::INFINITY;
         for c in &palette.lab {
+            // The scale for the palette entry being tested: a sample is unlikely under a dark
+            // colour's noise, not its own lightness's.
+            let s_ab = self.sigma_ab_at(c.l);
             let dl = (sample.l - c.l) / self.sigma_l;
-            let da = (sample.a - c.a) / self.sigma_ab;
-            let db = (sample.b - c.b) / self.sigma_ab;
+            let da = (sample.a - c.a) / s_ab;
+            let db = (sample.b - c.b) / s_ab;
             best = best.min(dl * dl + da * da + db * db);
         }
         // Flat out to ~3σ, then falls away fast.
@@ -210,7 +239,8 @@ impl ChannelStats {
     /// cancels.
     pub fn hue_log_likelihoods(&self, sample: Lab, palette: &Palette, out: &mut Vec<f32>) {
         out.clear();
-        let denom = 2.0 * self.sigma_ab * self.sigma_ab;
+        let s_ab = self.sigma_ab_at(sample.l);
+        let denom = 2.0 * s_ab * s_ab;
         for h in 0..palette.hues {
             let [a, b] = palette.hue_ab[h];
             let d2 = (sample.a - a).powi(2) + (sample.b - b).powi(2);
@@ -304,6 +334,7 @@ pub fn measure(
     let mid = (palette.level_l[0] + palette.level_l[1]) / 2.0;
     let (mut dark, mut light) = (Vec::new(), Vec::new());
     let mut ab_err = Vec::new();
+    let mut ab_level: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
 
     for r in refs {
         let corrected = color::linear_to_lab(illum.correct(r.x, r.y, r.observed));
@@ -320,7 +351,9 @@ pub fn measure(
         // border cells sit at the origin of a*b* and would report a hue error that is
         // really just a lightness error.
         if nominal.chroma() > 20.0 {
-            ab_err.push(corrected.ab_distance(nominal));
+            let e = corrected.ab_distance(nominal);
+            ab_err.push(e);
+            ab_level[level].push(e);
         }
     }
     if dark.len() < 3 || light.len() < 3 {
@@ -348,6 +381,15 @@ pub fn measure(
         } else {
             mad_sigma(&ab_err).max(MIN_SIGMA_AB)
         },
+        // Per level only where a level has enough chromatic references to measure from;
+        // otherwise 0, and the pooled scale stands in.
+        sigma_ab_level: ab_level.map(|e| {
+            if e.len() >= MIN_LEVEL_REFS {
+                mad_sigma(&e).max(MIN_SIGMA_AB)
+            } else {
+                0.0
+            }
+        }),
         samples: refs.len() as u32,
     }
 }
@@ -650,6 +692,18 @@ pub fn unmask_luma(llrs: &mut [f32], layout: &Layout, mask_id: u8) {
     }
 }
 
+/// The format words worth BCH-decoding from two copies: each alone, and their mean (D27).
+///
+/// Averaging the copies' LLRs before decoding rather than voting afterwards is worth up to
+/// 3 dB when both are noisy — two independent observations of one word. Each copy is still
+/// tried alone, because a copy that sits under a highlight is better dropped than averaged
+/// in; the caller keeps whichever decodes with the largest margin. Averaged rather than
+/// summed so the three margins are on one scale.
+pub fn format_candidates<const N: usize>(copies: &[[f32; N]; 2]) -> [[f32; N]; 3] {
+    let mean = core::array::from_fn(|i| (copies[0][i] + copies[1][i]) / 2.0);
+    [copies[0], copies[1], mean]
+}
+
 /// Sample the two format-region copies as LLRs, for the soft BCH decode of §12.2.
 ///
 /// Runs before the illumination fit — §12.3 needs the palette, which the format region is
@@ -708,6 +762,7 @@ mod tests {
             l1: 78.0,
             sigma_l: 4.0,
             sigma_ab: 5.0,
+            sigma_ab_level: [0.0; 2],
             samples: 100,
         }
     }
