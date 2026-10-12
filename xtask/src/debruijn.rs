@@ -62,17 +62,17 @@ const BUDGET: u64 = 40_000_000;
 
 /// Number of distinct sequence positions around the ring, for a given symbol side.
 ///
-/// **Straight from `lc_core::border`, not recomputed here.** This used to derive the ring
+/// **Straight from `lcr_core::border`, not recomputed here.** This used to derive the ring
 /// from its own copy of the canvas geometry, and when D18 narrowed the gap between grid and
 /// ring the generator kept emitting sequences for the old, longer ring: every version's table
-/// was quietly wrong, and `every_sequence_window_is_unique` in lc-core was what caught it.
+/// was quietly wrong, and `every_sequence_window_is_unique` in lcr-core was what caught it.
 fn ring_positions(side: u32) -> usize {
-    lc_core::border::positions(side as u16)
+    lcr_core::border::positions(side as u16)
 }
 
 /// Every version's side length, per §6.1.
 fn sides() -> impl Iterator<Item = (u8, u32)> {
-    (1u8..=lc_core::Version::MAX.get()).map(|v| (v, 21 + 4 * (v as u32 - 1)))
+    (1u8..=lcr_core::Version::MAX.get()).map(|v| (v, 21 + 4 * (v as u32 - 1)))
 }
 
 // ---------------------------------------------------------------- generation

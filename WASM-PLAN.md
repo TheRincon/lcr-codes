@@ -1,12 +1,12 @@
-# LC Code in a WASM-only host
+# LCR Code in a WASM-only host
 
-*Written 2026-09-03, for integrating LC Code into a WebAssembly-only browser as the
+*Written 2026-09-03, for integrating LCR Code into a WebAssembly-only browser as the
 transport for offline passkey transfer.*
 
 **Correction to earlier advice in this repo.** A previous note claimed "zero JS is not
 reachable in a browser". That is true of *stock* browsers and false for the case here. If
 you are building the browser, you own the host, and there is no JavaScript anywhere in the
-picture. LC Code is unusually well suited to that — better than it is to the conventional
+picture. LCR Code is unusually well suited to that — better than it is to the conventional
 web — and this document explains why, then lists what integration actually needs.
 
 ---
@@ -38,18 +38,18 @@ not exist to be removed.
 
 ---
 
-## 2. What LC Code already gives you
+## 2. What LCR Code already gives you
 
 Three properties that were designed for a non-browser host and happen to be exactly what a
 WASM-only runtime wants.
 
 **It imports nothing.** The scanner component instantiates against a linker containing
 *literally nothing* — no WASI, no clock, no randomness, no filesystem. That is asserted, not
-assumed: `crates/lc-wasm/tests/component.rs::instantiates_with_an_empty_linker` fails the
+assumed: `crates/lcr-wasm/tests/component.rs::instantiates_with_an_empty_linker` fails the
 build if the component ever acquires a host dependency. For a minimal runtime this is the
 difference between "embed a wasm module" and "implement a syscall surface first".
 
-**It is already a Component Model component**, not a browser bundle. `wit/lc.wit` is the
+**It is already a Component Model component**, not a browser bundle. `wit/lcr.wit` is the
 whole contract: typed records, a `result` type for errors, and a resource for multi-frame
 state. No hand-written ABI, no struct layout to agree on out of band.
 
@@ -60,8 +60,8 @@ path can hand over a Y plane without a colour conversion.
 
 | artifact | raw | zstd | exports |
 |---|---:|---:|---|
-| `dist/lc-code-scanner.wasm` | 193 KB | ~69 KB | `decoder` only |
-| `dist/lc-code.wasm` | 283 KB | ~104 KB | `decoder` + `encoder` |
+| `dist/lcr-code-scanner.wasm` | 193 KB | ~69 KB | `decoder` only |
+| `dist/lcr-code.wasm` | 283 KB | ~104 KB | `decoder` + `encoder` |
 
 Two artifacts because §14.1 keeps the encoder out of a scanner deliberately. **A transfer
 needs both ends**: the sending device encodes and displays, the receiving device scans. If
@@ -75,12 +75,12 @@ a smaller job, it can link only what it needs.
 **Both are wanted.** Option A is the primary path and exists today. Option B is a fallback
 for a runtime that cannot host a component, and is specified here so it can be built when
 needed — or discarded without anything else changing. They are not exclusive: the same
-`lc-decode` crate backs both, so a host can start on A and fall back to B without the
+`lcr-decode` crate backs both, so a host can start on A and fall back to B without the
 decoder itself moving.
 
 | | A — Component Model | B — flat core ABI |
 |---|---|---|
-| Status | **ships today** (`dist/lc-code-scanner.wasm`) | **design only** — `lc-ffi` is a stub |
+| Status | **ships today** (`dist/lcr-code-scanner.wasm`) | **design only** — `lcr-ffi` is a stub |
 | Runtime needed | Component Model | any core wasm |
 | Module size | 193 KB | ~180 KB estimated |
 | Host code | bindings generated | ~40 lines, hand-written |
@@ -89,21 +89,21 @@ decoder itself moving.
 
 ### Option A — Component Model runtime *(primary)*
 
-Instantiate `lc-code-scanner.wasm` directly. Typed values cross the boundary and lists are
-marshalled for you; `wit/lc.wit` is the entire contract.
+Instantiate `lcr-code-scanner.wasm` directly. Typed values cross the boundary and lists are
+marshalled for you; `wit/lcr.wit` is the entire contract.
 
 * **Cost:** the runtime must implement the Component Model, not just core wasm. Wasmtime
   does. `wasmi`, `wasm3`, `wazero` and WAMR are core-wasm-only or partial — see D9, where a
   Go host was abandoned for exactly this reason.
 * **Benefit:** no ABI to design, no memory management to hand-roll, and the interface is
-  versioned (`lc:code@0.4.0`) so a mismatch is a load error rather than corrupt pixels.
+  versioned (`lcr:code@0.4.0`) so a mismatch is a load error rather than corrupt pixels.
 
 Start here. 193 KB against ~180 KB is not a reason to own a memory protocol.
 
 ### Option B — flat core ABI *(fallback, not yet built)*
 
 A core `wasm32-unknown-unknown` module exporting a C-style surface, callable from any
-core-wasm runtime. **This is `lc-ffi`, currently a one-line placeholder**, already on the
+core-wasm runtime. **This is `lcr-ffi`, currently a one-line placeholder**, already on the
 roadmap as "C ABI" — targeting it at wasm as well as native serves both at once.
 
 Reach for it if your runtime is core-wasm only, if you are writing the interpreter
@@ -115,21 +115,21 @@ treat it as the design to build against, and expect the details to move once it 
 **Exports**
 
 ```
-lc_abi_version() -> u32                     // bump on any layout change; check it first
-lc_alloc(len: u32) -> u32                   // returns an offset into guest memory, 0 on failure
-lc_dealloc(ptr: u32, len: u32)
+lcr_abi_version() -> u32                     // bump on any layout change; check it first
+lcr_alloc(len: u32) -> u32                   // returns an offset into guest memory, 0 on failure
+lcr_dealloc(ptr: u32, len: u32)
 
-lc_decode(ptr: u32, len: u32, width: u32, height: u32,
+lcr_decode(ptr: u32, len: u32, width: u32, height: u32,
           stride: u32, format: u32) -> u32  // returns an offset to the result block
-lc_result_free(res: u32)
+lcr_result_free(res: u32)
 
-lc_acc_new() -> u32                         // handle, 0 on failure
-lc_acc_push(acc: u32, ptr: u32, len: u32, width: u32, height: u32,
+lcr_acc_new() -> u32                         // handle, 0 on failure
+lcr_acc_push(acc: u32, ptr: u32, len: u32, width: u32, height: u32,
             stride: u32, format: u32) -> u32   // 0 = ok
-lc_acc_frames(acc: u32) -> u32
-lc_acc_decode(acc: u32) -> u32              // result block, as lc_decode
-lc_acc_reset(acc: u32)
-lc_acc_free(acc: u32)
+lcr_acc_frames(acc: u32) -> u32
+lcr_acc_decode(acc: u32) -> u32              // result block, as lcr_decode
+lcr_acc_reset(acc: u32)
+lcr_acc_free(acc: u32)
 ```
 
 `format` is `0 = gray8, 1 = rgb8, 2 = rgba8`, matching `pixel-format` in the WIT.
@@ -163,10 +163,10 @@ mechanism for both outcomes, so a host never has a second error channel to forge
 
 **Call sequence**
 
-1. `lc_alloc(len)` → offset; write pixels there through the runtime's memory accessor.
-2. `lc_decode(...)` → result offset.
+1. `lcr_alloc(len)` → offset; write pixels there through the runtime's memory accessor.
+2. `lcr_decode(...)` → result offset.
 3. Read the 68-byte block; if `status == 0`, read `body_len` bytes at `body_ptr`.
-4. `lc_result_free(res)`, then `lc_dealloc(ptr, len)`.
+4. `lcr_result_free(res)`, then `lcr_dealloc(ptr, len)`.
 
 Two properties worth preserving if the design changes. **The guest owns every allocation** —
 the host never frees guest memory itself, only asks the guest to. And **the result block is
@@ -187,16 +187,16 @@ take B and later add signing, that is the line to be careful about.
 - [ ] **Start on A.** It exists, and everything below is identical either way — the capture
       path and the payload questions do not care which surface carries the pixels.
 - [ ] **Instantiate the scanner component** and get one decode from a static test frame
-      before touching the camera. `cargo run -p lc-decode --release --example frame` emits a
+      before touching the camera. `cargo run -p lcr-decode --release --example frame` emits a
       raw RGBA capture with a `u32` width / `u32` height header — a fixture that removes
       capture from the equation while the plumbing is proven.
 - [ ] **Confirm the empty linker holds in your runtime.** If instantiation demands an
       import, the module is not the one this repo builds.
 - [ ] **Build B only when A is ruled out**, and say why in the issue. It is ~200 lines of
-      Rust in `lc-ffi` plus the host side, and it is dead weight if the runtime can host a
+      Rust in `lcr-ffi` plus the host side, and it is dead weight if the runtime can host a
       component. The one signal that settles it: does your runtime load
-      `dist/lc-code-scanner.wasm` at all?
-- [ ] **If B is built, cover the same ground A's tests do.** `lc-wasm/tests/surface.rs` and
+      `dist/lcr-code-scanner.wasm` at all?
+- [ ] **If B is built, cover the same ground A's tests do.** `lcr-wasm/tests/surface.rs` and
       `component.rs` are the model — a round trip, the accumulator, malformed input
       returning an error rather than trapping, and `unverified`/`partial` exposing no body.
       That last one is a type guarantee in A and only a convention in B, so it needs a test
@@ -207,7 +207,7 @@ take B and later add signing, that is the line to be careful about.
 - [ ] **Get frames from the sensor into a supported layout.** This is the task most likely
       to surprise: camera stacks usually deliver **NV12, YUY2 or another YUV format**, not
       RGBA. Today the host must convert.
-- [ ] **Consider adding `pixel-format::nv12`** (and possibly `yuy2`) to `wit/lc.wit`. LC
+- [ ] **Consider adding `pixel-format::nv12`** (and possibly `yuy2`) to `wit/lcr.wit`. LCR
       Code already separates luma from chroma internally, and NV12 *is* a separated Y plane
       plus interleaved chroma — so this is a natural fit rather than a bolt-on, and it
       removes a full-frame colour conversion from the hot path on every frame.
@@ -224,11 +224,11 @@ take B and later add signing, that is the line to be careful about.
 
 ### Payload — passkey specifics
 
-- [ ] **Encrypt before encoding. LC Code provides no confidentiality** (§10.8) — it is a
+- [ ] **Encrypt before encoding. LCR Code provides no confidentiality** (§10.8) — it is a
       public channel by construction, readable by anything with a camera in line of sight,
       and a displayed symbol is trivially photographed. This is not a gap to be fixed at the
       symbology layer. The right shape is what FIDO's credential-exchange work already
-      does: encrypt the credential to the receiver's key, then use LC Code purely as the
+      does: encrypt the credential to the receiver's key, then use LCR Code purely as the
       transport for the resulting ciphertext.
 - [ ] **Size the symbol from the ciphertext.** Encrypted blobs do not compress, so budget
       the wire size directly:
@@ -244,7 +244,7 @@ take B and later add signing, that is the line to be careful about.
       | 4475 B | — *exceeds v32* | v32 (145×145) — the ceiling |
 
       `C3` is the density profile — 8 colours, 3.00 bits/module — and it tops out at
-      **4475 B**, the format's ceiling. Above that you need multiple symbols, which LC Code
+      **4475 B**, the format's ceiling. Above that you need multiple symbols, which LCR Code
       does not currently define a docking scheme for. If passkey blobs routinely exceed
       ~4 KB, that is a format-level gap to raise early.
 - [ ] **Weigh `C3` against capture quality.** It carries 1.42× `C1` but gives up ~25% of
@@ -254,7 +254,7 @@ take B and later add signing, that is the line to be careful about.
       hardware with `just profiles` before committing.
 - [ ] **Decide whether the transfer needs a signature.** If the receiver must know *who*
       issued the blob rather than merely that it decoded, that is §10 COSE_Sign1 — and
-      **`lc-verify` is a stub**. Scope it as real work: COSE/CWT parsing, ES256 and Ed25519,
+      **`lcr-verify` is a stub**. Scope it as real work: COSE/CWT parsing, ES256 and Ed25519,
       a `KeyResolver`, and expiry handling. Note §10.5's hard rule — a public key travelling
       inside the symbol is not authentication, and a verifier must never accept one.
       Often the encryption layer already covers the trust question and no signature is
@@ -267,7 +267,7 @@ take B and later add signing, that is the line to be careful about.
       today is not guaranteed to decode against next month's build. If two independently
       built devices must interoperate, a frozen vector file is the thing that makes that
       testable, and it does not exist yet.
-- [ ] **Pin the interface version.** `lc:code@0.4.0` is in the WIT package name; a host
+- [ ] **Pin the interface version.** `lcr:code@0.4.0` is in the WIT package name; a host
       that checks it gets a clean failure instead of a subtle one.
 
 ---

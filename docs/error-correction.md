@@ -1,4 +1,4 @@
-# How LC Codes recover the message
+# How LCR Codes recover the message
 
 Why there is no Reed–Solomon anywhere in the payload path, what the "information" and
 "parity" cells in `examples/anatomy-expanded-c3.png` actually are, a complete
@@ -13,7 +13,7 @@ and to §8 / §9.1 / §12.5 of the spec.
 ## 1. Information vs. parity
 
 Our LDPC codes are **systematic**. `Code::encode`
-(`crates/lc-core/src/ecc/ldpc.rs:216`) copies your bits out verbatim and then appends
+(`crates/lcr-core/src/ecc/ldpc.rs:216`) copies your bits out verbatim and then appends
 parity computed from them:
 
 ```rust
@@ -63,7 +63,7 @@ There is no formula for the errors. There is a graph, and you negotiate.
 Two reasons that fits this channel better:
 
 **Soft information is free here, and RS cannot use it.** A camera hands us continuous
-values, not bits. `ChannelStats::luma_llr` (`crates/lc-decode/src/demod.rs:135`) never
+values, not bits. `ChannelStats::luma_llr` (`crates/lcr-decode/src/demod.rs:135`) never
 decides "this module is dark" — it measures L\*, estimates noise from known-colour
 reference modules, and emits a log-likelihood ratio: *probably 1, and I am this sure*.
 Classic RS decoding begins by discarding that. It costs roughly 2 dB (§12.4), which in
@@ -80,7 +80,7 @@ LDPC codes over the same grid is natural; splitting a byte-oriented RS code acro
 not.
 
 **We do use an algebraic code, though — just not for your payload.** The format word is
-BCH(30,15) masked with `0x5412` (`crates/lc-core/src/format.rs`), and Reed–Solomon is a
+BCH(30,15) masked with `0x5412` (`crates/lcr-core/src/format.rs`), and Reed–Solomon is a
 subclass of BCH, so it is the same family. That is the right tool there: 15 bits is far too
 short for belief propagation to have anything to propagate, and we need a hard guarantee on
 the field that tells us how to decode everything else. The D21 ring word gets the same
@@ -94,7 +94,7 @@ does for LDPC.
 The shipped codes are protographs lifted by `Z` and then shortened — `n = 1452` for the
 brightness layer of that v5 C3. Nobody decodes that by hand. So here is a toy with the same
 *shape*: systematic, staircase parity, column weight 3, decoded with the identical
-normalised min-sum lc-core runs.
+normalised min-sum lcr-core runs.
 
 ### 3.1 The code
 
@@ -263,7 +263,7 @@ This is the error floor, and it is why the spec says, flatly:
 
 > LDPC convergence alone MUST NOT be treated as decode success.
 
-`Decoder::finish` (`crates/lc-decode/src/lib.rs:365`) therefore ignores `converged` as a
+`Decoder::finish` (`crates/lcr-decode/src/lib.rs:365`) therefore ignores `converged` as a
 verdict — it is carried in `Diagnostics` and nowhere else. It concatenates luma then chroma
 and lets the §9.1 CRC decide: CRC-16 for compact frames (~1/65,536 undetected), CRC-32 for
 extended (~1/4×10⁹). Here the recovered message `1011` would fail its CRC, the frame is
@@ -359,7 +359,7 @@ fixes which modules are reference cells. What's left is the luma layer: 1,073 pa
 modules in the grid plus 97 on the ring, so **n = 1,170** bits.
 
 **Step 2: pick a base graph.** The ECC level fixes the rate (0.75 here). Each rate has
-three stored tables, 60, 20 and 10 columns wide (`crates/lc-core/src/ecc/tables.rs`), and
+three stored tables, 60, 20 and 10 columns wide (`crates/lcr-core/src/ecc/tables.rs`), and
 `Code::new` takes the widest that fits. Here that's **60 columns × 15 rows**:
 
 - **45 data columns**, each connected to exactly 3 rows, and each connection carries a
@@ -440,7 +440,7 @@ The table is the same at every version. Everything derived from n is not:
 wrap differently (267 mod 20 is 7, but 267 mod 523 is 267), so every check connects
 different bits. And a different n gives a different a, so the scatter differs too. To find
 where a check lands at some version, run the four steps above, or set `VERSION` in
-`crates/lc-render/examples/anatomy_ldpc.rs` and regenerate. The tables at the top of that
+`crates/lcr-render/examples/anatomy_ldpc.rs` and regenerate. The tables at the top of that
 panel are computed, not typed.
 
 ### 5.4 Why it's built this way
@@ -470,7 +470,7 @@ panel are computed, not typed.
 
 ## Appendix — reproducing §3
 
-The toy decoder, with lc-core's schedule and constants. Every number above came out of it.
+The toy decoder, with lcr-core's schedule and constants. Every number above came out of it.
 
 ```python
 ALPHA = 0.75

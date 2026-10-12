@@ -147,7 +147,7 @@ Two things make it safe: the laptop only accepts a signature from a key it learn
 signing into** before it signs — your defence against someone relaying a challenge from
 somewhere else.
 
-One real limit: a web page can't add "LC symbols" as a way for the browser to reach an
+One real limit: a web page can't add "LCR symbols" as a way for the browser to reach an
 authenticator — browsers only use the transports they build in (USB, NFC, Bluetooth, and
 their own hybrid). So this works where **you** check the signature — your own app or backend.
 For ordinary third-party websites, the platform's own hybrid flow is the route.
@@ -161,7 +161,7 @@ import hashlib, os, time
 
 H = lambda *p: hashlib.sha256(b"".join(p)).digest()
 def code(*parts):                       # the six digits each screen shows
-    return int.from_bytes(H(b"LC-SAS-v1", *parts)[:4], "big") % 1_000_000
+    return int.from_bytes(H(b"LCR-SAS-v1", *parts)[:4], "big") % 1_000_000
 
 # ============ 1. Naive version: swap keys, then show a code ============
 N_key, O_key = os.urandom(32), os.urandom(32)
@@ -178,10 +178,10 @@ print(f"NAIVE: screens both show {on_O:06d} — attacker won after {tries:,} tri
 
 # ============ 2. Real protocol: commit, reveal, open ============
 N_key, rN = os.urandom(32), os.urandom(16)
-cN = H(b"LC-ENROLL-v1", N_key, rN)       # the sealed envelope
+cN = H(b"LCR-ENROLL-v1", N_key, rN)       # the sealed envelope
 
 A1, rA1 = os.urandom(32), os.urandom(16) # attacker plays "new phone" to O
-cA = H(b"LC-ENROLL-v1", A1, rA1)
+cA = H(b"LCR-ENROLL-v1", A1, rA1)
 O_key, rO = os.urandom(32), os.urandom(16)
 on_O = code(cA, O_key, rO, A1, rA1)      # O's code is now fixed
 

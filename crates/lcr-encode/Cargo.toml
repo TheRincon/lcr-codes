@@ -1,0 +1,27 @@
+[package]
+name = "lcr-encode"
+description = "LCR Code encoder: framing, compression, ECC, masking, colourisation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std", "deflate", "sign"]
+std = ["lcr-core/std"]
+deflate = ["lcr-core/deflate"]
+brotli = ["lcr-core/brotli"]
+# §10 issuing. Shares lcr-verify's COSE/CWT serialisers so the two ends cannot drift.
+# `lcr-verify` is pulled without its `decode` feature: an issuer has no decoder.
+sign = ["dep:lcr-verify", "dep:ed25519-dalek", "dep:p256"]
+
+[dependencies]
+lcr-core = { workspace = true }
+lcr-verify = { workspace = true, optional = true, default-features = false, features = [
+    "std",
+    "ed25519",
+    "es256",
+] }
+ed25519-dalek = { workspace = true, optional = true }
+p256 = { workspace = true, optional = true }

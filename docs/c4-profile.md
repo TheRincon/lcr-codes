@@ -295,7 +295,7 @@ what to try first: **`C4` at ECC 3**, with `C3` at ECC 3 as the control.
 Reproduce with:
 
 ```
-cargo test -p lc-decode --release --test c4_profile -- --ignored --nocapture
+cargo test -p lcr-decode --release --test c4_profile -- --ignored --nocapture
 ```
 
 ---

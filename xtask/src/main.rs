@@ -1,6 +1,6 @@
 //! Offline table generation (§14.1).
 //!
-//! `cargo run -p xtask -- ldpc` regenerates `crates/lc-core/src/ecc/tables.rs`.
+//! `cargo run -p xtask -- ldpc` regenerates `crates/lcr-core/src/ecc/tables.rs`.
 //! §8.2 is explicit that LDPC base graphs are published as static tables and **not**
 //! generated at runtime, so this binary is the only place the construction lives, and
 //! its output is committed.
@@ -72,8 +72,8 @@ fn main() {
 
 /// Recompute the §6.1 capacity table from the real layout and codes (open decision #8).
 fn capacity_table() -> String {
-    use lc_core::capacity::capacity_for_symbol;
-    use lc_core::version::{EccLevel, Profile, Version};
+    use lcr_core::capacity::capacity_for_symbol;
+    use lcr_core::version::{EccLevel, Profile, Version};
 
     // Two tables, because since D17 there are two layouts and they differ by up to 3.6x.
     // A single table reporting the classic one is how both README.md and the explainer came

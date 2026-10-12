@@ -1,4 +1,4 @@
-# Running the LC Code scanner in Firefox
+# Running the LCR Code scanner in Firefox
 
 *Written 2026-09-03. The counterpart to [`WASM-PLAN.md`](WASM-PLAN.md), which covers the
 opposite case — a host you control, with no JavaScript anywhere.*
@@ -37,12 +37,12 @@ Firefox has no Component Model support — no browser does, and none is close to
 So the component is **transpiled**:
 
 ```
-dist/lc-code-scanner.wasm          the component, 193 KB
+dist/lcr-code-scanner.wasm          the component, 193 KB
         │
         │  jco transpile
         ▼
-web/lc/lc-code-scanner.core.wasm   plain core wasm, 184 KB
-web/lc/lc-code-scanner.js          Component Model ABI implemented in JS, 107 KB
+web/lcr/lcr-code-scanner.core.wasm   plain core wasm, 184 KB
+web/lcr/lcr-code-scanner.js          Component Model ABI implemented in JS, 107 KB
 ```
 
 The JS half is not glue you could hand-write away — it is the canonical ABI: lifting and
@@ -53,8 +53,8 @@ the `accumulator`. Firefox runs it as an ordinary ES module.
 
 | | raw | gzip |
 |---|---:|---:|
-| `lc-code-scanner.core.wasm` | 187,955 B | 75,101 B |
-| `lc-code-scanner.js` | 109,201 B | 21,285 B |
+| `lcr-code-scanner.core.wasm` | 187,955 B | 75,101 B |
+| `lcr-code-scanner.js` | 109,201 B | 21,285 B |
 | **total** | 297,156 B | **96,281 B** |
 
 That is **47% of §14.2's 200 KB decode-only budget**, which the spec states as gzipped
@@ -125,7 +125,7 @@ try   { realloc0Async = WebAssembly.promising(exports1.cabi_realloc); }
 catch { realloc0Async = exports1.cabi_realloc; }
 ```
 
-So Firefox takes the synchronous path silently and correctly. LC Code's interface has no
+So Firefox takes the synchronous path silently and correctly. LCR Code's interface has no
 async functions, so nothing is lost. This is worth knowing because `WebAssembly.promising`
 appearing in a bundle looks like a compatibility bug and is not one.
 

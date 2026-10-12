@@ -1,7 +1,7 @@
 //! Palette derivation search (§4.2, decisions D1/D2).
 //!
 //! `cargo run -p xtask -- palette` searches for the constants pinned in
-//! `crates/lc-core/src/palette.rs`. D1 describes the palettes as "derived from the §4.2
+//! `crates/lcr-core/src/palette.rs`. D1 describes the palettes as "derived from the §4.2
 //! constraints — iso-luminant hue states shared across levels, a single common `C*`, and
 //! `C*` taken as high as the sRGB gamut allows at every corner", but until this task
 //! existed nothing computed that last clause. The pinned values did not satisfy it:
@@ -40,8 +40,8 @@
 //!   sensor argument the gamut knows nothing about, so the orientation table shows what
 //!   each axis costs and leaves the choice to the caller.
 
-use lc_core::color::{self, Lab, Srgb8};
-use lc_core::palette::Palette;
+use lcr_core::color::{self, Lab, Srgb8};
+use lcr_core::palette::Palette;
 use std::fmt::Write as _;
 
 /// `L*` search bounds and resolution.
@@ -295,7 +295,7 @@ fn best_at_orientation(g: &Gamut, h0: f32, required_gap: f32) -> Option<Solution
     best
 }
 
-/// Derive 8-bit colours the way `lc_core::palette::derive` does, so the realised metrics
+/// Derive 8-bit colours the way `lcr_core::palette::derive` does, so the realised metrics
 /// below are the ones the crate will actually see.
 fn derive(sol: &Solution) -> Vec<Srgb8> {
     let mut out = Vec::with_capacity(2 * sol.hues.len());
@@ -590,7 +590,7 @@ pub fn report() -> String {
     }
 
     // ---- paste-ready ------------------------------------------------------------
-    let _ = writeln!(s, "\nConstants for crates/lc-core/src/palette.rs:\n");
+    let _ = writeln!(s, "\nConstants for crates/lcr-core/src/palette.rs:\n");
     if let Some(Ok(sol)) = c4.as_ref().map(back_off) {
         emit(&mut s, "C4", &sol.0, &sol.1);
     }

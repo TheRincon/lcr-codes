@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>LC Code capture sweep</title>
+<title>LCR Code capture sweep</title>
 <style>
   :root {
     --bg: #0e120d; --panel: #171d15; --line: #2a3326;
@@ -98,7 +98,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>LC Code capture sweep</h1>
+  <h1>LCR Code capture sweep</h1>
   <p class="sub">Records every decode attempt against the geometry it was attempted at, so
     the working range comes out as measured data rather than an impression.</p>
 
@@ -216,7 +216,7 @@
 <canvas id="work" hidden></canvas>
 
 <script type="module">
-import { decoder } from './lc/lc-code.js';
+import { decoder } from './lcr/lcr-code.js';
 
 // Tilt target, measured over 1,549 pooled C1 trials from sweeps 1–4. Decode rate by
 // obliquity: 5% below 1.05, 37% to 1.10, ~40% to 1.20, 58% at 1.20–1.25, 72% at

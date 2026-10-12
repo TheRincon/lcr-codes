@@ -1,4 +1,4 @@
-# LC Code example symbols
+# LCR Code example symbols
 
 Generated, not hand-made. Regenerate with:
 
@@ -52,11 +52,11 @@ These are the same payloads as their ringed twins above.
 
 ```rust
 let px = /* RGB8 bytes from a camera frame or a decoded PNG */;
-let out = lc_decode::Decoder::new().decode_rgb(&px, w, h, w * 3)?;
-if let lc_core::Packet::Unsigned { body, .. } = out.packet {
-    let value = lc_core::cbor::Value::from_slice(&body)?;
-    println!("{}", lc_core::json::to_json(&value));
+let out = lcr_decode::Decoder::new().decode_rgb(&px, w, h, w * 3)?;
+if let lcr_core::Packet::Unsigned { body, .. } = out.packet {
+    let value = lcr_core::cbor::Value::from_slice(&body)?;
+    println!("{}", lcr_core::json::to_json(&value));
 }
 ```
 
-All of these are **unsigned** (§10.7). Signing is opt-in and §1.2 expects unsigned structured data to be the common case; `lc-verify` is not built yet in any event.
+All of these are **unsigned** (§10.7). Signing is opt-in and §1.2 expects unsigned structured data to be the common case; `lcr-verify` is not built yet in any event.

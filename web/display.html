@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LC Code display</title>
+<title>LCR Code display</title>
 <style>
   :root {
     --bg: #0e120d; --panel: #171d15; --line: #2a3326;
@@ -122,7 +122,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>LC Code display</h1>
+  <h1>LCR Code display</h1>
   <p class="sub">Encodes on this device and draws the symbol at exact device pixels. Point the scanner page at it.</p>
 
   <div class="cols">
@@ -254,7 +254,7 @@
 </div>
 
 <script type="module">
-import { encoder, codec, compare } from './lc/lc-code.js';
+import { encoder, codec, compare } from './lcr/lcr-code.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('out'), ctx = canvas.getContext('2d');
@@ -305,13 +305,13 @@ function draw() {
 /// code is measuring the drawing. §6.1's quiet zone is 2 modules against QR's required 4,
 /// and the table below reports the footprint both ways because that difference is real
 /// and is the easiest place for a comparison like this to quietly cheat.
-function drawComparison(lc, modulePx) {
+function drawComparison(lcr, modulePx) {
   const on = $('qr').checked;
   $('qrSymbol').hidden = !on;
   $('cmp').hidden = !on;
   if (!on) return;
 
-  // Give QR the bytes LC Code actually transmits, so the comparison is of the carrier and
+  // Give QR the bytes LCR Code actually transmits, so the comparison is of the carrier and
   // not of §9.4's JSON-to-CBOR win — which is a container decision either symbology could
   // make. The raw-JSON option is the honest "what a QR deployment would really send".
   const json = $('json').value;
@@ -336,7 +336,7 @@ function drawComparison(lc, modulePx) {
     return;
   }
 
-  // Draw at the same pitch as the LC symbol, with QR's own 4-module quiet zone so what is
+  // Draw at the same pitch as the LCR symbol, with QR's own 4-module quiet zone so what is
   // on screen is a scannable symbol rather than a bare grid.
   const q = qr.quietZone;
   const side = qr.size + 2 * q;
@@ -353,43 +353,43 @@ function drawComparison(lc, modulePx) {
     }
   }
 
-  renderTable(lc, qr, payload.length, payloadLabel);
+  renderTable(lcr, qr, payload.length, payloadLabel);
 }
 
-function renderTable(lc, qr, payloadBytes, payloadLabel) {
-  // LC Code's quiet zone is 2 per side (§6.1); QR's is 4 (ISO/IEC 18004 §6.3.8).
-  const lcOuter = lc.side + 4, qrOuter = qr.size + 8;
-  const areaRatio = (qr.size ** 2) / (lc.side ** 2);
-  const outerRatio = (qrOuter ** 2) / (lcOuter ** 2);
+function renderTable(lcr, qr, payloadBytes, payloadLabel) {
+  // LCR Code's quiet zone is 2 per side (§6.1); QR's is 4 (ISO/IEC 18004 §6.3.8).
+  const lcrOuter = lcr.side + 4, qrOuter = qr.size + 8;
+  const areaRatio = (qr.size ** 2) / (lcr.side ** 2);
+  const outerRatio = (qrOuter ** 2) / (lcrOuter ** 2);
   const bitsPerModule = (n, side) => (n * 8) / (side ** 2);
 
   const cell = (a, b, better) => {
-    const aWins = better === 'lc';
+    const aWins = better === 'lcr';
     return `<td class="${aWins ? 'win' : ''}">${a}</td><td class="${aWins ? '' : 'win'}">${b}</td>`;
   };
   const plain = (a, b) => `<td>${a}</td><td>${b}</td>`;
 
   $('cmp').innerHTML = `
-    <thead><tr><th></th><th>LC Code</th><th>QR</th></tr></thead>
+    <thead><tr><th></th><th>LCR Code</th><th>QR</th></tr></thead>
     <tbody>
-      <tr><th>version</th>${plain(`v${lc.version} ${$('profile').value.toUpperCase()}`,
+      <tr><th>version</th>${plain(`v${lcr.version} ${$('profile').value.toUpperCase()}`,
                                   `v${qr.version}-${$('qrecc').value[0].toUpperCase()}`)}</tr>
       <tr><th>payload</th>${plain(`${payloadBytes} B`, `${payloadBytes} B ${payloadLabel}`)}</tr>
-      <tr><th>grid</th>${cell(`${lc.side}×${lc.side}`, `${qr.size}×${qr.size}`,
-                              lc.side <= qr.size ? 'lc' : 'qr')}</tr>
-      <tr><th>modules</th>${cell(lc.side ** 2, qr.size ** 2,
-                                 lc.side <= qr.size ? 'lc' : 'qr')}</tr>
-      <tr><th>bits/module</th>${cell(bitsPerModule(payloadBytes, lc.side).toFixed(2),
+      <tr><th>grid</th>${cell(`${lcr.side}×${lcr.side}`, `${qr.size}×${qr.size}`,
+                              lcr.side <= qr.size ? 'lcr' : 'qr')}</tr>
+      <tr><th>modules</th>${cell(lcr.side ** 2, qr.size ** 2,
+                                 lcr.side <= qr.size ? 'lcr' : 'qr')}</tr>
+      <tr><th>bits/module</th>${cell(bitsPerModule(payloadBytes, lcr.side).toFixed(2),
                                      bitsPerModule(payloadBytes, qr.size).toFixed(2),
-                                     lc.side <= qr.size ? 'lc' : 'qr')}</tr>
-      <tr><th>+ quiet zone</th>${cell(`${lcOuter}×${lcOuter}`, `${qrOuter}×${qrOuter}`,
-                                      lcOuter <= qrOuter ? 'lc' : 'qr')}</tr>
+                                     lcr.side <= qr.size ? 'lcr' : 'qr')}</tr>
+      <tr><th>+ quiet zone</th>${cell(`${lcrOuter}×${lcrOuter}`, `${qrOuter}×${qrOuter}`,
+                                      lcrOuter <= qrOuter ? 'lcr' : 'qr')}</tr>
     </tbody>
     <caption>
       QR needs <b>${areaRatio.toFixed(2)}×</b> the symbol area for the same payload,
       or <b>${outerRatio.toFixed(2)}×</b> counting each symbology's required quiet zone
-      (2 modules for LC Code per §6.1, 4 for QR).
-      Error correction is <em>not</em> matched — LC Code is at level
+      (2 modules for LCR Code per §6.1, 4 for QR).
+      Error correction is <em>not</em> matched — LCR Code is at level
       ${$('profile').value === 'mono' ? '1' : '1'} and QR at
       ${$('qrecc').value.toUpperCase()}, and the two scales do not correspond, so read this
       as a density figure and not as an equal-robustness one.
@@ -441,7 +441,7 @@ function fitPresent() {
   // until the transformed box fits, so §13.1's whole-pixel rule survives the fit.
   for (; scale > 1; scale--) {
     set(scale);
-    // Measure the whole stage, not just the LC symbol: with a QR alongside, the pair is
+    // Measure the whole stage, not just the LCR symbol: with a QR alongside, the pair is
     // what has to fit, and under tilt the projected box is not something to compute.
     const r = $('stage').getBoundingClientRect();
     const a = $('symbol').getBoundingClientRect();

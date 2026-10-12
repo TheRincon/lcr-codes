@@ -1,12 +1,12 @@
-# LC Code — implementation progress
+# LCR Code — implementation progress
 
-Reference implementation of [`lc-code-spec-v0.4.md`](lc-code-spec-v0.4.md).
+Reference implementation of [`lcr-code-spec-v0.4.md`](lcr-code-spec-v0.4.md).
 
 **State:** encode and decode are both complete and round-trip end to end through a
 rendered image — and, as of 2026-09-04, **through a real iPhone camera pointed at a real
 laptop screen** (see "First real-world decode") — detection, illumination fit, soft
 demodulation, LDPC, framing, CRC. The §15 degradation harness is built and the operating
-envelope is mapped as the success *rate* §15 asks for (`just envelope`). `lc-wasm` ships
+envelope is mapped as the success *rate* §15 asks for (`just envelope`). `lcr-wasm` ships
 both paths as a **WebAssembly component** with a WIT interface (D8), in two builds:
 decode-only and full.
 
@@ -19,10 +19,9 @@ in this file still comes from the §15 harness, which is code.
 [`docs/decisions.md`](docs/decisions.md) are being carried forward so work can continue,
 not signed off. Both are cheap to unwind — see "Unwinding the provisional decisions" below.
 
-**291 tests, all passing, zero warnings.** `just test` (plus `just test-debug`, unit tests
-unoptimised — see below). Three more are `#[ignore]`d on purpose: the ring detector's
-diagnostic probes in `tests/ring_diag.rs`, which print rather than assert. *(Recounted
-2026-09-16 with `just ci` green.)*
+**All tests passing, zero warnings.** `just test` (plus `just test-debug`, unit tests
+unoptimised — see below). Three tests are `#[ignore]`d on purpose: the ring detector's
+diagnostic probes in `tests/ring_diag.rs`, which print rather than assert.
 
 ---
 
@@ -40,7 +39,7 @@ gallery. `just test` and `just test-debug` are both green. Nothing needs unwindi
 
 ```bash
 just component     # rebuild dist/ — gitignored, so it will be missing
-just test          # 277 tests; depends on `component`
+just test          # the whole suite; depends on `component`
 just test-debug    # unit tests unoptimised, exercising debug_assert!
 just c-host        # the C trial, needs the Go module cache (see below)
 ```
@@ -152,17 +151,17 @@ matters, it wants its own job.
 
 | Crate | State | Tests | Notes |
 |---|---|---|---|
-| `lc-core` | ✅ Complete | 140 | Geometry, palette, ECC, container, masking, modulation |
-| `lc-encode` | ✅ Complete | 11 | Full §8 pipeline; auto version, auto compression, mask search |
-| `lc-render` | ✅ Complete | 16 | SVG, RGB raster, PNG, ANSI preview; §17.2 dual-render behind `qr` |
-| `lc-decode` | ✅ Complete | 88 | §12 pipeline end to end, plus the §15 harness |
-| `lc-verify` | ⬜ Stub | — | §10 signing, entirely untouched |
-| `lc-wasm` | ✅ Complete | 24 | Component Model surface over `wit/lc.wit` (D8) |
-| `lc-ffi` | ⬜ Stub | — | |
-| `lc-cli` | ⬜ Stub | — | |
+| `lcr-core` | ✅ Complete | 140 | Geometry, palette, ECC, container, masking, modulation |
+| `lcr-encode` | ✅ Complete | 11 | Full §8 pipeline; auto version, auto compression, mask search |
+| `lcr-render` | ✅ Complete | 16 | SVG, RGB raster, PNG, ANSI preview; §17.2 dual-render behind `qr` |
+| `lcr-decode` | ✅ Complete | 88 | §12 pipeline end to end, plus the §15 harness |
+| `lcr-verify` | ⬜ Stub | — | §10 signing, entirely untouched |
+| `lcr-wasm` | ✅ Complete | 24 | Component Model surface over `wit/lcr.wit` (D8) |
+| `lcr-ffi` | ⬜ Stub | — | |
+| `lcr-cli` | ⬜ Stub | — | |
 | `xtask` | ✅ Working | — | `ldpc`, `capacity`, `palette`, `thresholds`, `vectors`, `sweep` |
 
-`lc-decode`'s 88 are 62 unit, 14 round-trip, 12 degradation. `lc-wasm`'s 24 are 5 component
+`lcr-decode`'s 88 are 62 unit, 14 round-trip, 12 degradation. `lcr-wasm`'s 24 are 5 component
 and 19 surface.
 
 Automation is split: `just --list` is the front door, and `xtask` holds the two tasks
@@ -234,7 +233,7 @@ describes (D8).
 
 The component exists and is measured; what is missing is the other side of the boundary.
 
-- [x] **Component-level integration tests.** `lc-wasm/tests/component.rs` loads both
+- [x] **Component-level integration tests.** `lcr-wasm/tests/component.rs` loads both
       artifacts into wasmtime and runs them: encode → decode through the canonical ABI,
       the `accumulator` resource across the boundary, errors arriving as `result::err`
       rather than traps, and the scanner proven to export no encoder. The empty-linker
@@ -257,8 +256,8 @@ the rate does, and that rate could be chosen on capacity grounds alone.
 
 ### 3. Signing (§10) — optional, lower priority
 
-`lc-verify`: COSE_Sign1, CWT claims, ES256 + Ed25519, `KeyResolver`. §1.2 is explicit that
-this is a feature and not the point, so it sits behind the decode path. `lc-encode/sign.rs`
+`lcr-verify`: COSE_Sign1, CWT claims, ES256 + Ed25519, `KeyResolver`. §1.2 is explicit that
+this is a feature and not the point, so it sits behind the decode path. `lcr-encode/sign.rs`
 is a placeholder.
 
 Worth doing carefully when we get there: test against externally generated vectors, not
@@ -266,8 +265,8 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
 
 ### 4. Everything else
 
-- [ ] `lc-cli` — encode/decode/inspect dev tool.
-- [ ] `lc-ffi` — C ABI. Note edition 2024 needs `#[unsafe(no_mangle)]`.
+- [ ] `lcr-cli` — encode/decode/inspect dev tool.
+- [ ] `lcr-ffi` — C ABI. Note edition 2024 needs `#[unsafe(no_mangle)]`.
 - [x] **`fuzz/` — four targets, run clean.** `just fuzz <target> <secs>`; needs nightly and
       `cargo-fuzz`. Corpus is seeded from the golden vectors and a real capture, so the
       fuzzer starts from valid symbols rather than noise.
@@ -300,7 +299,7 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
       not hand-write it", and no corpus exists — seven example payloads is not one.
 
       The new one is decisive: **brotli does not fit the scanner.** Building the scanner
-      component with `lc-decode/brotli` takes it from 192,876 to 392,293 bytes. The codec
+      component with `lcr-decode/brotli` takes it from 192,876 to 392,293 bytes. The codec
       alone is 199,417 bytes — 97% of §14.2's entire budget — putting the scanner at 192%
       of it. So `cflag 10` *already* emits symbols a conforming minimal decoder rejects,
       and `cflag 11` would add a dictionary on top of a codec that cannot be there.
@@ -314,7 +313,7 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
       The API side was scouted and is workable if it ever proceeds: `brotli` 7.0.0 exposes
       custom dictionaries only through `BrotliCompressCustomIoCustomDict` and
       `BrotliDecompressCustomIoCustomDict`, the heavily-generic `CustomIo` variants — which
-      suit `lc-core`'s `no_std + alloc` shape, but need a `BrotliAlloc` and custom IO
+      suit `lcr-core`'s `no_std + alloc` shape, but need a `BrotliAlloc` and custom IO
       wrappers rather than the one-line `BrotliCompress` the standard path uses. Note also
       that brotli ships no trainer; `zstd --train` is the usual way to *discover* the
       substrings, which are then used as brotli dictionary bytes.
@@ -432,7 +431,7 @@ some runtime-reachable `Debug` impl pulls in — see D17.
 
 **What to check first on a real capture.** The ring detector treats each connected region of
 ink as one symbol. On a clean display stage that holds; in a real scene it is untested.
-`cargo test -p lc-decode --release --test ring_diag -- --ignored --nocapture` traces every
+`cargo test -p lcr-decode --release --test ring_diag -- --ignored --nocapture` traces every
 detection stage and is the place to start when a capture fails.
 
 ---
@@ -522,12 +521,12 @@ runs would leave the new detector comparable only against simulator numbers.
 
 ## Dual-render, and a detector bug it uncovered — 2026-09-10
 
-**§17.2 dual-render is implemented**, in `lc-render` behind a default-off `qr` feature:
-`render_dual_rgb` / `render_dual_png` compose an LC symbol and a QR carrying a fallback URL
+**§17.2 dual-render is implemented**, in `lcr-render` behind a default-off `qr` feature:
+`render_dual_rgb` / `render_dual_png` compose an LCR symbol and a QR carrying a fallback URL
 at **one shared module pitch**, so the fallback does not stop working before the thing it
-backs up. Off by default because `lc-render` is in the wasm full build (~23 KB), and
+backs up. Off by default because `lcr-render` is in the wasm full build (~23 KB), and
 because §17.2 itself calls this "a bridge, not an answer" — it trades the offline property
-for reach, which a deployment should choose rather than inherit. `lc-wasm/compare` is now
+for reach, which a deployment should choose rather than inherit. `lcr-wasm/compare` is now
 the same code behind a second flag, so the density comparison and a rendered dual share one
 encoder and one set of round-trip tests. Full argument in D13.
 
@@ -535,7 +534,7 @@ encoder and one set of round-trip tests. Full argument in D13.
 a finder carries no identity — so a frame with two codes offers six finder-like patterns,
 and at a shared module pitch a triple *straddling* them can outscore either real triple.
 Detection committed to the single best-scoring triple with no way back, so a dual-render —
-or two LC symbols on one poster — returned `FormatUndecodable` on a frame containing two
+or two LCR symbols on one poster — returned `FormatUndecodable` on a frame containing two
 good symbols.
 
 `Decoder::decode` now walks candidates and **the CRC decides**, per §9.1. The first attempt
@@ -553,22 +552,22 @@ straddling triple in a two-code frame until reset.
 
 ## QR comparison — added 2026-09-09
 
-`display.html` now draws a QR of the same payload beside the LC symbol, at the same module
+`display.html` now draws a QR of the same payload beside the LCR symbol, at the same module
 pitch, through the same rasteriser. Generation is the **`qrcodegen`** crate; the test suite
 reads the output back with **`rqrr`**, an independent decoder, at every ECC level and
 across a multi-block symbol — so the comparison rests on a verified QR rather than on a
 hand-rolled one. `codec.json-to-cbor` was added alongside it so QR can be handed the exact
-bytes LC Code puts on the wire, which keeps §9.4's container win out of a carrier
+bytes LCR Code puts on the wire, which keeps §9.4's container win out of a carrier
 comparison.
 
 **Neither shipped artifact carries QR.** It is a third build,
-`dist/lc-code-compare.wasm`, produced only by `just web`, and
+`dist/lcr-code-compare.wasm`, produced only by `just web`, and
 `the_shipped_components_export_no_qr` asserts the scanner and the full build stayed clean —
 so "off by default" is a fact rather than a comment.
 
 **The result is more equivocal than the README claimed, and the README now says so.** On a
 50-byte CBOR payload against `C1` at ECC level 1, the area ratio runs 1.00× at QR-L, 1.29×
-at QR-M, 1.63× at Q and 2.00× at H. LC Code is level with QR at its weakest error
+at QR-M, 1.63× at Q and 2.00× at H. LCR Code is level with QR at its weakest error
 correction and pulls ahead as QR's strengthens. The 1.73× bits/module figure is a different
 measurement and was never the area figure a user sees.
 
@@ -934,14 +933,14 @@ individually and the rest as an aggregate, per §15. Guarded by
   consumers — while `rust-toolchain.toml` pins the toolchain the repo itself builds and
   gates with to **1.98.0**. Two different things: the first is a promise, the second is
   what CI actually runs, and only the second is enforced.
-- `lc-core`, `lc-decode`, `lc-verify` are `no_std + alloc`; `lc-encode`, `lc-render`,
-  `lc-cli` are `std`. This is the §14.1 split, and it is what keeps the scanner bundle
+- `lcr-core`, `lcr-decode`, `lcr-verify` are `no_std + alloc`; `lcr-encode`, `lcr-render`,
+  `lcr-cli` are `std`. This is the §14.1 split, and it is what keeps the scanner bundle
   from accidentally acquiring the encoder.
 - No C dependencies anywhere. `miniz_oxide` for DEFLATE, and the PNG encoder is ~40 lines
   rather than a dependency, because §14.2 gates `image` out of the wasm path.
 - `panic = "abort"` in release; a `wasm-min` profile is defined but not yet exercised.
 - LDPC base graphs are **generated offline and committed** (§8.2: "do not generate at
-  runtime"). `cargo run -p xtask -- ldpc > crates/lc-core/src/ecc/tables.rs`.
-- The degradation harness lives in `crates/lc-decode/tests/support/ops.rs` and is shared by
+  runtime"). `cargo run -p xtask -- ldpc > crates/lcr-core/src/ecc/tables.rs`.
+- The degradation harness lives in `crates/lcr-decode/tests/support/ops.rs` and is shared by
   the `degradation` test and the `envelope`/`diagnose` examples via `include!`, so the
   sweep that establishes the envelope and the suite that guards it cannot disagree.

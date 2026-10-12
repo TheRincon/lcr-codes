@@ -1,10 +1,10 @@
-# LC Code — project automation.
+# LCR Code — project automation.
 #
 # Two layers, split by whether a task needs the project's own types:
 #
 #   * Recipes here orchestrate shells — builds, size gates, artifact generation.
 #   * `xtask` holds the tasks that must call into the crates. `capacity` recomputes the
-#     §6.1 table from `lc_core::capacity` rather than restating it, and `ldpc` generates
+#     §6.1 table from `lcr_core::capacity` rather than restating it, and `ldpc` generates
 #     the §8.2 base graphs, which the spec forbids building at runtime. No command runner
 #     can do either.
 #
@@ -37,7 +37,7 @@ scanner_budget_raw := "256000"
 scanner_budget_gz := "128000"
 
 wasm_target := "wasm32-unknown-unknown"
-wasm_out := "target/wasm32-unknown-unknown/release/lc_wasm.wasm"
+wasm_out := "target/wasm32-unknown-unknown/release/lcr_wasm.wasm"
 
 _default:
     @just --list --unsorted
@@ -57,15 +57,15 @@ ci: fmt-check clippy test test-debug wasm-size check-compare
 #
 # `test` exercises the `compare` feature on the *host*, and `wasm-size` builds only the two
 # shipped artifacts — so nothing was compiling `component.rs` under `compare`, and moving QR
-# into `lc-render` broke that binding silently. It surfaced only when `just web` was run,
+# into `lcr-render` broke that binding silently. It surfaced only when `just web` was run,
 # which is the worst place to find it: mid-setup for a capture session.
 #
 # `check` rather than a full build, so the gate stays cheap.
 [doc("Type-check the QR comparison component, which no other gate builds.")]
 check-compare:
-    cargo check -p lc-wasm --target {{wasm_target}} --features compare
+    cargo check -p lcr-wasm --target {{wasm_target}} --features compare
 
-# Depends on `component` because `lc-wasm/tests/component.rs` loads the built artifact
+# Depends on `component` because `lcr-wasm/tests/component.rs` loads the built artifact
 # from dist/ and runs it under wasmtime. Without that ordering the component tests would
 # either fail confusingly or, worse, pass against a stale build.
 
@@ -76,14 +76,14 @@ test: component
     # means the default run never builds their tests. Run them explicitly: the QR round
     # trip against an independent decoder is the only thing standing behind both the
     # density comparison and §17.2 dual-render.
-    cargo test -p lc-render --release --features qr qr::
-    cargo test -p lc-wasm --release --features compare
+    cargo test -p lcr-render --release --features qr qr::
+    cargo test -p lcr-wasm --release --features compare
 
 # Exercise `debug_assert!`, which the release suite above compiles out.
 #
 # This is not redundant with `test`. Release builds strip every `debug_assert!`, so a
 # release-only suite cannot see them — and one of them was failing unnoticed: the §4.2
-# reachability check in `lc-core/src/palette.rs` had been red since the palettes were
+# reachability check in `lcr-core/src/palette.rs` had been red since the palettes were
 # pinned, because `just test` is the only command anyone runs and it passes `--release`.
 #
 # `--lib` rather than the whole suite: the assertions sit in crate internals that the
@@ -95,8 +95,8 @@ test-debug:
 
 # Just the native tests, skipping the component build. Faster inner loop.
 test-fast:
-    cargo test --workspace --release --exclude lc-wasm
-    cargo test -p lc-wasm --release --test surface
+    cargo test --workspace --release --exclude lcr-wasm
+    cargo test -p lcr-wasm --release --test surface
 
 # Build everything, including examples and tests, and fail on any warning.
 build:
@@ -133,7 +133,7 @@ _dist:
 # Exactly the features rustc's `wasm32-unknown-unknown` output uses — **not** `-all`.
 # `-all` let binaryen optimise into instructions wasmtime rejects by default, and the
 # component then failed to parse at load: `wasm-tools validate --features=component-model`
-# passed it, so the gate that caught it was `cargo test -p lc-wasm`, which actually
+# passed it, so the gate that caught it was `cargo test -p lcr-wasm`, which actually
 # instantiates the shipped artifact.
 wasm_opt_flags := "-Oz --enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int"
 
@@ -146,43 +146,43 @@ wasm_rustflags := "--remap-path-prefix=" + env_var("HOME") + "=~"
 
 # Decode + encode.
 _component-full: _dist
-    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lc-wasm --release --target {{wasm_target}}
+    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lcr-wasm --release --target {{wasm_target}}
     cp {{wasm_out}} target/full-core.wasm
     @if command -v wasm-opt >/dev/null; then wasm-opt {{wasm_opt_flags}} -o target/full-core.opt.wasm target/full-core.wasm && mv target/full-core.opt.wasm target/full-core.wasm; else echo "  wasm-opt not found — skipping the size pass (brew install binaryen)"; fi
-    wasm-tools component new target/full-core.wasm -o dist/lc-code.wasm
-    wasm-tools strip --all dist/lc-code.wasm -o dist/lc-code.wasm
-    wasm-tools validate --features=component-model dist/lc-code.wasm
+    wasm-tools component new target/full-core.wasm -o dist/lcr-code.wasm
+    wasm-tools strip --all dist/lcr-code.wasm -o dist/lcr-code.wasm
+    wasm-tools validate --features=component-model dist/lcr-code.wasm
 
 # Decode only. §14.1 keeps the encoder out so a scanner cannot acquire it by accident.
 _component-scanner: _dist
-    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lc-wasm --release --target {{wasm_target}} \
+    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lcr-wasm --release --target {{wasm_target}} \
         --no-default-features --features decode
     cp {{wasm_out}} target/scanner-core.wasm
     @if command -v wasm-opt >/dev/null; then wasm-opt {{wasm_opt_flags}} -o target/scanner-core.opt.wasm target/scanner-core.wasm && mv target/scanner-core.opt.wasm target/scanner-core.wasm; else echo "  wasm-opt not found — skipping the size pass (brew install binaryen)"; fi
-    wasm-tools component new target/scanner-core.wasm -o dist/lc-code-scanner.wasm
+    wasm-tools component new target/scanner-core.wasm -o dist/lcr-code-scanner.wasm
     # `--all` rather than plain `strip`: the default leaves the `name` section, which on
     # the scanner is 19 KB — 10% of the artifact — of debug symbols no shipped decoder
     # needs. Plain `strip` saved 1,753 bytes; `--all` saves 20,733. The core module at
     # {{wasm_out}} keeps its names, so a trap is still debuggable there.
-    wasm-tools strip --all dist/lc-code-scanner.wasm -o dist/lc-code-scanner.wasm
-    wasm-tools validate --features=component-model dist/lc-code-scanner.wasm
+    wasm-tools strip --all dist/lcr-code-scanner.wasm -o dist/lcr-code-scanner.wasm
+    wasm-tools validate --features=component-model dist/lcr-code-scanner.wasm
 
 # Decode + encode + QR, for the `display.html` density comparison.
 #
 # Deliberately not part of `component`, so neither shipped artifact carries a competing
 # symbology. Only `just web` builds this, and it is the only artifact with QR in it.
 _component-compare: _dist
-    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lc-wasm --release --target {{wasm_target}} --features compare
-    wasm-tools component new {{wasm_out}} -o dist/lc-code-compare.wasm
-    wasm-tools strip --all dist/lc-code-compare.wasm -o dist/lc-code-compare.wasm
-    wasm-tools validate --features=component-model dist/lc-code-compare.wasm
+    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lcr-wasm --release --target {{wasm_target}} --features compare
+    wasm-tools component new {{wasm_out}} -o dist/lcr-code-compare.wasm
+    wasm-tools strip --all dist/lcr-code-compare.wasm -o dist/lcr-code-compare.wasm
+    wasm-tools validate --features=component-model dist/lcr-code-compare.wasm
 
 # Print the WIT interface each component actually exports.
 component-wit: component
     @echo "=== full"
-    @wasm-tools component wit dist/lc-code.wasm | grep -E '^\s*(import|export)'
+    @wasm-tools component wit dist/lcr-code.wasm | grep -E '^\s*(import|export)'
     @echo "=== scanner"
-    @wasm-tools component wit dist/lc-code-scanner.wasm | grep -E '^\s*(import|export)'
+    @wasm-tools component wit dist/lcr-code-scanner.wasm | grep -E '^\s*(import|export)'
 
 # Gate the scanner component against §14.2's size budget (open decision #16).
 #
@@ -195,15 +195,15 @@ wasm-size: component
     # gzip as well as zstd: §14.2 says "gzipped", so that is the figure the compressed
     # budget is stated against. zstd stays because it is ~10% smaller on these artifacts
     # and is what anyone shipping a component today would actually reach for.
-    for f in dist/lc-code.wasm dist/lc-code-scanner.wasm; do
+    for f in dist/lcr-code.wasm dist/lcr-code-scanner.wasm; do
         raw=$(wc -c < "$f")
         gz=$(gzip -9 -c "$f" | wc -c)
         zs=$(zstd -19 -c "$f" 2>/dev/null | wc -c)
         printf "  %-28s raw %7d  gzip %7d  zstd %7d\n" "$(basename $f)" "$raw" "$gz" "$zs"
     done
     echo
-    raw=$(wc -c < dist/lc-code-scanner.wasm)
-    gz=$(gzip -9 -c dist/lc-code-scanner.wasm | wc -c)
+    raw=$(wc -c < dist/lcr-code-scanner.wasm)
+    gz=$(gzip -9 -c dist/lcr-code-scanner.wasm | wc -c)
     praw=$(( raw * 100 / {{scanner_budget_raw}} ))
     pgz=$(( gz * 100 / {{scanner_budget_gz}} ))
     printf "  scanner raw   %7d / %7d  %3d%%  (embedded host, D8)\n" \
@@ -235,14 +235,14 @@ web port="8000":
     just component _component-compare
     # The compare component, not the scanner: `display.html` needs `encoder` and now
     # `compare` for the QR side-by-side, and `index.html` needs `codec.cbor-to-json` to
-    # show a CBOR body as JSON. A shipping scanner would take `lc-code-scanner.wasm` and
+    # show a CBOR body as JSON. A shipping scanner would take `lcr-code-scanner.wasm` and
     # render host-side instead — and would carry no QR, which is why the comparison build
     # is a third artifact rather than a change to the other two.
-    # `--name lc-code` so the emitted module keeps its filename regardless of which
-    # artifact fed it; all three pages import `./lc/lc-code.js` and should not have to care.
-    npx --yes @bytecodealliance/jco@latest transpile dist/lc-code-compare.wasm \
-        --name lc-code -o web/lc --no-typescript
-    cargo run -p lc-decode --release --example frame -- web/frame.rgba
+    # `--name lcr-code` so the emitted module keeps its filename regardless of which
+    # artifact fed it; all three pages import `./lcr/lcr-code.js` and should not have to care.
+    npx --yes @bytecodealliance/jco@latest transpile dist/lcr-code-compare.wasm \
+        --name lcr-code -o web/lcr --no-typescript
+    cargo run -p lcr-decode --release --example frame -- web/frame.rgba
     echo
     echo "  display:  http://localhost:{{port}}/display.html   (laptop)"
     echo "  transfer: http://localhost:{{port}}/transfer.html  (laptop — file drop)"
@@ -267,8 +267,8 @@ tunnel port="8000":
     export PATH=/opt/homebrew/bin:$PATH
     command -v cloudflared >/dev/null || { echo "cloudflared not found (brew install cloudflared)" >&2; exit 1; }
     just component _component-compare
-    npx --yes @bytecodealliance/jco@latest transpile dist/lc-code-compare.wasm \
-        --name lc-code -o web/lc --no-typescript
+    npx --yes @bytecodealliance/jco@latest transpile dist/lcr-code-compare.wasm \
+        --name lcr-code -o web/lcr --no-typescript
     ( cd web && python3 -m http.server {{port}} >/dev/null 2>&1 ) &
     server=$!
     trap 'kill $server 2>/dev/null || true' EXIT
@@ -281,7 +281,7 @@ tunnel port="8000":
 
 # Check the WIT interface parses and round-trips.
 wit-check:
-    wasm-tools component wit crates/lc-wasm/wit/lc.wit > /dev/null && echo "  wit ok"
+    wasm-tools component wit crates/lcr-wasm/wit/lcr.wit > /dev/null && echo "  wit ok"
 
 # ---------------------------------------------------------------- hosts
 
@@ -313,26 +313,26 @@ c-host: component
     esac
     mkdir -p target/c-host
     cc -std=c11 -O2 -Wall -I"$root/include" examples/c-host/main.c \
-        "$root/$plat/libwasmtime.a" $libs -o target/c-host/lc-host
-    ./target/c-host/lc-host
+        "$root/$plat/libwasmtime.a" $libs -o target/c-host/lcr-host
+    ./target/c-host/lcr-host
 
 # ---------------------------------------------------------------- artifacts
 
 # Regenerate examples/ — a symbol per payload, each decoded before it is written.
 gallery:
-    cargo run -p lc-render --release --example gallery -- examples
+    cargo run -p lcr-render --release --example gallery -- examples
 
 # Regenerate examples/anatomy-c3.png — a C3 symbol with every part boxed and explained.
 #
-# The example writes an HTML page whose boxes are computed from lc-core's geometry, and
+# The example writes an HTML page whose boxes are computed from lcr-core's geometry, and
 # headless Chrome turns it into the PNG, because nothing in the workspace renders text.
-# The window size must match `PAGE` in `crates/lc-render/examples/anatomy.rs`. Chrome's
+# The window size must match `PAGE` in `crates/lcr-render/examples/anatomy.rs`. Chrome's
 # macOS path by default; elsewhere, `just chrome=/path/to/chrome anatomy`.
 chrome := "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 [doc("Regenerate examples/anatomy-c3.png, the annotated C3 reference figure.")]
 anatomy:
-    cargo run -p lc-render --release --example anatomy -- target/anatomy
+    cargo run -p lcr-render --release --example anatomy -- target/anatomy
     "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1900,1250 \
         --screenshot="$PWD/examples/anatomy-c3.png" "file://$PWD/target/anatomy/anatomy-c3.html" \
         2>/dev/null
@@ -345,7 +345,7 @@ anatomy:
 # Chrome dependency, same window-size-must-match-PAGE rule.
 [doc("Regenerate examples/anatomy-expanded-c3.png, the whole-symbol anatomy.")]
 anatomy-expanded:
-    cargo run -p lc-render --release --example anatomy_expanded -- target/anatomy
+    cargo run -p lcr-render --release --example anatomy_expanded -- target/anatomy
     "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1340,1700 \
         --screenshot="$PWD/examples/anatomy-expanded-c3.png" \
         "file://$PWD/target/anatomy/anatomy-expanded-c3.html" 2>/dev/null
@@ -359,7 +359,7 @@ anatomy-expanded:
 # dependency, same window-size-must-match-PAGE rule.
 [doc("Regenerate examples/anatomy-ldpc-c3.png, the error-correction explainer.")]
 anatomy-ldpc:
-    cargo run -p lc-render --release --example anatomy_ldpc -- target/anatomy
+    cargo run -p lcr-render --release --example anatomy_ldpc -- target/anatomy
     "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1340,3000 \
         --screenshot="$PWD/examples/anatomy-ldpc-c3.png" \
         "file://$PWD/target/anatomy/anatomy-ldpc-c3.html" 2>/dev/null
@@ -373,11 +373,11 @@ anatomy-ldpc:
 # stays a 46 KB diff instead of a 2.7 MB one.
 [doc("Regenerate the figures used by docs/explainer.html.")]
 figures:
-    cargo run -p lc-decode --release --example explain
+    cargo run -p lcr-decode --release --example explain
 
 # What JSON-shaped payloads cost, end to end.
 payload-sizes:
-    cargo run -p lc-decode --release --example json
+    cargo run -p lcr-decode --release --example json
 
 # Sweep each degradation to find where decoding stops working.
 #
@@ -386,7 +386,7 @@ payload-sizes:
 # is 0.5/sqrt(n), so pass 64 or more when a difference matters.
 [doc("Sweep each degradation for success rate vs magnitude (§15).")]
 envelope trials="":
-    cargo run -p lc-decode --release --example envelope -- {{trials}}
+    cargo run -p lcr-decode --release --example envelope -- {{trials}}
 
 # Measure where each layer fails, to calibrate the §8.2 rate split (open decision #5).
 #
@@ -394,23 +394,23 @@ envelope trials="":
 # 11% of C2's payload and 60% of C3's, so the same rate table lands very differently.
 [doc("Measure where each layer fails, per profile, for the §8.2 rate split.")]
 tune trials="" profile="":
-    cargo run -p lc-decode --release --example tune -- {{trials}} {{profile}}
+    cargo run -p lcr-decode --release --example tune -- {{trials}} {{profile}}
 
 # One symbol size, each profile loaded to its own capacity — the comparison that says
 # which profile to reach for. This is what established D11.
 [doc("Compare the colour profiles head to head at one symbol size.")]
 profiles trials="":
-    cargo run -p lc-decode --release --example profiles -- {{trials}}
+    cargo run -p lcr-decode --release --example profiles -- {{trials}}
 
 # Print detection internals for a degraded capture.
 diagnose:
-    cargo run -p lc-decode --release --example diagnose
+    cargo run -p lcr-decode --release --example diagnose
 
 # ---------------------------------------------------------------- codegen (xtask)
 
 # Regenerate the §8.2 LDPC base graphs. §8.2 forbids generating these at runtime.
 ldpc:
-    cargo run --release -p xtask -- ldpc > crates/lc-core/src/ecc/tables.rs
+    cargo run --release -p xtask -- ldpc > crates/lcr-core/src/ecc/tables.rs
     cargo fmt --all
 
 # Recompute the §6.1 capacity table from the real layout (open decision #8).
@@ -496,8 +496,8 @@ debruijn:
 # against, the table is.
 [doc("Regenerate the committed §6.4 border sequence table.")]
 debruijn-table:
-    cargo run --release -p xtask -- debruijn --table > crates/lc-core/src/border_seq.rs
-    @echo "  wrote crates/lc-core/src/border_seq.rs — review the diff"
+    cargo run --release -p xtask -- debruijn --table > crates/lcr-core/src/border_seq.rs
+    @echo "  wrote crates/lcr-core/src/border_seq.rs — review the diff"
 
 # Reduce a real-camera capture log to §15's success-rate metric.
 #

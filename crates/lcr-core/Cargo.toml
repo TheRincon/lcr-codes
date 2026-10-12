@@ -1,0 +1,23 @@
+[package]
+name = "lcr-core"
+description = "LCR Code: geometry, palette, ECC, and container primitives (no_std + alloc)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std", "deflate"]
+std = []
+# DEFLATE for §9.3 cflag 01. Pure Rust (miniz_oxide), so it stays in the wasm bundle.
+deflate = ["dep:miniz_oxide"]
+# Brotli for §9.3 cflag 10. Off by default: it roughly doubles the container code size
+# and §9.3 itself notes it rarely wins at LCR Code payload sizes.
+brotli = ["dep:brotli"]
+
+[dependencies]
+miniz_oxide = { workspace = true, optional = true }
+brotli = { version = "7", optional = true, default-features = false, features = ["std"] }
+
+[dev-dependencies]

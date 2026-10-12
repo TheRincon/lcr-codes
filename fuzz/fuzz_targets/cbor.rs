@@ -17,7 +17,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    if let Ok(value) = lc_core::cbor::Value::from_slice(data) {
+    if let Ok(value) = lcr_core::cbor::Value::from_slice(data) {
         // Re-serialising exercises the writer against arbitrary parsed shapes, not just
         // the ones the encoder builds — and a value that parses but cannot be written is
         // itself a bug worth surfacing.
@@ -30,7 +30,7 @@ fuzz_target!(|data: &[u8]| {
         // carrying a NaN float compares unequal to itself — which the fuzzer found within
         // three minutes, correctly reporting a round trip whose two sides print
         // identically. The bytes are the invariant that actually holds.
-        match lc_core::cbor::Value::from_slice(&bytes) {
+        match lcr_core::cbor::Value::from_slice(&bytes) {
             Ok(again) => assert_eq!(
                 bytes,
                 again.to_vec(),
@@ -41,6 +41,6 @@ fuzz_target!(|data: &[u8]| {
 
         // Rendering to JSON is what a scanner does to show a payload, so it runs on
         // whatever the parser accepted.
-        let _ = lc_core::json::to_json(&value);
+        let _ = lcr_core::json::to_json(&value);
     }
 });

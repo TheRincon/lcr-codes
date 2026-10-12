@@ -1,7 +1,7 @@
 [alias]
 # The cargo-xtask convention: automation that needs the project's own types lives in a
 # plain Rust binary rather than a shell script. `capacity` recomputes the §6.1 table from
-# `lc_core::capacity` instead of restating it, and `ldpc` generates the §8.2 base graphs,
+# `lcr_core::capacity` instead of restating it, and `ldpc` generates the §8.2 base graphs,
 # which the spec forbids building at runtime.
 #
 #   cargo xtask ldpc       regenerate the §8.2 LDPC base graphs

@@ -388,9 +388,9 @@ td.lo { color: var(--ink-faint); }
 <div class="wrap">
 
 <header class="masthead">
-  <p class="eyebrow">LC Code · how the format works</p>
+  <p class="eyebrow">LCR Code · how the format works</p>
   <h1>Reading with <span class="lu">brightness</span> and <span class="ch">colour</span> at the same time</h1>
-  <p class="standfirst">An LC Code carries two independent messages in one picture. One is written in light and dark, the other in green and magenta. Here is what that means, why it is worth doing, and what makes it fail.</p>
+  <p class="standfirst">An LCR Code carries two independent messages in one picture. One is written in light and dark, the other in green and magenta. Here is what that means, why it is worth doing, and what makes it fail.</p>
 </header>
 
 <section>
@@ -403,14 +403,14 @@ td.lo { color: var(--ink-faint); }
   <p>The ring does four jobs at once. Its four corner cells are <strong>always dark</strong>, which hands the scanner the four points it needs to undo perspective. The light and dark pattern running around it is a <strong>sequence in which every run of eight positions occurs exactly once</strong>, so any clear stretch of ring says which way up the symbol is, whether it is mirrored, and which size it is. <strong>Every third position is a known colour</strong> — that is the calibration target, telling the scanner what the lighting is doing before it trusts any colour it reads. And the positions in between <strong>carry data</strong>, both the symbol's own settings and payload.</p>
 
   <figure>
-    <img src="img/symbol.png" alt="A square LC Code symbol in green and magenta, with no finder patterns, surrounded by a multicoloured ring." width="540" height="540">
+    <img src="img/symbol.png" alt="A square LCR Code symbol in green and magenta, with no finder patterns, surrounded by a multicoloured ring." width="540" height="540">
     <figcaption><b>A real symbol.</b> 25×25 modules carrying 96 bytes. Every picture on this page was produced by the encoder itself, then damaged by the project's test harness — none of them are mock-ups.</figcaption>
   </figure>
 
   <p>Dropping the finders is worth more than it sounds. They and their supporting patterns cost a fixed 204 modules at every size — <strong>46% of the smallest symbol</strong> — and that area is now payload. The same 96 bytes above used to need a 33×33 grid; it fits in 25×25.</p>
 
   <figure>
-    <img src="../examples/anatomy-c3.png" alt="An annotated LC Code symbol with every structural part boxed in red and numbered, and a legend explaining each one." width="950">
+    <img src="../examples/anatomy-c3.png" alt="An annotated LCR Code symbol with every structural part boxed in red and numbered, and a legend explaining each one." width="950">
     <figcaption><b>Every part, labelled.</b> The same ring, on an eight-colour symbol, with each piece boxed: the dark corners, where the sequence starts, the calibration cells, the format bits and the payload. Generated from the format's own geometry, so it cannot drift from the code.</figcaption>
   </figure>
 </section>
@@ -762,7 +762,7 @@ td.lo { color: var(--ink-faint); }
 
   <h3>The same 33×33 square, against QR</h3>
 
-  <p>QR uses the identical size formula, so a 33×33 LC symbol and a QR <strong>version 4</strong> are the same grid. Capacity at the default error-correction setting, with QR's four levels for reference. The LC figures are for a symbol carrying the ring, which is what a screen symbol is — the ring both replaces the finders and carries payload of its own:</p>
+  <p>QR uses the identical size formula, so a 33×33 LCR symbol and a QR <strong>version 4</strong> are the same grid. Capacity at the default error-correction setting, with QR's four levels for reference. The LCR figures are for a symbol carrying the ring, which is what a screen symbol is — the ring both replaces the finders and carries payload of its own:</p>
 
   <div class="tablewrap">
     <table>
@@ -772,19 +772,19 @@ td.lo { color: var(--ink-faint); }
         <tr><td>QR — level M</td><td>36%</td><td>62 B</td><td class="lo">—</td><td class="lo">1.00×</td></tr>
         <tr><td>QR — level Q</td><td>52%</td><td>46 B</td><td class="lo">—</td><td class="lo">—</td></tr>
         <tr><td>QR — level H</td><td>64%</td><td>34 B</td><td class="lo">—</td><td class="lo">—</td></tr>
-        <tr><td>LC — M (mono)</td><td>25%</td><td>66 B</td><td>0.85×</td><td>1.06×</td></tr>
-        <tr><td>LC — C1</td><td>25%</td><td class="hi">183 B</td><td class="hi">2.35×</td><td class="hi">2.95×</td></tr>
-        <tr><td>LC — C2</td><td>25%</td><td>121 B</td><td>1.55×</td><td>1.95×</td></tr>
-        <tr><td>LC — C3</td><td>25%</td><td class="hi">263 B</td><td class="hi">3.37×</td><td class="hi">4.24×</td></tr>
+        <tr><td>LCR — M (mono)</td><td>25%</td><td>66 B</td><td>0.85×</td><td>1.06×</td></tr>
+        <tr><td>LCR — C1</td><td>25%</td><td class="hi">183 B</td><td class="hi">2.35×</td><td class="hi">2.95×</td></tr>
+        <tr><td>LCR — C2</td><td>25%</td><td>121 B</td><td>1.55×</td><td>1.95×</td></tr>
+        <tr><td>LCR — C3</td><td>25%</td><td class="hi">263 B</td><td class="hi">3.37×</td><td class="hi">4.24×</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>Those rows are not a fair fight, because QR's levels and LC's are defined differently — QR quotes how much damage it can repair, LC quotes the code rate directly. Pairing them instead by <em>how much of the symbol is parity</em>, which is the honest comparison. LC protects its two layers unequally, so the column heading is the luma figure; colour always carries 20 points more parity than brightness does:</p>
+  <p>Those rows are not a fair fight, because QR's levels and LCR's are defined differently — QR quotes how much damage it can repair, LCR quotes the code rate directly. Pairing them instead by <em>how much of the symbol is parity</em>, which is the honest comparison. LCR protects its two layers unequally, so the column heading is the luma figure; colour always carries 20 points more parity than brightness does:</p>
 
   <div class="tablewrap">
     <table>
-      <thead><tr><th>Profile</th><th>LC @ 15% luma parity</th><th>vs QR-L (20%, 78 B)</th><th>LC @ 35% luma parity</th><th>vs QR-M (36%, 62 B)</th></tr></thead>
+      <thead><tr><th>Profile</th><th>LCR @ 15% luma parity</th><th>vs QR-L (20%, 78 B)</th><th>LCR @ 35% luma parity</th><th>vs QR-M (36%, 62 B)</th></tr></thead>
       <tbody>
         <tr><td>M (mono)</td><td>76 B</td><td>0.97×</td><td>57 B</td><td>0.92×</td></tr>
         <tr><td>C1</td><td>213 B</td><td class="hi">2.73×</td><td>153 B</td><td class="hi">2.47×</td></tr>
@@ -804,15 +804,15 @@ td.lo { color: var(--ink-faint); }
 
   <div style="display:flex; align-items:flex-start; gap:1.5rem; margin:2rem 0">
     <figure class="plate" style="margin:0; flex:0 0 41%">
-      <div class="platelabel"><span>LC Code · C1</span><span>25×25</span></div>
-      <img src="img/symbol.png" alt="The LC Code symbol carrying 96 bytes, 25 modules across." width="420" height="420">
+      <div class="platelabel"><span>LCR Code · C1</span><span>25×25</span></div>
+      <img src="img/symbol.png" alt="The LCR Code symbol carrying 96 bytes, 25 modules across." width="420" height="420">
     </figure>
     <figure class="plate" style="margin:0; flex:0 0 57%">
       <div class="platelabel"><span>QR · level M</span><span>41×41</span></div>
       <img src="img/qr-medium.png" alt="A QR code carrying the same 96 bytes, 41 modules across, noticeably larger." width="588" height="588">
     </figure>
   </div>
-  <figcaption style="max-width:var(--wide)"><b>Same bytes, same module pitch.</b> 25×25 against 41×41 — the QR symbol covers <strong>2.7× the area</strong>. Both were generated by this project's build: the QR by the <code>qrcodegen</code> crate, and the test suite reads it back with <code>rqrr</code>, an independent decoder, so the thing being compared against is a real QR symbol rather than a drawing of one. QR level M is the fair pairing here — it is the level a short fallback URL would normally use, and its parity share (36%) is closest to what LC is carrying.</figcaption>
+  <figcaption style="max-width:var(--wide)"><b>Same bytes, same module pitch.</b> 25×25 against 41×41 — the QR symbol covers <strong>2.7× the area</strong>. Both were generated by this project's build: the QR by the <code>qrcodegen</code> crate, and the test suite reads it back with <code>rqrr</code>, an independent decoder, so the thing being compared against is a real QR symbol rather than a drawing of one. QR level M is the fair pairing here — it is the level a short fallback URL would normally use, and its parity share (36%) is closest to what LCR is carrying.</figcaption>
 
   <h3>A third shape, for contrast</h3>
 
@@ -911,8 +911,8 @@ td.lo { color: var(--ink-faint); }
 </section>
 
 <div class="foot">
-  <p>Every symbol on this page was produced by the LC Code encoder and damaged by the project's own degradation harness, at 12 device pixels per module with the §6.4 ring enabled — the same configuration the quoted success rates were measured on. Percentages are over 32 independent attempts per point, each with a different payload and a randomised placement of the damage, which carries a margin of roughly ±9 points. Colour values are CIELAB: <em class="term">L*</em> is lightness, <em class="term">a*b*</em> the two colour axes, and hue angles are measured in that plane.</p>
-  <p>LC capacities and bits-per-module are computed from the real layout rather than estimated, for a symbol carrying the §6.4 ring — which is what a screen symbol is, and which since the finder-less change is a different layout from a print symbol's. QR capacities are now measured the same way, by encoding with <code>qrcodegen</code> and reading back the version it chose, rather than transcribed from ISO/IEC 18004; QR parity percentages are still the published figures. The one picture here not produced by this project is the Aztec symbol, which is a supplied stock example carrying different data.</p>
+  <p>Every symbol on this page was produced by the LCR Code encoder and damaged by the project's own degradation harness, at 12 device pixels per module with the §6.4 ring enabled — the same configuration the quoted success rates were measured on. Percentages are over 32 independent attempts per point, each with a different payload and a randomised placement of the damage, which carries a margin of roughly ±9 points. Colour values are CIELAB: <em class="term">L*</em> is lightness, <em class="term">a*b*</em> the two colour axes, and hue angles are measured in that plane.</p>
+  <p>LCR capacities and bits-per-module are computed from the real layout rather than estimated, for a symbol carrying the §6.4 ring — which is what a screen symbol is, and which since the finder-less change is a different layout from a print symbol's. QR capacities are now measured the same way, by encoding with <code>qrcodegen</code> and reading back the version it chose, rather than transcribed from ISO/IEC 18004; QR parity percentages are still the published figures. The one picture here not produced by this project is the Aztec symbol, which is a supplied stock example carrying different data.</p>
 </div>
 
 </div>

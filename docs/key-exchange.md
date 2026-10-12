@@ -3,7 +3,7 @@
 **Status: draft proposal.** Schema IDs and field labels are placeholders pending the §11
 registry.
 
-Two operations, both fully offline, both carried entirely over LC Code symbols shown and
+Two operations, both fully offline, both carried entirely over LCR Code symbols shown and
 scanned between two devices:
 
 1. **Enrollment** — an already-trusted device vouches for a new one, so the new device can be
@@ -32,7 +32,7 @@ usually mean by "moving a passkey" already exist and should be used:
 | **add a device to an account, fully offline** | **this spec, §4** — then the new device registers its own passkey |
 | **carry a short-lived app secret, fully offline** | **this spec, §5** |
 
-The gap LC fills is **fully offline, camera-only**. CTAP hybrid needs a tunnel server and BLE;
+The gap LCR fills is **fully offline, camera-only**. CTAP hybrid needs a tunnel server and BLE;
 this needs two screens and two cameras.
 
 ### 1.2 "Signed" is not "safe" — §10.8 already says why
@@ -80,8 +80,8 @@ that already hold each other's identity keys. A deployment that needs both runs 
 then Tier 0 as often as it likes.
 
 Every *signed* message in either tier is an ordinary **§10 signed packet** (`ctype = 0x4`,
-COSE_Sign1 + CWT, with `lc.schema` naming the message and `lc.body` carrying it). That reuses
-`lc-verify` unchanged — including §10.5's KeyResolver and §10.6's mandatory `exp` — rather
+COSE_Sign1 + CWT, with `lcr.schema` naming the message and `lcr.body` carrying it). That reuses
+`lcr-verify` unchanged — including §10.5's KeyResolver and §10.6's mandatory `exp` — rather
 than inventing a second signing path. Unsigned messages are plain CBOR (`ctype = 0x3`).
 
 ---
@@ -118,7 +118,7 @@ exactly one extra message. With it, an interposer's chance per attempt is `10⁻
   4.   scans                              ◀────────  authorization  (signed by O)
 ```
 
-1. **Commit** (`N` → `O`, unsigned). `N` shows `c = SHA-256("LC-ENROLL-v1" ‖ cbor(N_key) ‖ rN)`,
+1. **Commit** (`N` → `O`, unsigned). `N` shows `c = SHA-256("LCR-ENROLL-v1" ‖ cbor(N_key) ‖ rN)`,
    binding it to its identity key and a fresh 16-byte nonce `rN` before seeing anything of
    `O`'s.
 2. **Reveal** (`O` → `N`, unsigned). `O` shows its identity public key `O_key` and a fresh nonce
@@ -128,7 +128,7 @@ exactly one extra message. With it, an interposer's chance per attempt is `10⁻
 4. **Short authentication string.** Both devices compute and display
 
    ```
-   SAS = u32(SHA-256("LC-SAS-v1" ‖ c ‖ cbor(O_key) ‖ rO ‖ cbor(N_key) ‖ rN)[0..4]) mod 10⁶
+   SAS = u32(SHA-256("LCR-SAS-v1" ‖ c ‖ cbor(O_key) ‖ rO ‖ cbor(N_key) ‖ rN)[0..4]) mod 10⁶
    ```
 
    as six digits. The user confirms they match **on `O`**. Until then `O` **MUST NOT** proceed.
@@ -136,7 +136,7 @@ exactly one extra message. With it, an interposer's chance per attempt is `10⁻
    authorized, bound to the transcript:
 
    ```
-   T = SHA-256("LC-ENROLL-TRANSCRIPT-v1" ‖ c ‖ cbor(O_key) ‖ rO ‖ cbor(N_key) ‖ rN)
+   T = SHA-256("LCR-ENROLL-TRANSCRIPT-v1" ‖ c ‖ cbor(O_key) ‖ rO ‖ cbor(N_key) ‖ rN)
    ```
 
 ### 4.3 What `N` does with it
@@ -182,7 +182,7 @@ For devices that **already hold each other's identity keys**, typically after Ti
 2. **Response** (`S` → `R`, signed by `S`). The secret, sealed with HPKE to `R_eph`:
 
    ```
-   info = "LC-SYNC-v1" ‖ nonce
+   info = "LCR-SYNC-v1" ‖ nonce
    aad  = SHA-256(request packet bytes)
    ```
 
@@ -253,26 +253,26 @@ cose-key   = { * (int / tstr) => any }   ; RFC 9052 COSE_Key, public parameters 
 suite      = &( x25519-chacha: 1, p256-aesgcm: 2 )
 
 ; ---- Tier 1: enrollment -------------------------------------------------------
-; lc.schema values are placeholders pending the §11 registry.
+; lcr.schema values are placeholders pending the §11 registry.
 
-enroll-commit = {            ; ctype 0x3, unsigned, lc.schema 0xF101
+enroll-commit = {            ; ctype 0x3, unsigned, lcr.schema 0xF101
   0 => version,
   1 => bstr .size 32,        ; c
 }
 
-enroll-reveal = {            ; ctype 0x3, unsigned, lc.schema 0xF102
+enroll-reveal = {            ; ctype 0x3, unsigned, lcr.schema 0xF102
   0 => version,
   2 => cose-key,             ; O_key
   3 => nonce,                ; rO
 }
 
-enroll-open = {              ; ctype 0x3, unsigned, lc.schema 0xF103
+enroll-open = {              ; ctype 0x3, unsigned, lcr.schema 0xF103
   0 => version,
   4 => cose-key,             ; N_key
   5 => nonce,                ; rN
 }
 
-enroll-authorization = {     ; lc.body of a §10 packet signed by O, lc.schema 0xF104
+enroll-authorization = {     ; lcr.body of a §10 packet signed by O, lcr.schema 0xF104
   0 => version,
   4 => cose-key,             ; N_key — the key being admitted
   6 => bstr .size 32,        ; T, the transcript hash
@@ -281,14 +281,14 @@ enroll-authorization = {     ; lc.body of a §10 packet signed by O, lc.schema 0
 
 ; ---- Tier 0: sync key --------------------------------------------------------
 
-sync-request = {             ; lc.body of a §10 packet signed by R, lc.schema 0xF111
+sync-request = {             ; lcr.body of a §10 packet signed by R, lcr.schema 0xF111
   0 => version,
   8 => cose-key,             ; R_eph — ephemeral HPKE public key
   3 => nonce,
   9 => [+ suite],            ; suites R accepts, preferred first
 }
 
-sync-response = {            ; lc.body of a §10 packet signed by S, lc.schema 0xF112
+sync-response = {            ; lcr.body of a §10 packet signed by S, lcr.schema 0xF112
   0 => version,
   3 => nonce,                ; echoes the request's
   10 => suite,               ; the one S chose
@@ -316,7 +316,7 @@ process.
 Measured, not estimated: each message is built exactly as §8 specifies — Ed25519 signatures,
 OKP COSE_Keys, the §9.1 frame header and CRC included — and matched against the capacity
 table at `C3`, ECC 1, the setting that decodes on the field hardware.
-`cargo run -p lc-encode --example keyx_sizes` reproduces this table.
+`cargo run -p lcr-encode --example keyx_sizes` reproduces this table.
 
 | message | measured | smallest symbol |
 |---|---:|---|
@@ -345,8 +345,8 @@ header, pushes it to v4. Encoders should let version selection run rather than p
 **A separate crate, and it has to be.** Both tiers generate fresh ephemeral keys and nonces on
 *both* devices, which needs a random number generator. §14.2 makes `getrandom` appearing in
 the verify path a build failure, specifically so a signing path cannot leak into a scanner.
-This protocol cannot live in `lc-verify`; a crate such as `lc-pair` sits above it, depends on
-`lc-verify` for the signed messages, and brings the RNG and HPKE with it.
+This protocol cannot live in `lcr-verify`; a crate such as `lcr-pair` sits above it, depends on
+`lcr-verify` for the signed messages, and brings the RNG and HPKE with it.
 
 **The crate is a pair of state machines, not a UI.** It exposes the transitions — commit,
 reveal, open, confirm, authorize; request, respond, open — and the SAS as a value. Showing the

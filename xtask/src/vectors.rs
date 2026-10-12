@@ -42,14 +42,14 @@
 //! about it produce symbols that decode differently.
 //!
 //! `crc32` is CRC-32/ISO-HDLC over that byte array — change detection, not cryptography,
-//! and already in `lc-core` for the §9.1 extended frame, so no new dependency and no
+//! and already in `lcr-core` for the §9.1 extended frame, so no new dependency and no
 //! ambiguity about which CRC-32 is meant.
 
-use lc_core::crc::crc32_iso_hdlc;
-use lc_core::layout::Layout;
-use lc_core::version::{EccLevel, Profile, Version};
-use lc_core::{Compression, Symbol};
-use lc_encode::EncodeOptions;
+use lcr_core::crc::crc32_iso_hdlc;
+use lcr_core::layout::Layout;
+use lcr_core::version::{EccLevel, Profile, Version};
+use lcr_core::{Compression, Symbol};
+use lcr_encode::EncodeOptions;
 use std::fmt::Write as _;
 
 /// Full grids are emitted below this side length. A v32 grid is 21,025 bytes of hex per
@@ -142,7 +142,7 @@ fn opts(
 /// shapes that have historically broken something.
 fn cases() -> Vec<Case> {
     let mut v: Vec<Case> = Vec::new();
-    let body = b"LC Code golden vector".to_vec();
+    let body = b"LCR Code golden vector".to_vec();
 
     // Every profile at one size, border on and off. The border is format bit 14 and
     // changes the illumination fit's inputs, not the grid — pinning both proves that.
@@ -192,7 +192,7 @@ fn cases() -> Vec<Case> {
         // v1 at C1 holds 20 bytes; keep the payload inside the smallest case.
         v.push(Case {
             name,
-            input: Input::Bytes(b"lc golden".to_vec()),
+            input: Input::Bytes(b"lcr golden".to_vec()),
             opts: opts(Profile::C1, Some(ver), 1, Some(2), true),
         });
     }
@@ -201,7 +201,7 @@ fn cases() -> Vec<Case> {
     // so these pin the container as well as the grid.
     v.push(Case {
         name: "ctype-text",
-        input: Input::Text("hello, LC Code"),
+        input: Input::Text("hello, LCR Code"),
         opts: opts(Profile::C1, Some(4), 1, Some(0), true),
     });
     v.push(Case {
@@ -271,18 +271,18 @@ fn cases() -> Vec<Case> {
     v
 }
 
-fn encode(case: &Case) -> Result<Symbol, lc_core::LcError> {
+fn encode(case: &Case) -> Result<Symbol, lcr_core::LcrError> {
     match &case.input {
-        Input::Bytes(b) => lc_encode::encode_bytes(b, &case.opts),
-        Input::Text(t) => lc_encode::encode_text(t, &case.opts),
-        Input::Json(j) => lc_encode::encode_json(j, &case.opts),
+        Input::Bytes(b) => lcr_encode::encode_bytes(b, &case.opts),
+        Input::Text(t) => lcr_encode::encode_text(t, &case.opts),
+        Input::Json(j) => lcr_encode::encode_json(j, &case.opts),
     }
 }
 
 pub fn report() -> String {
     let mut s = String::new();
     s.push_str("{\n");
-    s.push_str("  \"format\": \"lc-code-golden-vectors\",\n");
+    s.push_str("  \"format\": \"lcr-code-golden-vectors\",\n");
     s.push_str("  \"schema\": 3,\n");
     s.push_str("  \"spec\": \"v0.4\",\n");
     s.push_str(

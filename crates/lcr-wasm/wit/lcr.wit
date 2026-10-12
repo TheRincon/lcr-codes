@@ -1,0 +1,388 @@
+// LCR Code as a WebAssembly component (§14.2, §17.3).
+//
+// §14.2 was written around a browser — `Uint8ClampedArray` from canvas `getImageData`,
+// a gzipped bundle served over the network. This interface targets the Component Model
+// instead, so the consumer is a host application embedding a wasm runtime rather than a
+// page. The argument in §17.3 is unchanged and if anything stronger: a typed, versioned
+// interface lets a host in Rust, Go, C or C++ add LCR Code support with no native
+// dependency and no hand-written ABI.
+//
+// Design notes that are not obvious from the types:
+//
+//   * `packet` is a variant, not a record with an optional body, so the §10.8 guarantee
+//     survives the interface boundary: `unverified` has no payload to extract, and
+//     `partial` yields a `prefix` that cannot be mistaken for a `body`. A host cannot
+//     read unverified content by forgetting to check a flag.
+//   * Diagnostics are not optional. §14.3 keeps them because "colour codes fail for
+//     diagnosable reasons", and a scanning UI needs `snr-db` and `chroma-recovered` to
+//     tell a user to move closer or tilt away from glare.
+//   * Errors are strings rather than an enum. The set is open — new decode failures are
+//     expected as the §15 harness grows — and a host's only sane response to any of them
+//     is to retry or report, so an exhaustive enum would buy nothing.
+
+package lcr:code@0.4.0;
+
+interface types {
+  /// Colour configuration (§5).
+  enum profile {
+    /// Monochrome fallback, 1.00 bits/module.
+    mono,
+    /// Screen default: 4 colours, co-sited chroma.
+    c1,
+    /// Print default: 4 colours, 2x2 chroma cells.
+    c2,
+    /// 8 colours, co-sited chroma. Optional.
+    c3,
+  }
+
+  /// Wire content type (§9.2).
+  enum content-type {
+    opaque,
+    text,
+    json,
+    cbor,
+    cose-sign1,
+    multipart,
+  }
+
+  /// Pixel layout of a supplied frame.
+  enum pixel-format {
+    /// One byte per pixel. Chroma is unavailable, so only the luma layer decodes.
+    gray8,
+    /// Three bytes per pixel.
+    rgb8,
+    /// Four bytes per pixel; the fourth is ignored.
+    rgba8,
+  }
+
+  /// Compression applied to the framed body (§9.3).
+  enum compression {
+    none,
+    deflate,
+    brotli,
+  }
+
+  /// A decoded body and what it is.
+  record payload {
+    ctype: content-type,
+    body: list<u8>,
+  }
+
+  /// The result of a decode (§14.3).
+  variant packet {
+    /// Decoded and carries no signature — the §1.2 common case.
+    unsigned(payload),
+    /// Signature verified against a host-supplied key.
+    verified(payload),
+    /// Well-formed COSE, not verified. No body, by construction (§10.8).
+    unverified,
+    /// A luma-only prefix (§12.5). A **diagnostic**, not content: it has no CRC to check
+    /// until the whole frame arrives, and §8.1 forbids acting on it.
+    partial(list<u8>),
+  }
+
+  /// Why a decode went the way it did (§14.3).
+  record diagnostics {
+    luma-iterations: u16,
+    chroma-iterations: u16,
+    /// False means the chroma layer was unrecoverable.
+    chroma-recovered: bool,
+    /// RMS residual of the §12.3 illumination fit, in linear light.
+    illum-residual-rms: f32,
+    /// References discarded by §12.3's robust refit. High means glare.
+    references-rejected: u8,
+    /// Per-module luma SNR. The most useful single number for user guidance.
+    snr-db: f32,
+    /// Frames combined before decoding (§12.4).
+    frames-combined: u8,
+    /// Symbol version, 1..=32.
+    version: u8,
+    profile: profile,
+    /// Confidence margin of the winning format-region copy.
+    format-margin: f32,
+    /// Whether a full homography was fitted rather than an affine fallback.
+    alignment-found: bool,
+    /// Module pitch as **captured**, in sensor pixels, at the symbol's finest corner.
+    ///
+    /// Distinct from §13.1's device-pixels-per-module, which describes how the display
+    /// drew the symbol. This is what survived the optical path, and it is what a working
+    /// range is a measurement of: a symbol of fixed size subtends fewer sensor pixels the
+    /// further away the camera is.
+    capture-pitch-min: f32,
+    /// Module pitch as captured at the symbol's coarsest corner. The ratio against
+    /// `capture-pitch-min` measures viewing obliquity without needing camera intrinsics.
+    capture-pitch-max: f32,
+  }
+
+  record decode-result {
+    packet: packet,
+    diagnostics: diagnostics,
+  }
+
+  /// Where a symbol is and how it was captured, established without decoding it.
+  ///
+  /// Every field also appears in `diagnostics`. The point of the separate record is that
+  /// these are the fields that survive a decode failure: they come from §12.1–§12.3,
+  /// which run before any payload is touched.
+  record probe-result {
+    version: u8,
+    profile: profile,
+    format-margin: f32,
+    alignment-found: bool,
+    illum-residual-rms: f32,
+    references-rejected: u8,
+    capture-pitch-min: f32,
+    capture-pitch-max: f32,
+  }
+
+  /// A captured frame.
+  record image {
+    pixels: list<u8>,
+    width: u32,
+    height: u32,
+    /// Bytes per row. May exceed width * channels for a padded camera plane.
+    stride: u32,
+    format: pixel-format,
+  }
+}
+
+/// Reading symbols (§12).
+interface decoder {
+  use types.{image, decode-result, probe-result};
+
+  /// Decode a single frame.
+  decode: func(img: image) -> result<decode-result, string>;
+
+  /// Locate a symbol and measure the capture geometry, without decoding it.
+  ///
+  /// §12.1–§12.3 only. A failed `decode` returns a string, which cannot tell a host
+  /// whether there was no symbol in the frame or a symbol whose payload was marginal —
+  /// opposite instructions to give a user, and §14.3 keeps diagnostics precisely so a
+  /// host can give the right one. Succeeding here means the symbol was found and its
+  /// format region read, and says nothing about the payload.
+  probe: func(img: image) -> result<probe-result, string>;
+
+  /// Multi-frame LLR combining (§12.4), which the spec calls "the single best use of a
+  /// live camera preview": banding and glare move between frames, so accumulating soft
+  /// information across them is far cheaper than tightening the code rate.
+  resource accumulator {
+    constructor();
+    /// Add a frame.
+    push: func(img: image) -> result<_, string>;
+    /// How many frames have been combined.
+    frames: func() -> u8;
+    /// Attempt a decode from everything pushed so far.
+    try-decode: func() -> result<decode-result, string>;
+    /// Discard accumulated frames.
+    reset: func();
+  }
+}
+
+/// Turning a decoded body into something displayable.
+///
+/// Deliberately *not* part of `decoder`, and so not in the `scanner` world. It is a
+/// decode-side utility and belongs there on the merits, but §9.4's JSON writer and the
+/// CBOR value tree cost ~16 KB, which took the scanner from 93% to 101% of §14.2's size
+/// budget. A minimal scanner should stay minimal and render the body host-side; a build
+/// that already carries the encoder pays nothing extra for this.
+interface codec {
+  /// Render a CBOR body as JSON text — the read side of §9.4's "author in JSON, transmit
+  /// CBOR". A decoded `payload` whose `ctype` is `cbor` is bytes; this is the inverse of
+  /// the conversion the encoder performed.
+  cbor-to-json: func(body: list<u8>) -> result<string, string>;
+
+  /// The write side: the exact bytes `encoder.encode-json` puts on the wire.
+  ///
+  /// Exposed because a caller sometimes needs the payload itself and not just a symbol
+  /// containing it — measuring what §9.4's "author in JSON, transmit CBOR" actually saves,
+  /// or handing the identical bytes to something else so a comparison is of the carrier
+  /// rather than of the container.
+  json-to-cbor: func(json: string) -> result<list<u8>, string>;
+}
+
+/// Writing symbols (§8).
+interface encoder {
+  use types.{profile, compression};
+
+  /// Encoding knobs. `version` and `mask` are chosen automatically when absent, and
+  /// `compression` is chosen by trying each and keeping the smallest — which at LCR Code
+  /// payload sizes is frequently no compression at all (§9.3).
+  record options {
+    profile: profile,
+    version: option<u8>,
+    ecc-luma: u8,
+    ecc-chroma: u8,
+    compression: option<compression>,
+    /// Emit the §6.4 screen reference border. Costs no payload capacity — it lives
+    /// outside the symbol grid — and materially improves decoding under glare.
+    reference-border: bool,
+    mask: option<u8>,
+  }
+
+  /// A rendered symbol.
+  record rendered {
+    /// Row-major RGB triples, width * height * 3 bytes.
+    pixels: list<u8>,
+    width: u32,
+    height: u32,
+    /// Symbol version actually used.
+    version: u8,
+    /// Grid side in modules, excluding the quiet zone.
+    side: u32,
+  }
+
+  /// Encode JSON. Converted to CBOR first — §9.4's "author in JSON, transmit CBOR".
+  encode-json: func(json: string, opts: options, module-px: u32) -> result<rendered, string>;
+
+  /// Encode UTF-8 text.
+  encode-text: func(text: string, opts: options, module-px: u32) -> result<rendered, string>;
+
+  /// Encode opaque bytes.
+  encode-bytes: func(data: list<u8>, opts: options, module-px: u32) -> result<rendered, string>;
+
+  /// Largest framed body a symbol with these settings holds, in bytes.
+  ///
+  /// Exposed because a caller splitting a file across symbols (see `cft`) has to size its
+  /// chunks from the carrier, and the alternative — encode, catch the failure, try a
+  /// smaller chunk — turns a lookup into a search.
+  capacity: func(
+    profile: profile,
+    version: u8,
+    ecc-luma: u8,
+    ecc-chroma: u8,
+    reference-border: bool,
+  ) -> result<u32, string>;
+
+  /// Encode JSON and render to SVG rather than pixels.
+  encode-json-svg: func(json: string, opts: options, module-px: u32) -> result<string, string>;
+}
+
+/// QR generation, for the density comparison in `web/display.html`.
+///
+/// **Not part of the symbology.** It exists so the README's density claim can be looked at
+/// side by side rather than taken on trust, and it is exported only by the
+/// `lcr-code-compare` world — neither shipped artifact has it.
+///
+/// Generation is the `qrcodegen` crate rather than code written here: a comparison is
+/// worth what the thing it compares against is worth, and a hand-rolled QR encoder would
+/// make the density figure rest on that encoder's masking and interleaving being right.
+interface compare {
+  /// QR error-correction level, named as ISO/IEC 18004 names them. Deliberately not
+  /// mapped onto LCR Code's 0–3 scale: the two do not correspond, and pretending they do
+  /// is the easiest way to publish an unfair comparison.
+  enum qr-ecc { low, medium, quartile, high }
+
+  /// A generated QR symbol as a module grid.
+  ///
+  /// Modules rather than pixels so the caller rasterises both symbologies through one
+  /// path at one pitch — an area comparison whose two sides were drawn by different code
+  /// is measuring the drawing.
+  record qr-symbol {
+    /// Row-major, one byte per module, 1 = dark.
+    modules: list<u8>,
+    /// Grid side in modules, excluding the quiet zone.
+    size: u32,
+    /// QR version, 1..=40.
+    version: u8,
+    /// Quiet zone the standard requires per side, in modules. Four, against LCR Code's two
+    /// (§6.1) — which is why a bare-grid area comparison flatters QR.
+    quiet-zone: u32,
+    payload-bytes: u32,
+  }
+
+  /// Encode bytes in QR byte mode.
+  ///
+  /// Byte mode is the fair choice: LCR Code carries arbitrary bytes natively and §9.6
+  /// refuses a text-safe encoding layer precisely because QR's alphanumeric restriction
+  /// forces one on comparable systems. An alphanumeric payload would measure a
+  /// restriction LCR Code does not have.
+  qr-encode: func(data: list<u8>, ecl: qr-ecc) -> result<qr-symbol, string>;
+}
+
+/// Chunked file transfer (docs/CFT.md), so a payload larger than one symbol can cross as
+/// a sequence of them.
+///
+/// **Deflate, not Zstandard.** CFT.md makes zstd the codec and the project grants it a C
+/// exception, but `zstd-sys` compiles C and there is no C toolchain for
+/// `wasm32-unknown-unknown`. The manifest names whichever codec was used, so a browser
+/// sender and a browser receiver agree without either being told.
+///
+/// Exported by the encode-bearing worlds only. A scanner build would want the receiving
+/// half, but §14.2's size budget has no room for it — a shipping scanner should reassemble
+/// host-side.
+interface cft {
+  /// A file, compressed and split. One symbol per message, manifest first.
+  record transfer {
+    messages: list<list<u8>>,
+    total-chunks: u32,
+    original-size: u64,
+    compressed-size: u64,
+  }
+
+  /// How much of a transfer has arrived.
+  variant status {
+    /// No manifest yet, so chunks cannot be counted. Carries how many are held.
+    awaiting-manifest(u32),
+    receiving(progress),
+    complete,
+  }
+
+  record progress {
+    have: u32,
+    total: u32,
+  }
+
+  /// Compress `file` and split it into chunks of at most `chunk-size` payload bytes.
+  ///
+  /// `chunk-size` comes from the carrier's capacity, not from CFT.md §7's fixed 4096 —
+  /// no LCR Code symbol below v29 at profile C3 could hold that.
+  split: func(
+    file: list<u8>,
+    filename: string,
+    transfer-id: list<u8>,
+    chunk-size: u32,
+  ) -> result<transfer, string>;
+
+  /// Collects messages in any order and reconstructs the file.
+  resource receiver {
+    constructor();
+    /// Feed one decoded CFT message — manifest or chunk, in any order.
+    accept: func(bytes: list<u8>) -> result<status, string>;
+    status: func() -> status;
+    /// Chunk indices still outstanding (CFT.md §10).
+    missing: func() -> list<u32>;
+    /// The manifest's filename, if it is safe to use as one.
+    filename: func() -> option<string>;
+    /// Bytes the manifest promised, for a progress readout before completion.
+    original-size: func() -> u64;
+    /// Reassemble, decompress and verify against the manifest's hash.
+    ///
+    /// Returns bytes only when the digest matches, so a caller cannot hand a user a file
+    /// that did not survive the trip.
+    finish: func() -> result<list<u8>, string>;
+  }
+}
+
+/// Decode only — the scanner build. §14.1 keeps the encoder out so a scanner cannot
+/// acquire it by accident.
+world scanner {
+  export decoder;
+}
+
+/// Decode and encode. One of the two shipped artifacts; carries no QR.
+world lcr-code {
+  export decoder;
+  export encoder;
+  export codec;
+  export cft;
+}
+
+/// The demo build: everything above plus QR generation. Built only by `just web`, never
+/// shipped, so a competing symbology cannot reach an artifact anyone embeds.
+world lcr-code-compare {
+  export decoder;
+  export encoder;
+  export codec;
+  export compare;
+  export cft;
+}

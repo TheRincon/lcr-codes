@@ -1,7 +1,7 @@
 # Robustness ideas — what JABCode does, and what we could take from it
 
 *Written 2026-10-03. A read of the vendored `jabcode/` reference implementation
-(Fraunhofer SIT's `libjabcode`), compared against `lc-decode` as it stands after D20. No code
+(Fraunhofer SIT's `libjabcode`), compared against `lcr-decode` as it stands after D20. No code
 changed. This is a list of ideas to evaluate, not decisions.*
 
 Each idea says where it comes from, which of **our measured** failure modes it targets, what
@@ -15,7 +15,7 @@ against:
 | `C3` needs ~14 px/module against `C1`'s 6–7; chroma is bandwidth-limited | D10, D11, sweep |
 | The ring detector assumes one ink region = one symbol, untested on real scenes | D17 limits |
 | Finder-less geometry comes from **four corner points only**; corner error under blur already costs a step of the defocus envelope | D17, D18 |
-| `FrameAccumulator` keeps stale geometry until reset; `receive.html` resets on a 24-frame heuristic | `lc-decode/src/lib.rs`, `web/receive.html` |
+| `FrameAccumulator` keeps stale geometry until reset; `receive.html` resets on a 24-frame heuristic | `lcr-decode/src/lib.rs`, `web/receive.html` |
 | The scanner sits at **89%** of the raw size budget | D20 |
 
 ---
@@ -120,7 +120,7 @@ against:
 
 ## 2. Side by side
 
-| Stage | JABCode | LC Code today |
+| Stage | JABCode | LCR Code today |
 |---|---|---|
 | Palette design | RGB cube corners, per-channel binary | Lab-derived, iso-luminant hue states, luma ⟂ chroma (D1/D2) |
 | Colour reference | 4 embedded palette copies, nearest-quadrant lookup | Fixed references + ring cells → spatial gain/flare surface + global affine + robust refit (D3) |
@@ -381,10 +381,10 @@ simply systematic XOR/Reed–Solomon parity chunks across a window, means **any*
 missed, and a receiver that joins mid-loop finishes in about one cycle.
 
 **Fit with CFT:** CFT.md §21 already lists "forward error correction above the transport" as
-a future extension. It belongs in `lc-cft`, transport-independent. Signing and the
+a future extension. It belongs in `lcr-cft`, transport-independent. Signing and the
 end-to-end hash are unaffected: the hash is still checked after reconstruction.
 
-**Cost:** encoder and decoder code in `lc-cft`, which is not the scanner budget unless the
+**Cost:** encoder and decoder code in `lcr-cft`, which is not the scanner budget unless the
 scanner build links CFT.
 
 ### 4.4 Multi-symbol frames (JABCode's docking)

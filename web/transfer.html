@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LC Code file transfer — sender</title>
+<title>LCR Code file transfer — sender</title>
 <style>
   :root {
     --bg: #0e120d; --panel: #171d15; --line: #2a3326;
@@ -101,7 +101,7 @@
 <div class="wrap">
   <h1>File transfer — sender</h1>
   <p class="sub">
-    Drop a file. It is compressed and encoded into <b>one</b> LC Code symbol, carrying its
+    Drop a file. It is compressed and encoded into <b>one</b> LCR Code symbol, carrying its
     own filename and SHA-256. Point the <a href="./receive.html">receiver</a> at it once.
     No animation, no sequence, nothing uploaded — it all happens in this tab.
   </p>
@@ -160,7 +160,7 @@
 <div id="presentWarn"></div>
 
 <script type="module">
-import { encoder, cft } from './lc/lc-code.js';
+import { encoder, cft } from './lcr/lcr-code.js';
 
 const $ = id => document.getElementById(id);
 const stage = $('stage'), meta = $('meta'), err = $('err');
@@ -272,7 +272,7 @@ async function present(on) {
     try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { wakeLock = null; }
     fitPresent();
   } else {
-    document.title = 'LC Code file transfer — sender';
+    document.title = 'LCR Code file transfer — sender';
     try { await wakeLock?.release(); } catch { /* already gone */ }
     wakeLock = null;
     if (document.fullscreenElement) {

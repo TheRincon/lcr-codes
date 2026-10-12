@@ -14,8 +14,8 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use lc_core::bits::BitVec;
-use lc_core::frame::{Compression, Frame, decompress, multipart_decode};
+use lcr_core::bits::BitVec;
+use lcr_core::frame::{Compression, Frame, decompress, multipart_decode};
 
 fuzz_target!(|data: &[u8]| {
     // The container, parsed straight from bits. Everything before the CRC is unvalidated.

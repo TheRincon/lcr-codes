@@ -667,24 +667,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "lc-cft"
+name = "lcr-cft"
 version = "0.4.0"
 dependencies = [
- "lc-core",
- "lc-decode",
- "lc-encode",
- "lc-render",
+ "lcr-core",
+ "lcr-decode",
+ "lcr-encode",
+ "lcr-render",
  "miniz_oxide",
  "sha2",
  "zstd",
 ]
 
 [[package]]
-name = "lc-cli"
+name = "lcr-cli"
 version = "0.4.0"
 
 [[package]]
-name = "lc-core"
+name = "lcr-core"
 version = "0.4.0"
 dependencies = [
  "brotli",
@@ -692,62 +692,62 @@ dependencies = [
 ]
 
 [[package]]
-name = "lc-decode"
+name = "lcr-decode"
 version = "0.4.0"
 dependencies = [
- "lc-core",
- "lc-encode",
- "lc-render",
+ "lcr-core",
+ "lcr-encode",
+ "lcr-render",
 ]
 
 [[package]]
-name = "lc-encode"
+name = "lcr-encode"
 version = "0.4.0"
 dependencies = [
  "ed25519-dalek",
- "lc-core",
- "lc-verify",
+ "lcr-core",
+ "lcr-verify",
  "p256",
 ]
 
 [[package]]
-name = "lc-ffi"
+name = "lcr-ffi"
 version = "0.4.0"
 
 [[package]]
-name = "lc-render"
+name = "lcr-render"
 version = "0.4.0"
 dependencies = [
- "lc-core",
- "lc-decode",
- "lc-encode",
+ "lcr-core",
+ "lcr-decode",
+ "lcr-encode",
  "miniz_oxide",
  "qrcodegen",
  "rqrr",
 ]
 
 [[package]]
-name = "lc-verify"
+name = "lcr-verify"
 version = "0.4.0"
 dependencies = [
  "ed25519-dalek",
- "lc-core",
- "lc-decode",
- "lc-encode",
- "lc-render",
+ "lcr-core",
+ "lcr-decode",
+ "lcr-encode",
+ "lcr-render",
  "p256",
  "sha2",
 ]
 
 [[package]]
-name = "lc-wasm"
+name = "lcr-wasm"
 version = "0.4.0"
 dependencies = [
- "lc-cft",
- "lc-core",
- "lc-decode",
- "lc-encode",
- "lc-render",
+ "lcr-cft",
+ "lcr-core",
+ "lcr-decode",
+ "lcr-encode",
+ "lcr-render",
  "wasmtime",
  "wit-bindgen",
 ]
@@ -1752,8 +1752,8 @@ dependencies = [
 name = "xtask"
 version = "0.4.0"
 dependencies = [
- "lc-core",
- "lc-encode",
+ "lcr-core",
+ "lcr-encode",
 ]
 
 [[package]]

@@ -18,9 +18,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    if let Ok(value) = lc_core::json::parse(text) {
+    if let Ok(value) = lcr_core::json::parse(text) {
         // Writing back must not panic on anything the parser accepted.
-        let written = lc_core::json::to_json(&value);
+        let written = lcr_core::json::to_json(&value);
 
         // What must hold is that the projection **converges**, not that it is idempotent
         // in one step. `to_json` is deliberately lossy — JSON has no NaN, no infinity and
@@ -32,16 +32,16 @@ fuzz_target!(|data: &[u8]| {
         // So one pass may lose information. From the second pass on, nothing may change —
         // and a writer that produced output its own parser rejected, or that never
         // settled, would still be caught.
-        let Ok(reparsed) = lc_core::json::parse(&written) else {
+        let Ok(reparsed) = lcr_core::json::parse(&written) else {
             panic!("the writer emitted json its own parser rejects: {written:?}");
         };
-        let second = lc_core::json::to_json(&reparsed);
-        let Ok(again) = lc_core::json::parse(&second) else {
+        let second = lcr_core::json::to_json(&reparsed);
+        let Ok(again) = lcr_core::json::parse(&second) else {
             panic!("second pass emitted json its own parser rejects: {second:?}");
         };
         assert_eq!(
             second,
-            lc_core::json::to_json(&again),
+            lcr_core::json::to_json(&again),
             "json projection never settled"
         );
     }

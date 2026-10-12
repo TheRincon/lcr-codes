@@ -19,7 +19,7 @@ costs to revert each one.
 
 ### D1. The §4.3 palette does not satisfy §4.2
 
-**Status:** replaced. `crates/lc-core/src/palette.rs`
+**Status:** replaced. `crates/lcr-core/src/palette.rs`
 
 Measured against §4.2's own bounds, the four colours printed in §4.3 fail three of four:
 
@@ -85,7 +85,7 @@ against measured panels is a matter of re-running it rather than hand-fitting.
 
 ### D2. §4.4's "four hue states ~90° apart" is not achievable in sRGB
 
-**Status:** hue spacing made uneven. `crates/lc-core/src/palette.rs`
+**Status:** hue spacing made uneven. `crates/lcr-core/src/palette.rs`
 
 Four iso-luminant hues at exactly 90° spacing, with a 40-unit inter-level gap, cap out at
 `C* = 32.4` — below §4.2's `C* ≥ 35` floor. §4.2 only requires `≥ 300°/k = 75°`, so
@@ -95,7 +95,7 @@ pinned C3 hues are consequently uneven: 71°/146.5°/280°/355.5°. (These were
 
 ### D3. §12.3's residual surface must be multiplicative, not additive
 
-**Status:** model restructured. `crates/lc-decode/src/illum.rs`
+**Status:** model restructured. `crates/lcr-decode/src/illum.rs`
 
 §12.3 step 2 says to fit the correction surface "over the residuals", which reads as
 additive. **An additive surface cannot cancel a shading gradient**, and shading is the
@@ -126,7 +126,7 @@ correct:  nominal     =  affine · [ (observed_c − flare_c(x, y)) / gain_c(x, 
 
 ### D4. §5's bits-per-module figure is not reachable for `C2`
 
-**Status:** measured values pinned. `crates/lc-core/src/layout.rs`
+**Status:** measured values pinned. `crates/lcr-core/src/layout.rs`
 
 | Profile | §5 | Measured at v32 |
 |---|---|---|
@@ -167,7 +167,7 @@ Density against the monochrome fallback is **1.73×**, inside §1.1 goal 2's 1.5
 
 ### D6. §13.1's ≥ 8 device-pixels-per-module floor did not detect
 
-**Status:** fixed, no spec change needed. `crates/lc-decode/src/image.rs`, guarded by
+**Status:** fixed, no spec change needed. `crates/lcr-decode/src/image.rs`, guarded by
 `decodes_at_the_normative_minimum_module_pitch`.
 
 §13.1 point 3 makes "≥ 8 device pixels per module" normative for a conforming display
@@ -220,10 +220,10 @@ something to beat, still holds unchanged.
 
 ### D7. `no_std` does not build, and will not be made to
 
-**Status:** accepted deviation, decided. `crates/lc-wasm/Cargo.toml`
+**Status:** accepted deviation, decided. `crates/lcr-wasm/Cargo.toml`
 
-§14.1 describes `lc-core`, `lc-decode` and `lc-verify` as "`no_std` + alloc". **They do not
-build that way.** `cargo build -p lc-core --no-default-features` fails with 31 errors, all
+§14.1 describes `lcr-core`, `lcr-decode` and `lcr-verify` as "`no_std` + alloc". **They do not
+build that way.** `cargo build -p lcr-core --no-default-features` fails with 31 errors, all
 of them float maths: §4's colour conversions use `sqrt`, `powf`, `atan2`, `cbrt`, `sin`,
 `cos` and `to_radians`, which are `std` methods and have no `core` equivalent.
 
@@ -241,7 +241,7 @@ browsers, phones, servers, Node, WASI runtimes — provides `std`. Taking a depe
 touching 84 numerical call sites to serve a hypothetical embedder is not a trade worth
 making now.
 
-**What this costs, stated plainly:** `std` is a hard requirement of every LC Code crate,
+**What this costs, stated plainly:** `std` is a hard requirement of every LCR Code crate,
 and §14.1's description is aspirational rather than accurate. §14.2's actual constraints
 are unaffected — it bans **C dependencies** and **`getrandom`**, not the standard library,
 and the shipped wasm bundle has neither.
@@ -257,7 +257,7 @@ this entry stands in its place.
 
 ### D8. The wasm target is a Component Model component, not a browser bundle
 
-**Status:** decided. `crates/lc-wasm/wit/lc.wit`, built by `just component`.
+**Status:** decided. `crates/lcr-wasm/wit/lcr.wit`, built by `just component`.
 
 §14.2 specifies a browser artifact throughout: "Accept `Uint8ClampedArray` from canvas
 `getImageData` directly", `wasm-bindgen`, a bundle measured **gzipped** because it is
@@ -269,7 +269,7 @@ Model and exports a WIT interface instead.
 A `wasm-bindgen` build was written first and then replaced. It was the wrong artifact for
 a non-JS host in three concrete ways, all measured on the built module:
 
-- It **imported three functions from a JS module**, `./lc_wasm_bg.js`. A non-JS host has
+- It **imported three functions from a JS module**, `./lcr_wasm_bg.js`. A non-JS host has
   to hand-stub `__wbindgen_throw`, `Error` and `__wbindgen_init_externref_table` before
   the module will instantiate.
 - It **required the reference-types proposal** — `wasm-tools validate
@@ -291,9 +291,9 @@ with `wasm-tools component new` avoids all of it:
 | `wasm32-unknown-unknown` + `component new` | 282,508 | **103,617** | **none** |
 
 The shipped components import **nothing** a host must provide. The single
-`import lc:code/types@0.4.0` is a types-only interface containing zero functions.
+`import lcr:code/types@0.4.0` is a types-only interface containing zero functions.
 
-Two worlds, per §14.1: `lc-code` exports `decoder` and `encoder`; `scanner` exports only
+Two worlds, per §14.1: `lcr-code` exports `decoder` and `encoder`; `scanner` exports only
 `decoder`, so a scanner build cannot acquire the encoder by accident.
 
 **The budget is now gated in raw bytes, and that changes the answer.** §14.2 says "200 KB
@@ -348,14 +348,14 @@ Two languages, no Rust-specific assumptions, and the C API is also the path a fu
 
 **When to revisit:** when `wasmtime-go` binds the component API, or if a Go deployment
 becomes concrete. In the latter case the options are cgo against the C API, or finishing
-`lc-ffi` and having Go call a native library — which works but abandons the
+`lcr-ffi` and having Go call a native library — which works but abandons the
 build-once-run-anywhere property, since you are back to shipping per-platform binaries.
 
 ---
 
 ### D10. §8.2's rate table is right; its stated reason is not
 
-**Status:** table unchanged, rationale corrected. `crates/lc-decode/src/demod.rs`
+**Status:** table unchanged, rationale corrected. `crates/lcr-decode/src/demod.rs`
 
 §8.2 gives each ECC level a chroma rate two steps stronger than its luma rate and calls
 the inequality load-bearing, because "chroma bits are measured over a noisier,
@@ -424,7 +424,7 @@ would tune the wrong quantity.
 
 ### D11. `C3` becomes 8 colours at a 1×1 chroma cell
 
-**Status:** wire format changed. `crates/lc-core/src/version.rs`
+**Status:** wire format changed. `crates/lcr-core/src/version.rs`
 
 §5 specifies `C3` as eight colours at a **2×2** chroma cell, and calls it "high-quality
 screen capture". Those two things contradict each other, and measuring the profiles head
@@ -473,7 +473,7 @@ automatically — a caller has to ask for it by name.
 
 ### D12. `decoder.probe` — geometry without a payload
 
-**Status:** addition beyond v0.4. `crates/lc-decode/src/lib.rs`, `wit/lc.wit`
+**Status:** addition beyond v0.4. `crates/lcr-decode/src/lib.rs`, `wit/lcr.wit`
 
 §14.4's API sketch has one entry point, `decode_rgb`, returning either a `DecodeOutput` or
 an error. §12.5 and §14.3 then ask a decoder to drive "user guidance ('move closer',
@@ -507,21 +507,21 @@ not a development convenience: a scanner that cannot tell "not found" from "foun
 marginal" cannot do what §12.5 asks of it. If the budget later binds, this is a candidate
 to move — the measurement rig uses the full component and would not notice.
 
-### D13. QR lives in `lc-render` behind `qr`, and detection had to learn to try again
+### D13. QR lives in `lcr-render` behind `qr`, and detection had to learn to try again
 
-**Status:** addition beyond v0.4. `crates/lc-render/src/qr.rs`, `crates/lc-decode/src/detect.rs`
+**Status:** addition beyond v0.4. `crates/lcr-render/src/qr.rs`, `crates/lcr-decode/src/detect.rs`
 
 §17.2 names dual-render — a standard QR alongside carrying a fallback URL — as one of three
 answers to the adoption problem, so it is a spec-sanctioned feature rather than a demo.
-`lc-render::qr` implements it: `render_dual_rgb` / `render_dual_png` compose an LC symbol
+`lcr-render::qr` implements it: `render_dual_rgb` / `render_dual_png` compose an LCR symbol
 and a QR at **one shared module pitch**, which is the property that makes a fallback a
 fallback. Rendering the QR smaller because it has fewer modules would produce a backup that
 stops working before the thing it backs up.
 
-**Off by default.** `lc-render` is in the wasm full build, where QR costs ~23 KB, and §17.2
+**Off by default.** `lcr-render` is in the wasm full build, where QR costs ~23 KB, and §17.2
 itself calls dual-render "a bridge, not an answer" — it trades the offline property for
 reach. A deployment should opt into that rather than acquire it by linking the renderer.
-`lc-wasm/compare` is the same code behind a second feature flag, so the density comparison
+`lcr-wasm/compare` is the same code behind a second feature flag, so the density comparison
 in `display.html` and a rendered dual share one encoder and one set of round-trip tests.
 
 **Generation is `qrcodegen`; verification is `rqrr`.** Both pure Rust; `rqrr` is
@@ -535,7 +535,7 @@ deliberately (Appendix B), and **a finder carries no identity**. So a frame hold
 codes presents six finder-like patterns, and when both sit at one module pitch the
 module-spread filter cannot separate them: a triple straddling the two symbols can score
 *better* on right-angleness than either real triple. Detection committed to the single
-best-scoring triple with no way back, so a dual-render — and equally two LC symbols on one
+best-scoring triple with no way back, so a dual-render — and equally two LCR symbols on one
 poster, an ordinary thing to point a camera at — returned `FormatUndecodable` on a frame
 containing two perfectly good symbols.
 
@@ -572,7 +572,7 @@ accumulation does not yet.
 
 ### D14. The §6.4 border is mandatory on screen, and carries a position sequence
 
-**Status:** deviates from v0.4. `crates/lc-core/src/border.rs`, `border_seq.rs`
+**Status:** deviates from v0.4. `crates/lcr-core/src/border.rs`, `border_seq.rs`
 
 Two changes, the second the reason for the first.
 
@@ -659,7 +659,7 @@ number is justified against a real embedder rather than chosen for symmetry.
 Plain `strip` saves only 1,753 — it leaves the `name` section, which on the scanner is 19 KB
 of debug symbols, 10% of the artifact, that no shipped decoder reads. Scanner 199,453 →
 178,720 (**97% → 87%** raw, 72% compressed); the full build 304,965 → 276,068. The core
-module at `target/…/lc_wasm.wasm` keeps its names, so a trap is still debuggable there.
+module at `target/…/lcr_wasm.wasm` keeps its names, so a trap is still debuggable there.
 
 **`opt-level = "z"` measured and declined.** The `wasm-min` profile has been defined and
 unexercised since the project started. It works, and it costs:
@@ -680,7 +680,7 @@ so treat the absolute milliseconds as indicative and the *ratio* as the finding.
 
 ### D16. Detection had an upper pitch limit, and now retries on a halved image
 
-**Status:** fixes a defect the capture sweep found. `crates/lc-decode/src/lib.rs` (`scan`,
+**Status:** fixes a defect the capture sweep found. `crates/lcr-decode/src/lib.rs` (`scan`,
 `PYRAMID_LEVELS`), `detect::candidates_from`, `image::downscale`
 
 **How it was found.** Raising the sweep rig's capture width to 4K tripled the captured
@@ -757,9 +757,9 @@ what made capture resolution unusable as a lever. `sweep.html` re-enables 1920, 
 
 ### D17. Finder-less symbols: the ring replaces finders, alignment, timing and format region
 
-**Status:** implemented, unmeasured on a real capture. `lc-core` (`border::RingMode`,
-`Layout::finderless`, `capacity_for_symbol`), `crates/lc-decode/src/ring.rs`, `prepare_ring`
-in `crates/lc-decode/src/lib.rs`. Golden vectors regenerated: the 29 ringed colour vectors
+**Status:** implemented, unmeasured on a real capture. `lcr-core` (`border::RingMode`,
+`Layout::finderless`, `capacity_for_symbol`), `crates/lcr-decode/src/ring.rs`, `prepare_ring`
+in `crates/lcr-decode/src/lib.rs`. Golden vectors regenerated: the 29 ringed colour vectors
 changed; `profile-m-border` and the border-less vectors did not.
 
 **What changed.** A symbol is finder-less exactly when it carries the §6.4 ring and its
@@ -932,7 +932,7 @@ so all 32 sequences were regenerated and re-verified (`docs/border-sequence.md`)
 **A generator bug this surfaced, worth recording.** `xtask`'s `ring_positions` carried its
 own copy of the canvas geometry (`side + 12`), so after the gap narrowed it kept emitting
 sequences for the *old, longer* ring: every version's table was quietly wrong, and the
-decoder failed with `FormatUndecodable` on symbols it had just rendered. lc-core's
+decoder failed with `FormatUndecodable` on symbols it had just rendered. lcr-core's
 `every_sequence_window_is_unique` caught it. The generator now calls `border::positions`, so
 there is one definition of the ring's length rather than two.
 
@@ -1042,7 +1042,7 @@ running a post-pass over it. Measured under wasmtime rather than jco, so read th
   --enable-mutable-globals --enable-nontrapping-float-to-int` — and not `-all`.** With
   `-all`, binaryen optimised into instructions wasmtime rejects by default and every
   component failed to parse at load. `wasm-tools validate --features=component-model`
-  **passed that broken artifact**; what caught it was `cargo test -p lc-wasm`, which
+  **passed that broken artifact**; what caught it was `cargo test -p lcr-wasm`, which
   instantiates what is actually shipped. The lesson is about the gate, not the flag.
 
 **Optional by design.** Without binaryen on `PATH` the build prints a note and carries on, so
@@ -1052,7 +1052,7 @@ which is worth remembering if CI ever runs somewhere it is not.
 
 ### D22. Luma is read a second time, against its own neighbourhood
 
-**Status:** implemented. `crates/lc-decode/src/demod.rs` (`add_local_luma`, `local_fit`).
+**Status:** implemented. `crates/lcr-decode/src/demod.rs` (`add_local_luma`, `local_fit`).
 Decoder-only; no wire-format change.
 
 **How it was found.** `docs/robustness-ideas.md` §3.4 proposed a hue-angle chroma
@@ -1187,8 +1187,8 @@ strength 1.2 to 0.45 / 1.6. At the old setting 9 of 12 frames now decode on thei
 
 ### D23. Ring geometry from edges, and a lens model
 
-**Status:** implemented. `crates/lc-decode/src/ring.rs` (`edge_quad`, `estimate_lens`),
-`crates/lc-decode/src/transform.rs` (`Transform::with_radial`). Decoder-only.
+**Status:** implemented. `crates/lcr-decode/src/ring.rs` (`edge_quad`, `estimate_lens`),
+`crates/lcr-decode/src/transform.rs` (`Transform::with_radial`). Decoder-only.
 
 **How it was found.** `--example stages` bins every failed trial by the first stage that gave
 up, across impairments the §15 envelope did not have: damage *at a ring corner*, and lens
@@ -1268,8 +1268,8 @@ on every located ring.
 
 ### D24. Neighbour bleed removed by decision feedback, after the CRC rejects
 
-**Status:** implemented. `crates/lc-decode/src/equalize.rs`, the retry in `Decoder::finish`,
-and `DecodeResult::codeword` in `lc-core`. Decoder-only.
+**Status:** implemented. `crates/lcr-decode/src/equalize.rs`, the retry in `Decoder::finish`,
+and `DecodeResult::codeword` in `lcr-core`. Decoder-only.
 
 **How it was found.** The same breakdown: at blur radius ≥ 5 on v4, **every** lost decode had
 a converged luma layer and a failed chroma layer, on `C1` and `C3` alike (16/16 each).
@@ -1345,7 +1345,7 @@ interleaved runs:
 
 ### D25. Equalisation for `C2` and for accumulated frames, turbo rounds, and a defocus fallback
 
-**Status:** implemented. `crates/lc-decode/src/equalize.rs` (`Observation`, `Hue`,
+**Status:** implemented. `crates/lcr-decode/src/equalize.rs` (`Observation`, `Hue`,
 `chroma_hues`), the retry loops in `Decoder::finish`, `FrameAccumulator`, and
 `ring::accept`'s relaxed rule. Decoder-only.
 
@@ -1481,7 +1481,7 @@ presentation mode, and is easier to scan, being larger at a whole-number scale.
 
 ### D27. Reviewer fixes: combined format copies, per-level chroma noise — and 27 KB back
 
-**Status:** implemented. `crates/lc-decode/src/{demod,ring,lib,image,math}.rs`.
+**Status:** implemented. `crates/lcr-decode/src/{demod,ring,lib,image,math}.rs`.
 Decoder-only. Four fixes an outside reviewer proposed, each measured; two shipped, one was
 rejected on measurement, one kept on probation. Then a size scan.
 
@@ -1540,8 +1540,8 @@ captures never show it helping.
 
 ### D28. One definition of luma order, which fixed equalisation on ring-less symbols
 
-**Status:** implemented. `crates/lc-core/src/{layout,ecc/ldpc}.rs`,
-`crates/lc-decode/src/{equalize,lib,ring}.rs`, `justfile`. A de-duplication pass, plus one
+**Status:** implemented. `crates/lcr-core/src/{layout,ecc/ldpc}.rs`,
+`crates/lcr-decode/src/{equalize,lib,ring}.rs`, `justfile`. A de-duplication pass, plus one
 bug it found.
 
 **1. Equalisation never ran on symbols without the ring.** The D24 equaliser and the D27
@@ -1610,21 +1610,21 @@ thing here to give back if bytes matter more than scan time.
 
 | # | Spec item | Pinned as | Where |
 |---|---|---|---|
-| P1 | §7 BCH(30,15) generator (open #6) | Shortened BCH(31,16), `g(x) = 0x8FAF`, `d = 7` verified exhaustively. Decoded by exhaustive maximum-likelihood over all 32768 codewords in a Gray-code walk — one XOR per step, so it is cheaper than Berlekamp–Massey *and* accepts soft input. | `lc-core/src/bch.rs` |
-| P2 | §7 format mask | `(0x5412 << 15) \| 0x5412` — the spec's constant applied to both halves of the 30-bit word. | `lc-core/src/bch.rs` |
-| P3 | §8.2 LDPC base graphs (open #4) | QC-LDPC, `dv = 3`, PEG rows over a fixed bidiagonal parity structure, shifts chosen greedily to minimise four-cycles across the lift sizes actually used. Three families: `n_b = 60`, `20`, `10`. | `xtask`, `lc-core/src/ecc/tables.rs` |
-| P4 | §8.3 interleaver (open #7) | Golden-ratio affine permutation, `a = coprime(round(n/φ), n)`. Three-distance property means no burst length is pathological. | `lc-core/src/interleave.rs` |
-| P5 | §6.2 palette anchors + §7 format region placement | Greedy claim over a fixed candidate order. The two features overlap if read literally — the ring outside a finder has 17 cells and they want 8 and 30. Ring walk goes outward from `d = 8`, alternating arms inward from the symbol edge; anchors claim first, then format copy A, then copy B. | `lc-core/src/layout.rs` |
-| P6 | §5 partial chroma cells | A chroma cell carries a symbol only if **all** its modules are payload. Averaging `a*b*` over a cell where some modules are a fixed hue would bias the §12.4 LLR by a known-but-unmodelled amount, at the cells where geometry error is already worst. | `lc-core/src/layout.rs` |
-| P7 | §6.2 interior alignment markers (open #9) | QR-style coordinate list: 6 to `side − 7`, evenly spaced, rounded to even, as few steps as keeps every spacing ≤ 28. Even coordinates mean a marker crossing row/column 6 agrees with the timing pattern module-for-module. | `lc-core/src/layout.rs` |
-| P8 | §6.2 luma-only rendering | Fixed patterns render at **hue state H0**, not black/white. A four-colour palette has no neutral pair; using black and white would put fixed patterns outside the palette and give the decoder luma centroids from the finders that do not match the payload's. | `lc-core/src/palette.rs` |
-| P9 | §8.5 chroma mask indexing | Rotation is indexed by **chroma-cell** coordinates, not module coordinates. Module coordinates give `(2cx + 2cy) mod 2 = 0` for every cell on `C2`/`C3` — the mask would do nothing at all on the profiles that most need it. | `lc-core/src/mask.rs` |
-| P10 | §9.1 what the CRC covers | `header \|\| body`, zero-padded to the next byte boundary. The compact header is 15 bits so the frame is never byte-aligned; padding is constant per frame format and lets both ends use a stock byte-wise CRC. | `lc-core/src/frame.rs` |
-| P11 | §12.4 hue labelling | Hue states numbered by increasing `a*b*` angle and **Gray-labelled**, so confusing two hues adjacent on the colour wheel costs one bit rather than two. This is what makes per-bit chroma LLRs well-founded. | `lc-core/src/symbol.rs` |
-| P12 | §6.4 border cycle | Palette in index order, then white, then black. A cell's index is its coordinate *along* its edge; corners resolve to whichever axis they are further outside on. Both radial layers share a colour, giving each entry a 2-module-deep sampling target. | `lc-core/src/border.rs` |
-| P13 | §6.4 outer quiet zone | Two modules of white outside the border. Not in the spec, but without it the border's dark cells run into whatever the symbol is displayed on and the finder scan has no clean termination. | `lc-render/src/lib.rs` |
-| P14 | §8.6 bit-to-level convention | Luma bit maps straight to level: `0` = L0 (dark), `1` = L1 (light). With `index(l, h) = l·k + h`, a payload module's palette index is `bit · k + hue` with no lookup. | `lc-core/src/modulate.rs` |
-| P15 | §9.1 spec's "40% vs 28%" | Overhead as a fraction of the *framed total*, not of the body. Both readings are defensible; this is the one that reproduces the spec's numbers. | `lc-core/src/frame.rs` |
+| P1 | §7 BCH(30,15) generator (open #6) | Shortened BCH(31,16), `g(x) = 0x8FAF`, `d = 7` verified exhaustively. Decoded by exhaustive maximum-likelihood over all 32768 codewords in a Gray-code walk — one XOR per step, so it is cheaper than Berlekamp–Massey *and* accepts soft input. | `lcr-core/src/bch.rs` |
+| P2 | §7 format mask | `(0x5412 << 15) \| 0x5412` — the spec's constant applied to both halves of the 30-bit word. | `lcr-core/src/bch.rs` |
+| P3 | §8.2 LDPC base graphs (open #4) | QC-LDPC, `dv = 3`, PEG rows over a fixed bidiagonal parity structure, shifts chosen greedily to minimise four-cycles across the lift sizes actually used. Three families: `n_b = 60`, `20`, `10`. | `xtask`, `lcr-core/src/ecc/tables.rs` |
+| P4 | §8.3 interleaver (open #7) | Golden-ratio affine permutation, `a = coprime(round(n/φ), n)`. Three-distance property means no burst length is pathological. | `lcr-core/src/interleave.rs` |
+| P5 | §6.2 palette anchors + §7 format region placement | Greedy claim over a fixed candidate order. The two features overlap if read literally — the ring outside a finder has 17 cells and they want 8 and 30. Ring walk goes outward from `d = 8`, alternating arms inward from the symbol edge; anchors claim first, then format copy A, then copy B. | `lcr-core/src/layout.rs` |
+| P6 | §5 partial chroma cells | A chroma cell carries a symbol only if **all** its modules are payload. Averaging `a*b*` over a cell where some modules are a fixed hue would bias the §12.4 LLR by a known-but-unmodelled amount, at the cells where geometry error is already worst. | `lcr-core/src/layout.rs` |
+| P7 | §6.2 interior alignment markers (open #9) | QR-style coordinate list: 6 to `side − 7`, evenly spaced, rounded to even, as few steps as keeps every spacing ≤ 28. Even coordinates mean a marker crossing row/column 6 agrees with the timing pattern module-for-module. | `lcr-core/src/layout.rs` |
+| P8 | §6.2 luma-only rendering | Fixed patterns render at **hue state H0**, not black/white. A four-colour palette has no neutral pair; using black and white would put fixed patterns outside the palette and give the decoder luma centroids from the finders that do not match the payload's. | `lcr-core/src/palette.rs` |
+| P9 | §8.5 chroma mask indexing | Rotation is indexed by **chroma-cell** coordinates, not module coordinates. Module coordinates give `(2cx + 2cy) mod 2 = 0` for every cell on `C2`/`C3` — the mask would do nothing at all on the profiles that most need it. | `lcr-core/src/mask.rs` |
+| P10 | §9.1 what the CRC covers | `header \|\| body`, zero-padded to the next byte boundary. The compact header is 15 bits so the frame is never byte-aligned; padding is constant per frame format and lets both ends use a stock byte-wise CRC. | `lcr-core/src/frame.rs` |
+| P11 | §12.4 hue labelling | Hue states numbered by increasing `a*b*` angle and **Gray-labelled**, so confusing two hues adjacent on the colour wheel costs one bit rather than two. This is what makes per-bit chroma LLRs well-founded. | `lcr-core/src/symbol.rs` |
+| P12 | §6.4 border cycle | Palette in index order, then white, then black. A cell's index is its coordinate *along* its edge; corners resolve to whichever axis they are further outside on. Both radial layers share a colour, giving each entry a 2-module-deep sampling target. | `lcr-core/src/border.rs` |
+| P13 | §6.4 outer quiet zone | Two modules of white outside the border. Not in the spec, but without it the border's dark cells run into whatever the symbol is displayed on and the finder scan has no clean termination. | `lcr-render/src/lib.rs` |
+| P14 | §8.6 bit-to-level convention | Luma bit maps straight to level: `0` = L0 (dark), `1` = L1 (light). With `index(l, h) = l·k + h`, a payload module's palette index is `bit · k + hue` with no lookup. | `lcr-core/src/modulate.rs` |
+| P15 | §9.1 spec's "40% vs 28%" | Overhead as a fraction of the *framed total*, not of the body. Both readings are defensible; this is the one that reproduces the spec's numbers. | `lcr-core/src/frame.rs` |
 
 ---
 
@@ -1636,7 +1636,7 @@ thing here to give back if bytes matter more than scan time.
 
   **Measured 2026-09-05: brotli itself does not fit the scanner, which makes both brotli
   cflags unusable by a conforming minimal decoder.** Building the scanner component with
-  `lc-decode/brotli` enabled takes it from **192,876 to 392,293 bytes** — the codec alone
+  `lcr-decode/brotli` enabled takes it from **192,876 to 392,293 bytes** — the codec alone
   costs 199,417 bytes, or **97% of §14.2's entire 200 KB budget**, and lands the scanner at
   192% of it. So `cflag 10` already produces symbols the default scanner rejects as
   `UnsupportedCompression`, and `cflag 11` would inherit that plus a dictionary.
@@ -1687,7 +1687,7 @@ correction model.
 ### D1 / D2 — the palettes
 
 Everything flows from **four constants per palette**, all in
-`crates/lc-core/src/palette.rs`:
+`crates/lcr-core/src/palette.rs`:
 
 ```rust
 pub const C4_L0: f32 = 32.0;      pub const C8_L0: f32 = 30.0;
@@ -1722,7 +1722,7 @@ coupling §4.1 warns about. That is a design change, not a constant change.
 
 ### D3 — the illumination model
 
-Entirely contained in `crates/lc-decode/src/illum.rs`; `IlluminationModel::fit` and
+Entirely contained in `crates/lcr-decode/src/illum.rs`; `IlluminationModel::fit` and
 `::correct` are the whole public surface, and everything else in the decoder takes the
 fitted model as an opaque value. Reverting to a literal reading of §12.3 means rewriting
 `fit_once` and `correct` and nothing else.

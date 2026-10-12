@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>LC Code scanner</title>
+<title>LCR Code scanner</title>
 <style>
   :root {
     --bg: #0e120d;
@@ -99,7 +99,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>LC Code scanner</h1>
+  <h1>LCR Code scanner</h1>
   <p class="sub">The decode-only WebAssembly component, transpiled for the browser. Nothing is uploaded — decoding happens on this device.</p>
 
   <div class="stage" id="stage">
@@ -128,8 +128,8 @@
 <script type="module">
 // The full component rather than the scanner build, because `codec.cbor-to-json` renders
 // a decoded body for display and §14.2's size budget keeps it out of the minimal scanner.
-// A shipping scanner would use `lc-code-scanner.wasm` and render host-side.
-import { decoder, codec } from './lc/lc-code.js';
+// A shipping scanner would use `lcr-code-scanner.wasm` and render host-side.
+import { decoder, codec } from './lcr/lcr-code.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video'), work = $('work'), ctx = work.getContext('2d', { willReadFrequently: true });

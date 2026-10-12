@@ -1,0 +1,31 @@
+[package]
+name = "lcr-cft"
+description = "CFT — CBOR File Transfer: transport-independent chunked file transfer (docs/CFT.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std", "zstd"]
+std = ["lcr-core/std"]
+# Zstandard via the reference C library. CFT.md makes this the preferred codec and the
+# project grants it an explicit exception to §14.2's no-C rule — but the exception is
+# scoped: `lcr-wasm` must not enable it, because zstd-sys cannot build for
+# wasm32-unknown-unknown. See the note in `codec.rs`.
+zstd = ["dep:zstd", "std"]
+deflate = ["dep:miniz_oxide"]
+brotli = ["lcr-core/brotli"]
+
+[dependencies]
+lcr-core = { workspace = true }
+sha2 = { workspace = true }
+zstd = { version = "0.13", optional = true }
+miniz_oxide = { workspace = true, optional = true }
+
+[dev-dependencies]
+lcr-core = { workspace = true, features = ["std", "deflate"] }
+lcr-decode = { workspace = true, features = ["std", "deflate"] }
+lcr-encode = { workspace = true, features = ["std", "deflate"] }
+lcr-render = { workspace = true }

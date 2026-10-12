@@ -19,7 +19,7 @@
 //! code's own property, independent of optics, and it is what the per-layer channel
 //! quality has to be compared against.
 
-use lc_core::ecc::ldpc::{Code, MAX_ITERATIONS, RATES};
+use lcr_core::ecc::ldpc::{Code, MAX_ITERATIONS, RATES};
 use std::fmt::Write as _;
 
 /// Trials per SNR point. Frame error rate is a binomial proportion, so the standard
@@ -164,8 +164,8 @@ pub fn report() -> String {
     }
     for level in 0..4usize {
         let (li, ci) = (
-            lc_core::ecc::ldpc::LUMA_RATE_INDEX[level],
-            lc_core::ecc::ldpc::CHROMA_RATE_INDEX[level],
+            lcr_core::ecc::ldpc::LUMA_RATE_INDEX[level],
+            lcr_core::ecc::ldpc::CHROMA_RATE_INDEX[level],
         );
         let margin = match (curves[li], curves[ci]) {
             (Some(l), Some(c)) => format!("{:.1} dB", l - c),

@@ -13,11 +13,11 @@
 //! * **Obliquity** — coarsest module pitch over finest, across the symbol. 1.0 face-on,
 //!   climbing with viewing angle.
 //!
-//! Parsing uses `lc_core::json`, which is the project's own parser and the one the
+//! Parsing uses `lcr_core::json`, which is the project's own parser and the one the
 //! encoder authors through (§9.4), so the tool cannot drift from the crate.
 
-use lc_core::cbor::Value;
-use lc_core::json;
+use lcr_core::cbor::Value;
+use lcr_core::json;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 

@@ -24,7 +24,7 @@ rules out relying on a CRC, because there are no spare bits for one. What this f
 is a short code with a **hard guarantee**, and that is exactly what the algebraic families
 provide.
 
-So: `crates/lc-core/src/bch.rs`, a shortened BCH(31,16) → **BCH(30,15)**, minimum distance
+So: `crates/lcr-core/src/bch.rs`, a shortened BCH(31,16) → **BCH(30,15)**, minimum distance
 **7**, corrects any 3 errors and detects any 6.
 
 ```
@@ -243,7 +243,7 @@ Running our example through increasing damage:
 right one, at distance 4 — but `decode` refuses anything past 3:
 
 ```rust
-if best.1 > 3 { Err(LcError::FormatUndecodable) } else { Ok(best) }
+if best.1 > 3 { Err(LcrError::FormatUndecodable) } else { Ok(best) }
 ```
 
 That refusal is deliberate. Past the guaranteed radius a "correction" is more likely to

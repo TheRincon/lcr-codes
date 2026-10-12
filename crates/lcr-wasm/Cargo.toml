@@ -1,0 +1,50 @@
+[package]
+name = "lcr-wasm"
+description = "LCR Code as a WebAssembly component: decode and encode over a WIT interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# `cdylib` for the component build, `rlib` so the logic is testable on the host.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# §14.1: the scanner build gets decode and nothing else, so it cannot acquire the encoder
+# by accident. The `scanner` world in wit/lcr.wit exports only `decoder` to match.
+default = ["decode", "encode"]
+decode = []
+encode = ["dep:lcr-encode", "dep:lcr-render", "dep:lcr-cft"]
+# QR generation, for the side-by-side comparison in `web/display.html` only.
+#
+# **Off by default, and neither shipped artifact has it.** `just component` builds the
+# scanner and the full build without it; only `just web` turns it on, into a separate
+# `dist/lcr-code-compare.wasm`. A symbology crate has no business carrying a competing
+# symbology, and the density claim in the README is the one thing that needs QR present —
+# so it is present exactly there and nowhere else.
+compare = ["encode", "lcr-render/qr"]
+
+[dependencies]
+# `std` is on, deliberately. §14.2's bans are C dependencies and `getrandom`, not the
+# standard library, and neither appears in this tree. `no_std` is not an option in any
+# case: §4's colour conversions use `sqrt`, `powf`, `atan2` and `cbrt`, which live in
+# `std` rather than `core`, so `lcr-core --no-default-features` does not compile. Taking a
+# `libm` dependency to change that was considered and declined — see D7.
+lcr-core = { workspace = true, features = ["std", "deflate"] }
+lcr-decode = { workspace = true, features = ["std", "deflate"] }
+lcr-encode = { workspace = true, optional = true }
+# CFT with the pure-Rust codec only: `zstd-sys` compiles C and cannot target
+# wasm32-unknown-unknown. See `cft_impl::CODEC`.
+lcr-cft = { workspace = true, optional = true, default-features = false, features = ["std", "deflate"] }
+lcr-render = { workspace = true, optional = true }
+
+# Component Model bindings. Generates the guest side of wit/lcr.wit; the `wasm32-wasip2`
+# target links the result into a component directly, so no `cargo-component` is needed.
+wit-bindgen = { version = "0.46", default-features = false, features = ["macros"] }
+
+[dev-dependencies]
+lcr-encode = { workspace = true }
+lcr-render = { workspace = true }
+wasmtime = { version = "34.0.2", default-features = false, features = ["cranelift", "component-model", "runtime", "std"] }

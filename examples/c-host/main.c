@@ -1,9 +1,9 @@
 /*
- * A C host for the LC Code component.
+ * A C host for the LCR Code component.
  *
- * This exists to test one claim rather than to be a library: §17.3 argues LC Code will be
+ * This exists to test one claim rather than to be a library: §17.3 argues LCR Code will be
  * adopted only if embedding is cheap, and the Rust side of that is already proven by
- * `crates/lc-wasm/tests/component.rs`. Rust is not a fair test though — the component is
+ * `crates/lcr-wasm/tests/component.rs`. Rust is not a fair test though — the component is
  * written in Rust, so a Rust host shares its idioms and could hide an assumption. This
  * links against the wasmtime C API instead, and touches nothing Rust-specific.
  *
@@ -33,7 +33,7 @@
 #include <wasmtime/component/linker.h>
 #include <wasmtime/component/val.h>
 
-static const char *COMPONENT_PATH = "dist/lc-code.wasm";
+static const char *COMPONENT_PATH = "dist/lcr-code.wasm";
 static const char *JSON = "{\"name\":\"Fred\",\"loc\":\"45.00,55.0\"}";
 
 static int failures = 0;
@@ -108,7 +108,7 @@ static wasmtime_component_val_t val_string(const char *s) {
   return x;
 }
 
-/* The `options` record from wit/lc.wit. */
+/* The `options` record from wit/lcr.wit. */
 static wasmtime_component_val_t encode_options(const char *profile) {
   wasmtime_component_val_t x;
   x.kind = WASMTIME_COMPONENT_RECORD;
@@ -123,7 +123,7 @@ static wasmtime_component_val_t encode_options(const char *profile) {
   return x;
 }
 
-/* The `image` record from wit/lc.wit. */
+/* The `image` record from wit/lcr.wit. */
 static wasmtime_component_val_t image_of(const uint8_t *px, size_t len, uint32_t w,
                                          uint32_t h, uint32_t stride, const char *fmt) {
   wasmtime_component_val_t pixels;
@@ -198,7 +198,7 @@ static bool lookup(wasmtime_component_t *component,
 }
 
 int main(void) {
-  printf("LC Code — C host trial (wasmtime C API)\n\n");
+  printf("LCR Code — C host trial (wasmtime C API)\n\n");
 
   /* --- load */
   FILE *f = fopen(COMPONENT_PATH, "rb");
@@ -239,8 +239,8 @@ int main(void) {
 
   /* --- 2. encode-json */
   wasmtime_component_export_index_t *enc_iface = wasmtime_component_get_export_index(
-      component, NULL, "lc:code/encoder@0.4.0", strlen("lc:code/encoder@0.4.0"));
-  check(enc_iface != NULL, "exports lc:code/encoder@0.4.0");
+      component, NULL, "lcr:code/encoder@0.4.0", strlen("lcr:code/encoder@0.4.0"));
+  check(enc_iface != NULL, "exports lcr:code/encoder@0.4.0");
 
   wasmtime_component_func_t encode_json;
   if (!lookup(component, &instance, ctx, enc_iface, "encode-json", &encode_json))
@@ -280,8 +280,8 @@ int main(void) {
 
   /* --- 3. decode what we just encoded */
   wasmtime_component_export_index_t *dec_iface = wasmtime_component_get_export_index(
-      component, NULL, "lc:code/decoder@0.4.0", strlen("lc:code/decoder@0.4.0"));
-  check(dec_iface != NULL, "exports lc:code/decoder@0.4.0");
+      component, NULL, "lcr:code/decoder@0.4.0", strlen("lcr:code/decoder@0.4.0"));
+  check(dec_iface != NULL, "exports lcr:code/decoder@0.4.0");
 
   wasmtime_component_func_t decode;
   if (!lookup(component, &instance, ctx, dec_iface, "decode", &decode))

@@ -1,0 +1,23 @@
+[package]
+name = "lcr-decode"
+description = "LCR Code decoder: detection, sampling, illumination fit, soft demodulation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std", "deflate"]
+std = ["lcr-core/std"]
+deflate = ["lcr-core/deflate"]
+brotli = ["lcr-core/brotli"]
+
+[dependencies]
+lcr-core = { workspace = true }
+
+[dev-dependencies]
+lcr-encode = { workspace = true }
+# `png` only here: the examples write PNG figures, and a dev-dependency cannot reach the
+# scanner bundle §14.1 keeps thin.
+lcr-render = { workspace = true, features = ["png", "qr"] }

@@ -1,5 +1,5 @@
 [package]
-name = "lc-fuzz"
+name = "lcr-fuzz"
 version = "0.0.0"
 edition = "2024"
 publish = false
@@ -14,8 +14,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-lc-core = { path = "../crates/lc-core", features = ["std", "deflate"] }
-lc-decode = { path = "../crates/lc-decode", features = ["std", "deflate"] }
+lcr-core = { path = "../crates/lcr-core", features = ["std", "deflate"] }
+lcr-decode = { path = "../crates/lcr-decode", features = ["std", "deflate"] }
 
 [[bin]]
 name = "decode_rgb"

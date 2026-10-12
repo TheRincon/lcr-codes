@@ -21,8 +21,8 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use lc_decode::Decoder;
-use lc_decode::image::PixelFormat;
+use lcr_decode::Decoder;
+use lcr_decode::image::PixelFormat;
 
 fuzz_target!(|data: &[u8]| {
     // 7 bytes of geometry, then pixels. Small inputs are still worth running: they

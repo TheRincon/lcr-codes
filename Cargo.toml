@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/lc-cft",
-    "crates/lc-core",
-    "crates/lc-decode",
-    "crates/lc-encode",
-    "crates/lc-render",
-    "crates/lc-verify",
-    "crates/lc-wasm",
-    "crates/lc-ffi",
-    "crates/lc-cli",
+    "crates/lcr-cft",
+    "crates/lcr-core",
+    "crates/lcr-decode",
+    "crates/lcr-encode",
+    "crates/lcr-render",
+    "crates/lcr-verify",
+    "crates/lcr-wasm",
+    "crates/lcr-ffi",
+    "crates/lcr-cli",
     "xtask",
 ]
 
@@ -18,20 +18,20 @@ version = "0.4.0"
 edition = "2024"
 rust-version = "1.94"
 license = "Apache-2.0"
-repository = "https://github.com/example/lc-code"
-authors = ["LC Code contributors"]
+repository = "https://github.com/TheRincon/lcr-codes"
+authors = ["LCR Code contributors"]
 
 [workspace.dependencies]
-lc-core   = { path = "crates/lc-core",   version = "0.4.0", default-features = false }
-lc-cft    = { path = "crates/lc-cft",    version = "0.4.0", default-features = false }
-lc-decode = { path = "crates/lc-decode", version = "0.4.0", default-features = false }
-lc-encode = { path = "crates/lc-encode", version = "0.4.0", default-features = false }
-lc-render = { path = "crates/lc-render", version = "0.4.0", default-features = false }
-lc-verify = { path = "crates/lc-verify", version = "0.4.0", default-features = false }
+lcr-core   = { path = "crates/lcr-core",   version = "0.4.0", default-features = false }
+lcr-cft    = { path = "crates/lcr-cft",    version = "0.4.0", default-features = false }
+lcr-decode = { path = "crates/lcr-decode", version = "0.4.0", default-features = false }
+lcr-encode = { path = "crates/lcr-encode", version = "0.4.0", default-features = false }
+lcr-render = { path = "crates/lcr-render", version = "0.4.0", default-features = false }
+lcr-verify = { path = "crates/lcr-verify", version = "0.4.0", default-features = false }
 
 miniz_oxide   = { version = "0.9", default-features = false, features = ["with-alloc"] }
-# QR generation for §17.2 dual-render, behind `lc-render/qr`. Pure Rust, zero
-# dependencies. A library rather than something written here: LC Code has no business
+# QR generation for §17.2 dual-render, behind `lcr-render/qr`. Pure Rust, zero
+# dependencies. A library rather than something written here: LCR Code has no business
 # implementing a second symbology, and a hand-rolled QR encoder's masking and interleaving
 # are not provable without a decoder.
 qrcodegen     = { version = "1.8" }
