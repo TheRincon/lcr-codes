@@ -219,17 +219,22 @@ fn attempt(
 ) -> RingTrace {
     // Lens distortion first (D23): if the ring's edges bow, straighten the boundary before
     // anything fits lines or corners to it, and carry the coefficient into every transform.
-    let lens = estimate_lens(points, (width as f32 / 2.0, height as f32 / 2.0));
+    // The raw hull and quad are computed once and shared: the lens estimate starts from them,
+    // and when it finds no distortion — the usual case — they are the ones to use.
+    let raw_hull = convex_hull(points);
+    let raw_quad = quad(&raw_hull);
+    let lens = estimate_lens(points, raw_quad, (width as f32 / 2.0, height as f32 / 2.0));
     let straightened;
-    let points = if lens.2 == 0.0 {
-        points
+    let (points, hull, hull_quad) = if lens.2 == 0.0 {
+        (points, raw_hull, raw_quad)
     } else {
         straightened = undistort(points, lens);
-        &straightened[..]
+        let hull = convex_hull(&straightened);
+        let q = quad(&hull);
+        (&straightened[..], hull, q)
     };
-    let hull = convex_hull(points);
     let hull_len = hull.len();
-    let Some(hull_quad) = quad(&hull) else {
+    let Some(hull_quad) = hull_quad else {
         return RingTrace {
             regions: 0,
             hull_len,
@@ -877,18 +882,27 @@ const LENS_MIN: f32 = 0.004;
 ///
 /// Returns `κ = 0` when the bow is below [`LENS_MIN`], the edges disagree, or any edge is
 /// too thin to measure.
-fn estimate_lens(points: &[(f32, f32)], centre: (f32, f32)) -> Lens {
+fn estimate_lens(
+    points: &[(f32, f32)],
+    raw_quad: Option<[(f32, f32); 4]>,
+    centre: (f32, f32),
+) -> Lens {
     let none = (centre.0, centre.1, 0.0);
     let mut kappa = 0.0f32;
     let mut reach = 0.0f32;
     let mut sel: Vec<(f32, f32)> = Vec::new();
+    let mut straightened: Option<Vec<(f32, f32)>> = None;
     for _ in 0..2 {
-        let pts = if kappa == 0.0 {
-            points.to_vec()
+        // The first pass reads the raw points, whose quad the caller already has; the second
+        // reads them straightened by the first pass's estimate.
+        let (pts, q): (&[(f32, f32)], _) = if kappa == 0.0 {
+            (points, raw_quad)
         } else {
-            undistort(points, (centre.0, centre.1, kappa))
+            let pts = straightened.insert(undistort(points, (centre.0, centre.1, kappa)));
+            let q = quad(&convex_hull(pts));
+            (&pts[..], q)
         };
-        let Some(q) = quad(&convex_hull(&pts)) else {
+        let Some(q) = q else {
             return none;
         };
         // Per edge: (κ, standard error of κ).
@@ -1111,6 +1125,7 @@ fn classify(lumas: &[f32]) -> Vec<bool> {
 /// an edge's middle locates the corner better than the corner itself does.
 fn refine_quad(points: &[(f32, f32)], q: [(f32, f32); 4]) -> [(f32, f32); 4] {
     let mut lines = [((0.0f32, 0.0f32), (0.0f32, 0.0f32)); 4];
+    let mut sel: Vec<(f32, f32)> = Vec::new();
     for (e, line) in lines.iter_mut().enumerate() {
         let (a, b) = (q[e], q[(e + 1) % 4]);
         let (dx, dy) = (b.0 - a.0, b.1 - a.1);
@@ -1121,24 +1136,11 @@ fn refine_quad(points: &[(f32, f32)], q: [(f32, f32); 4]) -> [(f32, f32); 4] {
         let (ux, uy) = (dx / len, dy / len);
         // Two passes: gather near the hull edge, then tighten around the fitted line, so a
         // stray point inside the first tolerance cannot tilt the final fit.
-        let mut fit = (a, (ux, uy));
-        for tol in [(len * 0.02).max(2.0), 1.5] {
-            let ((ox, oy), (fx, fy)) = fit;
-            let sel: Vec<(f32, f32)> = points
-                .iter()
-                .copied()
-                .filter(|&(px, py)| {
-                    let along = ((px - a.0) * ux + (py - a.1) * uy) / len;
-                    let off = ((px - ox) * fy - (py - oy) * fx).abs();
-                    (0.15..=0.85).contains(&along) && off <= tol
-                })
-                .collect();
-            if sel.len() < 8 {
-                return q;
-            }
-            fit = tls_line(&sel);
+        let tols = [(len * 0.02).max(2.0), 1.5];
+        match refit_middle(points, a, (ux, uy), len, (a, (ux, uy)), tols, &mut sel) {
+            Some(fit) => *line = fit,
+            None => return q,
         }
-        *line = fit;
     }
     let mut out = q;
     for (c, corner) in out.iter_mut().enumerate() {
@@ -1235,7 +1237,7 @@ fn edge_quad(points: &[(f32, f32)], q: [(f32, f32); 4]) -> Option<[(f32, f32); 4
         }
         // Points per unit length: rows and columns both contribute an extreme per pixel, so
         // a fully supported axis-aligned edge offers about one point per pixel of length.
-        let mut fit = best?;
+        let fit = best?;
         if (best_count as f32) < EDGE_SUPPORT * len {
             return None;
         }
@@ -1245,19 +1247,8 @@ fn edge_quad(points: &[(f32, f32)], q: [(f32, f32); 4]) -> Option<[(f32, f32); 4
         // into two parallel populations a pixel or so apart, and the line with most inliers
         // runs through one of them. The wide pass centres it between both; the middle-only
         // window keeps whatever damaged a corner out of the fit.
-        for tol in [EDGE_REFIT_PX, EDGE_INLIER_PX] {
-            let ((ox, oy), (fx, fy)) = fit;
-            inliers.clear();
-            inliers.extend(cand.iter().copied().filter(|&(px, py)| {
-                let along = ((px - a.0) * ux + (py - a.1) * uy) / len;
-                (0.15..=0.85).contains(&along) && ((px - ox) * fy - (py - oy) * fx).abs() <= tol
-            }));
-            if inliers.len() < 8 {
-                return None;
-            }
-            fit = tls_line(&inliers);
-        }
-        *line = fit;
+        let tols = [EDGE_REFIT_PX, EDGE_INLIER_PX];
+        *line = refit_middle(&cand, a, (ux, uy), len, fit, tols, &mut inliers)?;
     }
 
     let mut out = q;
@@ -1272,6 +1263,36 @@ fn edge_quad(points: &[(f32, f32)], q: [(f32, f32); 4]) -> Option<[(f32, f32); 4
         *corner = p;
     }
     Some(out)
+}
+
+/// Refit one edge line in two passes over the middle of the edge, shared by [`refine_quad`]
+/// and [`edge_quad`]: keep the points within `tols[0]` of `fit`, refit by total least squares,
+/// then again within `tols[1]` of that, so a stray point inside the first band cannot tilt the
+/// final line. Only points between 15% and 85% of the way from `a` along the edge (unit
+/// direction `u`, length `len`) count, which keeps a damaged corner out of the fit. `None` when
+/// a pass keeps fewer than 8 points. `buf` is scratch space.
+fn refit_middle(
+    points: &[(f32, f32)],
+    a: (f32, f32),
+    (ux, uy): (f32, f32),
+    len: f32,
+    mut fit: ((f32, f32), (f32, f32)),
+    tols: [f32; 2],
+    buf: &mut Vec<(f32, f32)>,
+) -> Option<((f32, f32), (f32, f32))> {
+    for tol in tols {
+        let ((ox, oy), (fx, fy)) = fit;
+        buf.clear();
+        buf.extend(points.iter().copied().filter(|&(px, py)| {
+            let along = ((px - a.0) * ux + (py - a.1) * uy) / len;
+            (0.15..=0.85).contains(&along) && ((px - ox) * fy - (py - oy) * fx).abs() <= tol
+        }));
+        if buf.len() < 8 {
+            return None;
+        }
+        fit = tls_line(buf);
+    }
+    Some(fit)
 }
 
 /// Total-least-squares line through points: `(centroid, unit direction)`.

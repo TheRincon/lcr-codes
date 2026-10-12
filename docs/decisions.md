@@ -1538,6 +1538,74 @@ captures never show it helping.
   Quickselect gives the identical median; `median_matches_a_sorted_reference` checks it
   against a full sort over 1,140 random arrays.
 
+### D28. One definition of luma order, which fixed equalisation on ring-less symbols
+
+**Status:** implemented. `crates/lc-core/src/{layout,ecc/ldpc}.rs`,
+`crates/lc-decode/src/{equalize,lib,ring}.rs`, `justfile`. A de-duplication pass, plus one
+bug it found.
+
+**1. Equalisation never ran on symbols without the ring.** The D24 equaliser and the D27
+refit each built their own list of luma positions: the grid's payload walk, then
+`border::payload_cells`, appended unconditionally. A layout with no ring payload (profile
+`M`, or any profile printed without the reference border) has no ring cells in its luma
+layer, so the list came out longer than the LLRs. `Field::new` checks the lengths match and
+returned `None`, and every retry rung after the first did nothing, silently.
+`Layout::luma_positions` is now the one definition: grid payload, then ring payload cells
+only when `ring_cells > 0`. The equaliser, the refit and the hue mapping all use it.
+
+Measured with a one-off sweep: v4, no reference border, payload at capacity, screen
+render, 24 trials per cell, the same binary before and after.
+
+| | blur 3 | blur 4 | blur 5 | blur 6 | blur 4, σ 0.08 | blur 5, σ 0.08 |
+|---|---|---|---|---|---|---|
+| `C1` | 22 → **24** | 13 → **24** | 2 → **23** | 0 → **9** | 12 → **24** | 3 → **21** |
+| `C3` | 24 → 24 | 21 → **24** | 3 → **20** | 0 → **2** | 9 → **23** | 1 → **17** |
+| `M` | 24 → 24 | 24 → 24 | 24 → 24 | 24 → 24 | 24 → 24 | 24 → 24 |
+
+No cell got worse. `M` decoded every trial before and after, so this sweep cannot show a
+change for it. The `stages` / `ab` / `format_probe` harness renders with the border, so it
+never exercised these layouts, which is how the bug survived D24–D27. **The harness should
+grow a ring-less row.**
+
+**2. Pure de-duplication: bit-identical.** Each step was checked against a saved baseline:
+`stages 16` for `C1`/`C2`/`C3`, `ab 32` and `format_probe 32` produce byte-identical output.
+
+- *One hue rule.* Which hue each luma position was drawn in (its chroma cell's, its own on
+  the ring, or 0) was written out in both the equaliser and the refit.
+  `equalize::drawn_hues` is now the only copy.
+- *Ring outline once per attempt.* `ring::attempt` computed the convex hull and quad of the
+  boundary points, then `estimate_lens` computed them again, then straightening computed
+  them a third time. It now computes the raw hull and quad once, and recomputes them only
+  when a lens was actually found and the points moved. This does not change reliability:
+  it was the same deterministic computation repeated.
+- *One edge refit.* `refine_quad` and `edge_quad` both ended in the same two-pass,
+  middle-of-the-edge total-least-squares refit. `ring::refit_middle` is that loop once, with
+  the band widths and point set as arguments.
+
+**3. Build paths stripped.** The wasm builds pass `--remap-path-prefix=$HOME=~`, so panic
+locations no longer carry the builder's home directory. All three artifacts contain zero
+occurrences of it.
+
+**4. Explaining the code.** `Code` gained read-only accessors for figures and tests:
+`checks`, `check_members`, `unsatisfied`, `base_shape`, `base_edges`. The scanner never
+calls them, so the linker drops them. They drive `just anatomy-ldpc`, a new figure that
+follows the luma layer's LDPC through a real decode: one real parity check, the decoder's
+own confidences on a blurred and noisy capture, the decoder stopped after each iteration,
+and how the checks are built and placed for any version. `docs/error-correction.md` §5 is
+the written version. `just anatomy`'s notes were updated for D22–D27.
+
+**Size: 199,065 → 200,741 bytes (78% raw, 72% gzip).** Measured one change at a time:
+
+| change | bytes |
+|---|---|
+| one luma-order definition, one hue rule (includes fix 1) | +1,936 |
+| ring outline once per attempt | +450 |
+| shared edge refit | −710 |
+
+De-duplication bought correctness rather than size. The luma-order change is the bug fix
+and stays. The ring-outline change saves work at run time for 450 bytes; it is the cheapest
+thing here to give back if bytes matter more than scan time.
+
 ## Pinned — filling holes the draft left open
 
 | # | Spec item | Pinned as | Where |

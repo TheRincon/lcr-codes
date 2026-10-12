@@ -26,7 +26,7 @@ const PX: f32 = 24.0;
 /// White space around the rendered canvas, for badges and the direction arrow.
 const PAD: f32 = 64.0;
 /// Page size. `just anatomy` passes the same numbers to Chrome's `--window-size`.
-const PAGE: (u32, u32) = (1900, 1170);
+const PAGE: (u32, u32) = (1900, 1250);
 const RED: &str = "#D0021B";
 
 /// A rectangle in module coordinates: the symbol grid spans `0..side` on both axes.
@@ -237,7 +237,10 @@ fn main() {
         Note {
             title: "Ring corners (all four)".into(),
             body: "A dark hue or black in each corner. They fix the perspective transform, WITHOUT finder patterns \
-                   needed. The top-left one is also part of note 2."
+                   needed. The decoder fits the ring's four edges and takes the corners where \
+                   they meet, so a corner hidden by a finger or glare is rebuilt from its two \
+                   edges; how much the edges bow also gives it the lens distortion. The \
+                   top-left one is also part of note 2."
                 .into(),
             groups: corners
                 .iter()
@@ -282,8 +285,9 @@ fn main() {
                 "Four bits of the format codeword name the profile — room for 16, of which 4 \
                  are defined. Each non-reference ring position carries {bpp} format bits in \
                  its choice among {hues} hues, so these {} positions hold them (copy A). \
-                 BCH(30,15) lets each copy survive 3 wrong bits. The version is *not* in the \
-                 word: the sequence above already gave it, which is what freed these bits.",
+                 BCH(30,15) lets each copy survive 3 wrong bits, and the decoder also averages \
+                 the two copies before decoding. The version is *not* in the word: the \
+                 sequence above already gave it, which is what freed these bits.",
                 profile_pos.len()
             ),
             groups: by_edge(&profile_pos),
@@ -304,7 +308,8 @@ fn main() {
             body: format!(
                 "Every {}rd ring position has a fixed colour — one of the {} palette colours, \
                  black or white — that doesn't depend on the data. The decoder fits \
-                 illumination from these before it can read a single hue.",
+                 illumination from these before it can read a single hue, and measures the \
+                 colour noise of dark and light modules separately from them.",
                 border::REF_STRIDE,
                 palette.len()
             ),
@@ -397,7 +402,9 @@ fn main() {
         Note {
             title: "Interior references".into(),
             body: format!(
-                "{} modules of known colour scattered through the grid so the glare can be corrected.",
+                "{} modules of known colour scattered through the grid, so shading, colour cast and \
+                 white balance are corrected across the whole symbol. Glare is too sharp for \
+                 that: the decoder reads each module against its neighbours instead.",
                 interior.len()
             ),
             groups: interior

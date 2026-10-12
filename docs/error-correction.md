@@ -1,8 +1,9 @@
 # How LC Codes recover the message
 
 Why there is no Reed–Solomon anywhere in the payload path, what the "information" and
-"parity" cells in `examples/anatomy-expanded-c3.png` actually are, and a complete
-by-hand decode of an eight-bit symbol.
+"parity" cells in `examples/anatomy-expanded-c3.png` actually are, a complete
+by-hand decode of an eight-bit symbol, and how the real checks are built and placed for
+any version (§5, drawn in `examples/anatomy-ldpc-c3.png`).
 
 Companion to `docs/ldpc.md` (which is the generated threshold table, not an explanation)
 and to §8 / §9.1 / §12.5 of the spec.
@@ -333,6 +334,137 @@ modules
 Recovery is the camera saying *I am 60% sure that one is dark*, a few thousand XOR
 constraints arguing about it for up to fifty rounds, and a CRC at the end refusing to sign
 off unless the bytes are genuinely right.
+
+---
+
+## 5. Where the checks come from, and where they land
+
+The toy in §3 wrote its four checks out by hand. A real layer has hundreds or thousands of
+them, and none are written out or stored in the symbol. Both ends rebuild every check from
+three things the format word already carries: **version, profile and ECC level**. Two
+separate decisions are involved:
+
+1. **Which bits share a check.** A small stored table, scaled up to the layer's size.
+2. **Where each bit sits on the symbol.** The interleaver, which knows nothing about
+   checks.
+
+`just anatomy-ldpc` draws all of this for a real v4 C3 symbol
+(`examples/anatomy-ldpc-c3.png`, panel 5). The numbers below are from that figure, and the
+figure's generator asserts that its hand-built check equals the decoder's own.
+
+### 5.1 The recipe, for v4 C3 luma
+
+**Step 1: count the modules.** The version fixes the size (v4 is 33 × 33). The profile
+fixes which modules are reference cells. What's left is the luma layer: 1,073 payload
+modules in the grid plus 97 on the ring, so **n = 1,170** bits.
+
+**Step 2: pick a base graph.** The ECC level fixes the rate (0.75 here). Each rate has
+three stored tables, 60, 20 and 10 columns wide (`crates/lc-core/src/ecc/tables.rs`), and
+`Code::new` takes the widest that fits. Here that's **60 columns × 15 rows**:
+
+- **45 data columns**, each connected to exactly 3 rows, and each connection carries a
+  *shift* number.
+- **15 parity columns** in a fixed staircase: parity column *i* sits in rows *i − 1* and *i*,
+  except the first, which sits in rows 0, 7 and 14. That's why a bit is in 2 or 3 checks:
+  3 for data bits and the first parity column, 2 for the rest. The staircase also makes encoding cheap, because each parity bit
+  follows from the one before it.
+
+**Step 3: lift.** Every cell of the table is copied Z times. Z is the smallest whole number
+with 60 × Z ≥ n:
+
+```
+Z = ⌈1170 / 60⌉ = ⌈19.5⌉ = 20        (⌈ ⌉ means "round up")
+```
+
+Z = 19 would give 60 × 19 = 1,140 bits, which is 30 short. Z = 20 gives 1,200, which is 30
+too many. Then each connection `(row, column, shift)` in the table becomes Z connections:
+
+```
+check  row·Z + t   covers   bit  column·Z + (t + shift) mod Z      for t = 0 … Z−1
+```
+
+So 15 rows × 20 = **300 checks**, over 60 × 20 = 1,200 bits. The 30 bits too many are the
+last 30 data bits, which are **shortened**: fixed to 0, known to both ends, never drawn.
+That leaves k = 45 × 20 − 30 = **870** data bits.
+
+The `mod Z` is a rotation. Inside each Z-sized block, check t talks to bit t + shift,
+wrapping around at Z. That's the "quasi-cyclic" in QC-LDPC.
+
+**Step 4: scatter.** The codeword lists the 870 data bits, then the 300 parity bits
+(shortened bits are skipped). Codeword bit j goes to slot
+
+```
+slot = a · j  mod n          a = round(n / φ), nudged up until it shares no factor with n
+```
+
+where φ is the golden ratio, so a = 727 for n = 1,170. Slots are numbered along the grid's
+zigzag walk (pairs of columns, up then down, starting at the bottom right, as QR does), then
+around the ring (`Layout::luma_positions`).
+
+### 5.2 One check, by hand
+
+Check 0 is table row 0 at t = 0. Row 0 has 11 connections. Each one gives one member:
+
+| base column | | stored shift | shift mod 20 | bit `c·20 + shift` | codeword j | slot `727·j mod 1170` | module (x, y) |
+|---:|---|---:|---:|---:|---:|---:|---|
+| 0 | data | 267 | 7 | 7 | 7 | 409 | (20, 23) |
+| 4 | data | 25 | 5 | 85 | 85 | 955 | (4, 9) |
+| 10 | data | 319 | 19 | 219 | 219 | 93 | (29, 13) |
+| 15 | data | 404 | 4 | 304 | 304 | 1048 | (0, 24) |
+| 20 | data | 219 | 19 | 419 | 419 | 413 | (20, 21) |
+| 25 | data | 221 | 1 | 501 | 501 | 357 | (21, 15) |
+| 30 | data | 286 | 6 | 606 | 606 | 642 | (14, 28) |
+| 35 | data | 18 | 18 | 718 | 718 | 166 | (28, 14) |
+| 40 | data | 445 | 5 | 805 | 805 | 235 | (25, 20) |
+| 45 | parity | 0 | 0 | 900 | 870 | 690 | (12, 12) |
+| 46 | parity | 0 | 0 | 920 | 890 | 20 | (32, 22) |
+
+Parity bits are renumbered when the 30 shortened bits are dropped: lifted bit 900 becomes
+codeword bit 900 − 30 = 870. The XOR of the 11 modules in the last column is 0 in every
+valid v4 symbol at this ECC level.
+
+### 5.3 v4 against v40
+
+The table is the same at every version. Everything derived from n is not:
+
+| version | size | n | base graph | Z | shortened | k | checks | a |
+|---|---|---:|---|---:|---:|---:|---:|---:|
+| v1 | 21×21 | 497 | 60 × 15 | 9 | 43 | 362 | 135 | 307 |
+| **v4** | 33×33 | 1,170 | 60 × 15 | 20 | 30 | 870 | 300 | 727 |
+| v10 | 57×57 | 3,361 | 60 × 15 | 57 | 59 | 2,506 | 855 | 2,077 |
+| v20 | 97×97 | 9,533 | 60 × 15 | 159 | 7 | 7,148 | 2,385 | 5,892 |
+| v40 | 177×177 | 31,326 | 60 × 15 | 523 | 54 | 23,481 | 7,845 | 19,361 |
+| v64 | 273×273 | 74,110 | 60 × 15 | 1,236 | 50 | 55,570 | 18,540 | 45,803 |
+
+(C3, luma layer, same ECC level.) A different n gives a different Z. The stored shifts then
+wrap differently (267 mod 20 is 7, but 267 mod 523 is 267), so every check connects
+different bits. And a different n gives a different a, so the scatter differs too. To find
+where a check lands at some version, run the four steps above, or set `VERSION` in
+`crates/lc-render/examples/anatomy_ldpc.rs` and regenerate. The tables at the top of that
+panel are computed, not typed.
+
+### 5.4 Why it's built this way
+
+- **Where the table came from.** `tables.rs` is generated once by
+  `cargo run -p xtask -- ldpc` (`peg` and `parity_edges` in `xtask/src/main.rs`) and checked
+  in. The connections were placed by *progressive
+  edge growth*: each one is added where it creates the longest possible loop through the
+  graph. The shifts were then chosen to avoid the shortest loops (length 4) at all the Z
+  values the format uses. Short loops are bad because a bit's own opinion comes back to it
+  after a few hops of §3's message passing, and the decoder starts agreeing with itself.
+- **Why lift instead of storing a big graph.** One 60 × 15 table with three connections per
+  data column covers every version from 497 bits to 74,110. The decoder carries 18 small
+  tables (6 rates × 3 widths), not a graph per size.
+- **Why scatter.** A smudge, glare spot or finger damages a patch of neighbouring modules.
+  If members of one check sat side by side, one smudge would break several of them at once,
+  and a check can only help when most of its members are right. Scattered, the smudge
+  breaks one bit in each of many checks, and each check repairs its bit from healthy
+  members elsewhere. The golden-ratio multiplier spreads any run of consecutive slots
+  evenly across the codeword, whatever the run's length (`interleave.rs` has the details).
+  That's why check 0's members look random on the symbol.
+- **Why nothing is stored.** The encoder and decoder run the same arithmetic on the same
+  three format fields, so they always agree. The only cost is that changing a table or the
+  interleaver changes every symbol: they're part of the format.
 
 ---
 

@@ -286,6 +286,21 @@ impl Layout {
         }
     }
 
+    /// Every luma position, in transmission order: the grid's payload modules in §8.4 walk
+    /// order, then the ring's payload cells (D19). Module coordinates, which are negative for
+    /// ring cells.
+    ///
+    /// The one definition of that order. Demodulation writes LLRs in it and the equaliser
+    /// and the illumination refit read colours in it; three hand-written copies of it are
+    /// how a symbol without ring payload once got the ring's cells appended anyway (D27).
+    pub fn luma_positions(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let ring = (self.ring_cells > 0).then(|| crate::border::payload_cells(self.side));
+        self.payload
+            .iter()
+            .map(|&(x, y)| (x as i32, y as i32))
+            .chain(ring.into_iter().flatten())
+    }
+
     /// Bits available to each layer before ECC (§8.1).
     ///
     /// The ring's payload cells (D19) are ordinary payload modules and count here: one luma

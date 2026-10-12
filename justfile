@@ -137,9 +137,16 @@ _dist:
 # instantiates the shipped artifact.
 wasm_opt_flags := "-Oz --enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int"
 
+# Shipped artifacts must not carry the builder's filesystem. Panic locations embed source
+# paths, and for the standard library and every crate from the registry those are absolute
+# paths under the home directory — the scanner shipped `/Users/<name>/.rustup/…` and
+# `/Users/<name>/.cargo/registry/…` until this (D27). Remapping the home directory to `~`
+# covers the toolchain, the registry and this repository at once.
+wasm_rustflags := "--remap-path-prefix=" + env_var("HOME") + "=~"
+
 # Decode + encode.
 _component-full: _dist
-    cargo build -p lc-wasm --release --target {{wasm_target}}
+    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lc-wasm --release --target {{wasm_target}}
     cp {{wasm_out}} target/full-core.wasm
     @if command -v wasm-opt >/dev/null; then wasm-opt {{wasm_opt_flags}} -o target/full-core.opt.wasm target/full-core.wasm && mv target/full-core.opt.wasm target/full-core.wasm; else echo "  wasm-opt not found — skipping the size pass (brew install binaryen)"; fi
     wasm-tools component new target/full-core.wasm -o dist/lc-code.wasm
@@ -148,7 +155,7 @@ _component-full: _dist
 
 # Decode only. §14.1 keeps the encoder out so a scanner cannot acquire it by accident.
 _component-scanner: _dist
-    cargo build -p lc-wasm --release --target {{wasm_target}} \
+    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lc-wasm --release --target {{wasm_target}} \
         --no-default-features --features decode
     cp {{wasm_out}} target/scanner-core.wasm
     @if command -v wasm-opt >/dev/null; then wasm-opt {{wasm_opt_flags}} -o target/scanner-core.opt.wasm target/scanner-core.wasm && mv target/scanner-core.opt.wasm target/scanner-core.wasm; else echo "  wasm-opt not found — skipping the size pass (brew install binaryen)"; fi
@@ -165,7 +172,7 @@ _component-scanner: _dist
 # Deliberately not part of `component`, so neither shipped artifact carries a competing
 # symbology. Only `just web` builds this, and it is the only artifact with QR in it.
 _component-compare: _dist
-    cargo build -p lc-wasm --release --target {{wasm_target}} --features compare
+    RUSTFLAGS="{{wasm_rustflags}}" cargo build -p lc-wasm --release --target {{wasm_target}} --features compare
     wasm-tools component new {{wasm_out}} -o dist/lc-code-compare.wasm
     wasm-tools strip --all dist/lc-code-compare.wasm -o dist/lc-code-compare.wasm
     wasm-tools validate --features=component-model dist/lc-code-compare.wasm
@@ -326,7 +333,7 @@ chrome := "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 [doc("Regenerate examples/anatomy-c3.png, the annotated C3 reference figure.")]
 anatomy:
     cargo run -p lc-render --release --example anatomy -- target/anatomy
-    "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1900,1170 \
+    "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1900,1250 \
         --screenshot="$PWD/examples/anatomy-c3.png" "file://$PWD/target/anatomy/anatomy-c3.html" \
         2>/dev/null
     @echo "  wrote examples/anatomy-c3.png"
@@ -343,6 +350,20 @@ anatomy-expanded:
         --screenshot="$PWD/examples/anatomy-expanded-c3.png" \
         "file://$PWD/target/anatomy/anatomy-expanded-c3.html" 2>/dev/null
     @echo "  wrote examples/anatomy-expanded-c3.png"
+
+# Regenerate examples/anatomy-ldpc-c3.png — the luma layer's LDPC code, followed through a
+# real decode of a defocused, noisy capture.
+#
+# The third anatomy figure: one real parity check, the decoder's own confidences, and the
+# decoder stopped after each iteration until every check is satisfied. Same Chrome
+# dependency, same window-size-must-match-PAGE rule.
+[doc("Regenerate examples/anatomy-ldpc-c3.png, the error-correction explainer.")]
+anatomy-ldpc:
+    cargo run -p lc-render --release --example anatomy_ldpc -- target/anatomy
+    "{{chrome}}" --headless=new --disable-gpu --hide-scrollbars --window-size=1340,3000 \
+        --screenshot="$PWD/examples/anatomy-ldpc-c3.png" \
+        "file://$PWD/target/anatomy/anatomy-ldpc-c3.html" 2>/dev/null
+    @echo "  wrote examples/anatomy-ldpc-c3.png"
 
 # Regenerate docs/img/ — the figures docs/explainer.html reads.
 #

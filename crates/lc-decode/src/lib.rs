@@ -390,36 +390,15 @@ impl<V: PacketVerifier> Decoder<V> {
         let cap = layout.capacity();
         let light = equalize::luma_levels(&luma.codeword, layout, p.format.mask);
         let cell_hue = equalize::chroma_hues(&chroma.codeword, layout, palette.hues);
-        let one_module = layout.profile.chroma_cell() == 1;
+        let hue = equalize::drawn_hues(layout, &cell_hue);
         let mut refs = demod::collect_references(img, &p.transform, layout, palette, p.ring);
         let fixed = refs.len();
-        let grid = layout.payload.len();
-        let coords = layout
-            .payload
-            .iter()
-            .map(|&(x, y)| (x as i32, y as i32))
-            .chain(border::payload_cells(layout.side));
-        for (k, (x, y)) in coords.enumerate() {
-            // The hue a module was drawn in, as `lc-core`'s `modulate` assigns it.
-            let hue = if k < grid {
-                match *layout.chroma_of.at(x as u16, y as u16) {
-                    lc_core::layout::NO_CHROMA => 0,
-                    c => cell_hue.get(c as usize).copied().unwrap_or(0),
-                }
-            } else if one_module {
-                cell_hue
-                    .get(layout.chroma_cells.len() + k - grid)
-                    .copied()
-                    .unwrap_or(0)
-            } else {
-                0
-            };
-            let Some(&level) = light.get(k) else { break };
+        for (((x, y), &level), &h) in layout.luma_positions().zip(&light).zip(&hue) {
             refs.push(illum::Reference {
                 x: x as f32 + 0.5,
                 y: y as f32 + 0.5,
                 observed: sample::sample_module(img, &p.transform, x, y),
-                nominal: palette.linear[usize::from(level) * palette.hues + hue],
+                nominal: palette.linear[usize::from(level) * palette.hues + h],
             });
         }
         let model = IlluminationModel::fit(&refs, layout.side, p.format.version.get());

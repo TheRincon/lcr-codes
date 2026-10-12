@@ -79,13 +79,8 @@ impl Observation {
         let n = layout.side as i32 + 2 * (reach + 1);
         let mut sum = vec![Linear::new(0.0, 0.0, 0.0); (n * n) as usize];
         let mut seen = vec![false; sum.len()];
-        let coords = layout
-            .payload
-            .iter()
-            .map(|&(x, y)| (x as i32, y as i32))
-            .chain(border::payload_cells(layout.side));
         let mut count = 0;
-        for ((x, y), &c) in coords.zip(colours) {
+        for ((x, y), &c) in layout.luma_positions().zip(colours) {
             let i = index(reach, n, x, y);
             (sum[i], seen[i]) = (c, true);
             count += 1;
@@ -169,6 +164,48 @@ enum Hue {
     Own,
 }
 
+/// Where each luma position's hue comes from, in [`Layout::luma_positions`] order. Follows
+/// `lc-core`'s `modulate`: a grid module takes its chroma cell's hue, or 0 outside one; a
+/// ring cell carries its own only where the chroma cell is one module, and is drawn at 0
+/// otherwise.
+fn hue_sources(layout: &Layout) -> Vec<Hue> {
+    let ring_chroma =
+        layout.profile.chroma_cell() == 1 && layout.profile.chroma_bits_per_cell() > 0;
+    let grid = layout.payload.len();
+    layout
+        .luma_positions()
+        .enumerate()
+        .map(|(k, (x, y))| {
+            if k < grid {
+                match *layout.chroma_of.at(x as u16, y as u16) {
+                    NO_CHROMA => Hue::Fixed(0),
+                    c => Hue::Cell(c),
+                }
+            } else if ring_chroma {
+                Hue::Own
+            } else {
+                Hue::Fixed(0)
+            }
+        })
+        .collect()
+}
+
+/// The hue every luma position was drawn in, given one hue per chroma cell in demodulation
+/// order — grid cells, then the ring's own — as [`chroma_hues`] produces. The one place that
+/// maps per-cell hues back onto modules.
+pub fn drawn_hues(layout: &Layout, cell_hue: &[usize]) -> Vec<usize> {
+    let (grid, cells) = (layout.payload.len(), layout.chroma_cells.len());
+    hue_sources(layout)
+        .into_iter()
+        .enumerate()
+        .map(|(k, h)| match h {
+            Hue::Fixed(v) => v,
+            Hue::Cell(c) => cell_hue.get(c as usize).copied().unwrap_or(0),
+            Hue::Own => cell_hue.get(cells + k - grid).copied().unwrap_or(0),
+        })
+        .collect()
+}
+
 /// What is known about one cell before equalisation.
 #[derive(Copy, Clone)]
 enum Cell {
@@ -212,12 +249,7 @@ impl<'a> Field<'a> {
             palette,
             obs,
             cells: vec![Cell::Unknown; obs.sum.len()],
-            coords: layout
-                .payload
-                .iter()
-                .map(|&(x, y)| (x as i32, y as i32))
-                .chain(border::payload_cells(layout.side))
-                .collect(),
+            coords: layout.luma_positions().collect(),
             members: vec![Vec::new(); layout.chroma_cells.len()],
         };
         if f.coords.len() != light.len() || light.len() != sure.len() {
@@ -243,23 +275,8 @@ impl<'a> Field<'a> {
                 f.cells[i] = cell;
             }
         }
-        // Payload overrides: the ring's inner data cells carry payload too (D19). Their hue
-        // follows `lc-core`'s `modulate`: a grid module takes its chroma cell's, or 0 outside
-        // one; a ring cell carries its own only where the chroma cell is one module.
-        let ring_chroma =
-            layout.profile.chroma_cell() == 1 && layout.profile.chroma_bits_per_cell() > 0;
-        let grid = layout.payload.len();
-        for (k, &(x, y)) in f.coords.clone().iter().enumerate() {
-            let hue = if k < grid {
-                match *layout.chroma_of.at(x as u16, y as u16) {
-                    NO_CHROMA => Hue::Fixed(0),
-                    c => Hue::Cell(c),
-                }
-            } else if ring_chroma {
-                Hue::Own
-            } else {
-                Hue::Fixed(0)
-            };
+        // Payload overrides: the ring's inner data cells carry payload too (D19).
+        for (k, (&(x, y), hue)) in f.coords.clone().iter().zip(hue_sources(layout)).enumerate() {
             let i = f.at(x, y);
             if let Hue::Cell(c) = hue {
                 f.members.get_mut(c as usize)?.push(i);
@@ -360,16 +377,8 @@ impl<'a> Field<'a> {
     /// Set every payload module's hue from `prior`, one physical hue per chroma cell in
     /// demodulation order (grid cells, then the ring's own).
     fn apply_prior(&self, prior: &[usize], hue: &mut [usize]) {
-        let (grid, cells) = (self.layout.payload.len(), self.members.len());
-        for (k, &(x, y)) in self.coords.iter().enumerate() {
-            let i = self.at(x, y);
-            if let Cell::Payload { hue: h, .. } = self.cells[i] {
-                hue[i] = match h {
-                    Hue::Fixed(v) => v,
-                    Hue::Cell(c) => prior.get(c as usize).copied().unwrap_or(0),
-                    Hue::Own => prior.get(cells + k - grid).copied().unwrap_or(0),
-                };
-            }
+        for (&(x, y), h) in self.coords.iter().zip(drawn_hues(self.layout, prior)) {
+            hue[self.at(x, y)] = h;
         }
     }
 
@@ -502,8 +511,8 @@ pub fn chroma(
     for (c, &cell) in layout.chroma_cells.iter().enumerate() {
         push(f.cell_mean(c, &eq), Some(cell), &mut llrs);
     }
-    if layout.profile.chroma_cell() == 1 && layout.ring_cells > 0 {
-        for (x, y) in border::payload_cells(layout.side) {
+    if layout.profile.chroma_cell() == 1 {
+        for &(x, y) in &f.coords[layout.payload.len()..] {
             push(eq[f.at(x, y)], None, &mut llrs);
         }
     }

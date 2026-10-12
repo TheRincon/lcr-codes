@@ -148,14 +148,66 @@ impl Code {
         self.shortened
     }
 
+    /// Number of parity checks: rows of the lifted parity-check matrix.
+    pub fn checks(&self) -> usize {
+        self.check_offsets.len().saturating_sub(1)
+    }
+
+    /// The transmitted bits parity check `c` ties together, as indices into the codeword in
+    /// transmission order — the rule being that their XOR is zero. Shortened bits are left
+    /// out: they are zeros both ends know, so they never change a parity.
+    ///
+    /// For explaining and testing the code, not decoding with it.
+    pub fn check_members(&self, c: usize) -> Vec<usize> {
+        let (lo, hi) = (
+            self.check_offsets[c] as usize,
+            self.check_offsets[c + 1] as usize,
+        );
+        self.check_vars[lo..hi]
+            .iter()
+            .filter_map(|&v| self.transmitted(v as usize))
+            .collect()
+    }
+
+    /// How many parity checks a transmitted word violates; zero exactly when it is a
+    /// codeword. For explaining and testing the code, not decoding with it.
+    pub fn unsatisfied(&self, word: &[bool]) -> usize {
+        (0..self.checks())
+            .filter(|&c| {
+                self.check_members(c)
+                    .iter()
+                    .fold(false, |p, &i| p ^ word.get(i).copied().unwrap_or(false))
+            })
+            .count()
+    }
+
+    /// Transmitted index of lifted variable `v`, or `None` for a shortened zero. The inverse
+    /// of the layout `channel_llrs` builds: information, then shortened zeros, then parity.
+    fn transmitted(&self, v: usize) -> Option<usize> {
+        let info_end = self.base.k_b * self.z;
+        if v < self.k {
+            Some(v)
+        } else if v < info_end {
+            None
+        } else {
+            Some(self.k + v - info_end)
+        }
+    }
+
     /// Realised rate, which shortening can push below the nominal table value.
     #[inline]
     pub fn effective_rate(&self) -> f32 {
         self.k as f32 / self.n_tx as f32
     }
 
-    /// Every base-graph edge as `(base row, base column, shift)`.
-    fn edges(&self) -> Vec<(usize, usize, u16)> {
+    /// Base graph shape `(n_b, k_b, m_b)`: columns, information columns, check rows.
+    pub const fn base_shape(&self) -> (usize, usize, usize) {
+        (self.base.n_b, self.base.k_b, self.base.m_b)
+    }
+
+    /// Every base-graph edge as `(base row, base column, shift)`. Lifting turns each into a
+    /// `Z × Z` rotation: check `row·Z + t` covers variable `column·Z + (t + shift) mod Z`.
+    pub fn base_edges(&self) -> Vec<(usize, usize, u16)> {
         let mut e: Vec<(usize, usize, u16)> = Vec::new();
         for (j, col) in self.base.info.iter().enumerate() {
             for &(row, shift) in col {
@@ -179,7 +231,7 @@ impl Code {
         let z = self.z;
         let m_lift = self.base.m_b * z;
         let n_lift = self.base.n_b * z;
-        let base_edges = self.edges();
+        let base_edges = self.base_edges();
 
         let mut per_check: Vec<Vec<u32>> = vec![Vec::new(); m_lift];
         for &(r, c, sh) in &base_edges {
@@ -433,6 +485,24 @@ pub struct DecodeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `unsatisfied` must agree with the encoder: zero for every codeword, and non-zero once
+    /// any single bit of it is flipped — every transmitted bit sits in at least one check.
+    #[test]
+    fn unsatisfied_counts_violated_checks() {
+        let code = Code::new(1, 300).unwrap();
+        let info: Vec<bool> = (0..code.info_bits()).map(|i| i % 3 == 0).collect();
+        let word = code.encode(&info).unwrap();
+        assert_eq!(code.unsatisfied(&word), 0);
+        for flip in [0, word.len() / 2, word.len() - 1] {
+            let mut bad = word.clone();
+            bad[flip] = !bad[flip];
+            assert!(
+                code.unsatisfied(&bad) > 0,
+                "flipping bit {flip} broke no check"
+            );
+        }
+    }
 
     /// A converged decode's `codeword` must be the codeword that was sent, bit for bit —
     /// D24 re-derives every module's luma level from it instead of re-encoding.
