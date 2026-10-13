@@ -221,14 +221,20 @@ wasm-size: component
     fi
     exit $over
 
-# Transpile the scanner component for the browser and serve the demo.
+# Pinned rather than `@latest`, so CI and a laptop transpile the same bindings and a jco
+# release cannot change the deployed demo without a commit. To move it: bump, `just web`,
+# check every page still loads.
+jco := "@bytecodealliance/jco@1.37.0"
+
+# Transpile the comparison component for the browser, into web/lcr, plus the sample frame.
 #
 # `jco` turns the component into a core module plus JS bindings for the Component Model
-# ABI. Served from localhost because a camera needs a secure context — a plain LAN address
-# loads the page but the browser refuses `getUserMedia`.
+# ABI. Shared by `web`, `tunnel` and `site`, so the three cannot drift apart.
 #
-# Node comes from Homebrew explicitly: nvm shadows it with a v14 that cannot run jco.
-web port="8000":
+# Node comes from Homebrew explicitly: nvm shadows it with a v14 that cannot run jco. The
+# prefix is harmless where /opt/homebrew does not exist, which is how CI gets its own node.
+[doc("Build the browser demo into web/: jco bindings plus the sample frame.")]
+web-build:
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH=/opt/homebrew/bin:$PATH
@@ -240,9 +246,36 @@ web port="8000":
     # is a third artifact rather than a change to the other two.
     # `--name lcr-code` so the emitted module keeps its filename regardless of which
     # artifact fed it; all three pages import `./lcr/lcr-code.js` and should not have to care.
-    npx --yes @bytecodealliance/jco@latest transpile dist/lcr-code-compare.wasm \
+    npx --yes {{jco}} transpile dist/lcr-code-compare.wasm \
         --name lcr-code -o web/lcr --no-typescript
     cargo run -p lcr-decode --release --example frame -- web/frame.rgba
+
+# Assemble the GitHub Pages site into target/site: the demo pages plus the explainer.
+#
+# The explainer keeps its repository layout — `docs/explainer.html` beside `docs/img/`, and
+# the one figure it reads from `../examples/` — so its relative links work unchanged and the
+# page needs no build step of its own.
+[doc("Assemble the GitHub Pages site (demo + explainer) into target/site.")]
+site: web-build
+    rm -rf target/site
+    mkdir -p target/site/docs target/site/examples
+    cp -R web/. target/site/
+    cp docs/explainer.html target/site/docs/
+    cp -R docs/img target/site/docs/
+    cp examples/anatomy-c3.png target/site/examples/
+    find target/site -name .DS_Store -delete
+    @echo "  wrote target/site — serve with: python3 -m http.server -d target/site"
+
+# Build the browser demo and serve it.
+#
+# Served from localhost because a camera needs a secure context — a plain LAN address
+# loads the page but the browser refuses `getUserMedia`.
+[doc("Build the browser demo and serve it on localhost.")]
+web port="8000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH=/opt/homebrew/bin:$PATH
+    just web-build
     echo
     echo "  display:  http://localhost:{{port}}/display.html   (laptop)"
     echo "  transfer: http://localhost:{{port}}/transfer.html  (laptop — file drop)"
@@ -266,9 +299,7 @@ tunnel port="8000":
     set -euo pipefail
     export PATH=/opt/homebrew/bin:$PATH
     command -v cloudflared >/dev/null || { echo "cloudflared not found (brew install cloudflared)" >&2; exit 1; }
-    just component _component-compare
-    npx --yes @bytecodealliance/jco@latest transpile dist/lcr-code-compare.wasm \
-        --name lcr-code -o web/lcr --no-typescript
+    just web-build
     ( cd web && python3 -m http.server {{port}} >/dev/null 2>&1 ) &
     server=$!
     trap 'kill $server 2>/dev/null || true' EXIT

@@ -1,0 +1,92 @@
+# The same gate as `.githooks/pre-push` — `just ci` — plus the live demo on GitHub Pages.
+#
+# One workflow rather than two so the demo can only ever be deployed from a commit that
+# passed the gate: `deploy` needs `ci`, and `ci` is the job that builds the site.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch or PR makes the older run moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Must match the version Homebrew ships locally, or the size gate measures a
+  # different optimiser than the one a contributor sees.
+  BINARYEN_VERSION: "132"
+
+jobs:
+  ci:
+    name: just ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the exact toolchain, components and wasm target;
+      # `rustup toolchain install` with no argument installs whatever it names.
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install just and wasm-tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.46.0,wasm-tools@1.254.0
+
+      # Optional for the build, but the size gate's figures assume it ran.
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -sSL "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_${BINARYEN_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Ensure zstd
+        run: command -v zstd || sudo apt-get install -y zstd
+
+      - name: just ci
+        run: just ci
+
+      # Built on every run, deployed only from main: a PR that breaks the demo fails here
+      # rather than after merge.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build site
+        run: just site
+
+      - name: Upload site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/site
+
+  deploy:
+    name: Deploy demo
+    needs: ci
+    # Pages needs a public repository on the free plan; skipped quietly until then.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      !github.event.repository.private
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

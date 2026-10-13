@@ -1,3 +1,5 @@
+THESE ARE INTERNAL NOTES
+
 # Robustness ideas — what JABCode does, and what we could take from it
 
 *Written 2026-10-03. A read of the vendored `jabcode/` reference implementation
