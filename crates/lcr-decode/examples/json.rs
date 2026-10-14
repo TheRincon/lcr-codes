@@ -40,7 +40,7 @@ const CASES: &[(&str, &str)] = &[
     ),
     (
         "event admission",
-        r#"{"event":"EV-2026-0417","seat":{"sec":"104","row":"F","num":12},"holder":"A. N. Other","tier":"ga","gates":[2,3],"issued":1756512000,"exp":1776988800}"#,
+        r#"{"event":"DD-2026-0417","seat":{"sec":"104","row":"F","num":12},"holder":"J. W.","tier":"ga","gates":[2,3],"issued":1756512000,"exp":1776988800}"#,
     ),
 ];
 

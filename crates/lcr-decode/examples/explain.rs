@@ -97,26 +97,6 @@ fn chroma_only(r: &Raster, l_fixed: f32) -> Raster {
     out
 }
 
-/// Flat colour swatches, for the palette figure.
-fn swatches(colors: &[color::Srgb8], cell: u32) -> Raster {
-    let w = cell * colors.len() as u32;
-    let mut data = vec![0u8; (w * cell * 3) as usize];
-    for y in 0..cell {
-        for x in 0..w {
-            let c = colors[(x / cell) as usize];
-            let i = ((y * w + x) * 3) as usize;
-            data[i] = c.r;
-            data[i + 1] = c.g;
-            data[i + 2] = c.b;
-        }
-    }
-    Raster {
-        width: w,
-        height: cell,
-        data,
-    }
-}
-
 fn main() {
     std::fs::create_dir_all(DIR).unwrap();
     // Deliberately the same configuration the `envelope` sweep measures — 96 bytes, C1,
@@ -183,16 +163,8 @@ fn main() {
     );
     save_plain("qr-medium", &qr_raster(&qr, PX));
 
-    // Palette.
-    save("palette-c4", &swatches(&lcr_core::palette::C4_COLORS, 64));
-    save("palette-c8", &swatches(&lcr_core::palette::C8_COLORS, 64));
-    save(
-        "palette-spec",
-        &swatches(&lcr_core::palette::SPEC_4_3_COLORS, 64),
-    );
-
     // Degradations, at magnitudes that bracket the failure knee measured by `envelope`.
-    for r in [1u32, 3, 4, 5] {
+    for r in [1u32, 4, 5] {
         let n = r;
         save(&format!("blur-{n}"), &blur(&base, r));
     }

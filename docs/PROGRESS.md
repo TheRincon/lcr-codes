@@ -1,6 +1,6 @@
 # LCR Code — implementation progress
 
-Reference implementation of [`lcr-code-spec-v0.4.md`](lcr-code-spec-v0.4.md).
+Reference implementation of [`lcr-code-spec-v0.4.md`](../lcr-code-spec-v0.4.md).
 
 **State:** encode and decode are both complete and round-trip end to end through a
 rendered image — and, as of 2026-09-04, **through a real iPhone camera pointed at a real
@@ -16,7 +16,7 @@ dominant failure mode** — see "First measured envelope" below. Every *other* e
 in this file still comes from the §15 harness, which is code.
 
 **Provisional, pending review:** the palette (D1/D2) and illumination-model (D3) changes in
-[`docs/decisions.md`](docs/decisions.md) are being carried forward so work can continue,
+[`docs/decisions.md`](decisions.md) are being carried forward so work can continue,
 not signed off. Both are cheap to unwind — see "Unwinding the provisional decisions" below.
 
 **All tests passing, zero warnings.** `just test` (plus `just test-debug`, unit tests
@@ -67,16 +67,16 @@ should therefore measure a materially different envelope, and this time wants th
 panel filled in and each protocol run separately labelled.
 
 See "First measured envelope" for what came back, and
-[`docs/capture-sweep.md`](docs/capture-sweep.md) for the procedure.
+[`docs/capture-sweep.md`](capture-sweep.md) for the procedure.
 
 ---
 
 **§8.2 ECC rate tuning is done, and the rates did not move.** The full argument is D10 in
-[`docs/decisions.md`](docs/decisions.md); the short version is that the table was right and
+[`docs/decisions.md`](decisions.md); the short version is that the table was right and
 its stated reason was not.
 
 - `just envelope` reports success *rate* per cell (§15's metric) with a clean control row.
-- `just thresholds` writes [`docs/ldpc.md`](docs/ldpc.md) — each rate step buys ~1 dB, and
+- `just thresholds` writes [`docs/ldpc.md`](ldpc.md) — each rate step buys ~1 dB, and
   §8.2's two-step offset grants chroma 1.8–2.4 dB.
 - `Diagnostics::chroma_snr_db` measures the chroma channel on the same scale as the luma
   one. Chroma reads **7.6 dB better** than luma on a clean capture, not worse — it is the
@@ -189,7 +189,7 @@ The full path — `encode → render → decode` — round-trips across every pr
 version, every mask, every ECC level, and every compression setting. Dropping the chroma
 layer entirely still recovers a complete prefix of the packet, per §8.1.
 
-[`examples/`](examples/) holds a rendered symbol for each payload below — PNG, SVG and the
+[`examples/`](../examples/) holds a rendered symbol for each payload below — PNG, SVG and the
 source JSON — every one decoded before it was written.
 
 **JSON payloads**, measured by the `json` example rather than estimated:
@@ -210,7 +210,7 @@ better: the encoder picks no compression on six of the seven.
 
 ### Read this before reviewing
 
-**[`docs/decisions.md`](docs/decisions.md)** — every `[TBD]` pinned, and **nine places the
+**[`docs/decisions.md`](decisions.md)** — every `[TBD]` pinned, and **nine places the
 implementation departs from v0.4 or the ecosystem forced a choice**. Two want your
 sign-off:
 
@@ -330,7 +330,7 @@ just our own encoder — self-consistent crypto bugs are the dangerous kind.
 
 Prompted by a read of the JABCode reference implementation (`docs/robustness-ideas.md`).
 Every change below was measured with the §15 harness before and after; the full figures
-and the ideas that measured worse are in [`docs/decisions.md`](docs/decisions.md).
+and the ideas that measured worse are in [`docs/decisions.md`](decisions.md).
 
 - **D22, glare.** Luma is read a second time against its own neighbourhood: an additive
   plane plus a level step, checked against the palette after de-glaring so an occluder is
@@ -409,7 +409,7 @@ build prints a note and carries on.
 **The finders are gone from screen symbols.** A colour symbol that carries the §6.4 ring has
 no finders, separators, anchors, alignment marker, timing or format region; the ring locates
 it, names its version and orientation, and carries its format. The full account is D17 in
-[`docs/decisions.md`](docs/decisions.md).
+[`docs/decisions.md`](decisions.md).
 
 Every ringed colour symbol in `examples/` shrank one or two versions — `contact` v2 → v1,
 `allergen-profile` v3 → v1, `event-admission` v4 → v3 — and each border-less twin sits beside
@@ -462,7 +462,7 @@ a palette-cycling ring ought to be invisible in luma. It isn't, because P12 puts
 black in the cycle and the two luma levels are far apart: `C1` binarises to `DDLLLD` with
 full 0–255 contrast, `C3` to `DDDDLLLLLD`.
 
-`just debruijn` writes [`docs/border-sequence.md`](docs/border-sequence.md): a cyclic
+`just debruijn` writes [`docs/border-sequence.md`](border-sequence.md): a cyclic
 sequence per version in which **every window of `k` cells is unique**, so the same cells
 become an absolute position reference — orientation, which edge, how far along — for no
 extra modules. Verified by brute force over the extracted cyclic windows rather than
@@ -730,7 +730,7 @@ Everything needed to turn the single scan above into an envelope exists, and **i
 been run once** — see "First measured envelope" for what came back. What follows describes
 the rig itself.
 
-[`docs/capture-sweep.md`](docs/capture-sweep.md) is the procedure: four runs — `C1` by
+[`docs/capture-sweep.md`](capture-sweep.md) is the procedure: four runs — `C1` by
 distance, `C3` by distance, `C1` by angle, `C1` under glare — with the display and capture
 settings §13.1 and §13.2 require.
 

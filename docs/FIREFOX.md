@@ -149,7 +149,7 @@ handle without disposing leaks it inside the wasm instance for the life of the p
 | `/sweep.html` | phone | the same decode, but **recording** every trial against the geometry it was attempted at |
 
 `sweep.html` is the measurement rig, not a demo: it logs a trial per frame, bins them live,
-and exports JSON for `just sweep`. See [`docs/capture-sweep.md`](docs/capture-sweep.md).
+and exports JSON for `just sweep`. See [`docs/capture-sweep.md`](capture-sweep.md).
 It additionally uses `decoder.probe`, so that a frame the decoder *found* but could not
 decode still contributes its geometry rather than vanishing into an error string.
 

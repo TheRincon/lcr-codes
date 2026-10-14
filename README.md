@@ -36,9 +36,9 @@ written, so anything there reads back to the JSON beside it.
 
 Two integration guides, for opposite hosts:
 
-- **[`WASM-PLAN.md`](WASM-PLAN.md)** — a host you control. No JavaScript, no WASI, no host
+- **[`WASM-PLAN.md`](docs/WASM-PLAN.md)** — a host you control. No JavaScript, no WASI, no host
   imports at all, because the component asks for none.
-- **[`FIREFOX.md`](FIREFOX.md)** — a stock browser, with camera capture. `just web`
+- **[`FIREFOX.md`](docs/FIREFOX.md)** — a stock browser, with camera capture. `just web`
   transpiles the component and serves it; the bundle is 47% of §14.2's gzipped budget.
 
 **[`docs/explainer.html`](docs/explainer.html)** is the illustrated walkthrough — what the
@@ -200,7 +200,7 @@ implementation detail.
   the implementation departs from the spec or the ecosystem forced a choice**, each with
   its reason and the test that locks it in. Two are provisional and want sign-off: the
   palette (D1/D2) and the illumination model (D3).
-- **[`PROGRESS.md`](PROGRESS.md)** — what is built, what is left, and what was fixed.
+- **[`PROGRESS.md`](docs/PROGRESS.md)** — what is built, what is left, and what was fixed.
 
 The spec is a **draft**, not a frozen format. Sections marked `[NORMATIVE]` define the wire
 format and must be settled before v1.0; the §8.2 ECC rates in particular are still the
@@ -214,7 +214,7 @@ perspective, shading, specular glare, display colour modes, sensor noise, defocu
 subsampling, and multi-frame combining all have tests that name the claim they check.
 
 Not done: signing, the C ABI, the CLI, fuzz targets, a frozen golden-vector file, and the
-print palette. See [`PROGRESS.md`](PROGRESS.md).
+print palette. See [`PROGRESS.md`](docs/PROGRESS.md).
 
 ## Licence
 
