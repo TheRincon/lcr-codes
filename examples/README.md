@@ -20,7 +20,7 @@ Payloads travel as CBOR, not JSON — §9.4's "author in JSON, transmit CBOR". T
 | [`location-fix`](location-fix.png) | C1 | Ring | v1 | 21×21 | 54 B | 39 B | A position with accuracy and a timestamp. |
 | [`allergen-profile`](allergen-profile.png) | C1 | Ring | v1 | 21×21 | 66 B | 53 B | Appendix A, written out as JSON rather than schema-coded — the size argument the schema registry (§11) exists to win back. |
 | [`device-pairing`](device-pairing.png) | C1 | Ring | v1 | 21×21 | 67 B | 52 B | Wi-Fi handoff with no network in between, which is §1.1 goal 1 exactly. |
-| [`membership`](membership.png) | C1 | Ring | v1 | 21×21 | 96 B | 68 B | Unsigned (§10.7): the holder asserts it, nobody attests it. |
+| [`membership`](membership.png) | C1 | Ring | v1 | 21×21 | 89 B | 61 B | Unsigned (§10.7): the holder asserts it, nobody attests it. |
 | [`device-config`](device-config.png) | C1 | Ring | v3 | 29×29 | 144 B | 114 B | Nested objects and a float array — provisioning a device off a screen. |
 | [`event-admission`](event-admission.png) | C1 | Ring | v2 | 25×25 | 144 B | 96 B | The shape that would carry a COSE signature (§10) in a deployment that needed one. |
 

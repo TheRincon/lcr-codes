@@ -108,8 +108,7 @@ impl Compression {
             #[cfg(feature = "deflate")]
             // **Not** `lcr_core::frame::decompress`: that caps output at `MAX_PAYLOAD`
             // (65,532 bytes), which is the most a single LCR Code frame can hold and has
-            // nothing to do with the size of a transferred file. Borrowing it silently
-            // capped every CFT transfer at 64 KB.
+            // nothing to do with the size of a transferred file.
             //
             // The limit here is the manifest's declared original size — already bounded
             // against `Limits` — plus one byte, so an overlong stream is reported as
