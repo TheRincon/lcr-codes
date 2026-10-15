@@ -1,0 +1,40 @@
+# `cargo deny check` — dependency policy, run by `just deny` and in CI.
+#
+# The workspace is offered under MIT OR Apache-2.0 OR Unlicense, so every dependency has
+# to be usable under terms at least that permissive: no copyleft, nothing that would
+# narrow what a downstream user may do with an LCR Code implementation.
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec. Yanked crates are errors; unmaintained ones are reported for direct
+# dependencies only, since a transitive one is not ours to replace.
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Every duplicate version in the graph comes from compile-time code — the wit-bindgen
+# proc macro and wasmtime in the tests — none of which is linked into a shipped
+# component. The wasm-size gate is what watches the artifact, so duplicates here are not
+# worth failing on.
+multiple-versions = "allow"
+wildcards = "deny"
+# Path dependencies inside the workspace carry no version, which is not a wildcard.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

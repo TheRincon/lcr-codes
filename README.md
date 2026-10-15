@@ -91,6 +91,7 @@ just              # list every recipe
 just test         # the whole suite
 just component    # build both wasm components into dist/
 just gallery      # regenerate examples/
+just deny         # dependency licences and RustSec advisories (needs cargo-deny)
 just web          # run the illustrative example, needs a concurrent "cloudflared tunnel --url http://localhost:8000" for full example.
 ```
 
@@ -213,11 +214,21 @@ degradation harness is built, and the operating envelope is measured rather than
 perspective, shading, specular glare, display colour modes, sensor noise, defocus, 4:2:0
 subsampling, and multi-frame combining all have tests that name the claim they check.
 
-Not done: signing, the C ABI, the CLI, fuzz targets, a frozen golden-vector file, and the
-print palette. See [`PROGRESS.md`](docs/PROGRESS.md).
-
 ## Licence
 
-Apache-2.0. See [Appendix B](lcr-code-spec-v0.4.md#appendix-b--prior-art-and-licensing) of
-the spec for prior art — JAB Code, HCCB, and the EU DCC's COSE/CWT container — and read it
-before publishing anything commercial.
+The code is available under your choice of [MIT](LICENSE-MIT),
+[Apache-2.0](LICENSE-APACHE) or the [Unlicense](UNLICENSE). Apache-2.0 is the option that
+carries an explicit patent grant.
+
+Unless you state otherwise, any contribution you submit for inclusion is offered under the
+same three licences, with no additional terms.
+
+The specification, [`lcr-code-spec-v0.4.md`](lcr-code-spec-v0.4.md), is published under the
+[Open Web Foundation Final Specification Agreement 1.0](https://www.openwebfoundation.org/the-agreements/the-owf-1-0-agreements-granted-claims/owfa-1-0),
+which covers the text and gives implementers a royalty-free patent commitment. The author
+holds no patents on the format and pledges never to assert any against a conforming
+implementation.
+
+See [Appendix B](lcr-code-spec-v0.4.md#appendix-b--prior-art-and-licensing) of the spec for
+prior art — JAB Code, HCCB, and the EU DCC's COSE/CWT container — and read it before
+publishing anything commercial.

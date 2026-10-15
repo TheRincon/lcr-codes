@@ -11,6 +11,10 @@ feature layered on top.
 format or conformance and must be frozen before v1.0. Sections marked **[INFORMATIVE]** are
 rationale or guidance. Items marked **[TBD]** need a decision or calibration data.
 
+**Licence:** This specification is made available by Rincon Rex under the
+[Open Web Foundation Final Specification Agreement 1.0 (OWFa 1.0)](https://www.openwebfoundation.org/the-agreements/the-owf-1-0-agreements-granted-claims/owfa-1-0).
+See Appendix B for the patent pledge.
+
 **Changes from v0.3:** Signing demoted from primary design
 driver to an optional feature (§1, §10); the goals and version guidance no longer assume a
 signature is present. Compact frame added for small payloads (§9.1). Full version range
@@ -1181,6 +1185,12 @@ out of patent and Denso Wave has never enforced against the base symbology, but 
 acknowledged. The COSE/CWT container design follows the EU Digital COVID Certificate closely
 enough that its published specifications are worth reading as a reference implementation of
 the same pattern — minus the base45 layer, which §9.6 drops.
+
+**Patents.** The author holds no patents or patent applications covering this specification
+and does not intend to seek any. In addition to the OWFa 1.0 commitment, any patent claim
+the author holds or later acquires that a conforming implementation necessarily infringes is
+licensed to every implementer royalty-free, worldwide and irrevocably. This pledge cannot
+cover patents held by others; see the prior art above.
 
 None of this is legal advice. If LCR Code goes anywhere commercial, get a freedom-to-operate
 opinion rather than relying on this paragraph.

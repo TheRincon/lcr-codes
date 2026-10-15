@@ -47,4 +47,4 @@ wit-bindgen = { version = "0.46", default-features = false, features = ["macros"
 [dev-dependencies]
 lcr-encode = { workspace = true }
 lcr-render = { workspace = true }
-wasmtime = { version = "34.0.2", default-features = false, features = ["cranelift", "component-model", "runtime", "std"] }
+wasmtime = { version = "49.0.2", default-features = false, features = ["cranelift", "component-model", "runtime", "std"] }

@@ -65,6 +65,16 @@ ci: fmt-check clippy test test-debug wasm-size check-compare
 check-compare:
     cargo check -p lcr-wasm --target {{wasm_target}} --features compare
 
+# Dependency policy from `deny.toml`: licences, RustSec advisories, sources.
+#
+# Not part of `ci`, deliberately. The advisory check fetches the RustSec database, so it
+# needs the network and can start failing with no change here when a new advisory lands —
+# the right behaviour for a CI job, the wrong one for a pre-push hook. CI runs it in
+# `.github/workflows/deny.yml`, on every push and daily.
+[doc("Check dependency licences and security advisories (needs cargo-deny).")]
+deny:
+    cargo deny check
+
 # Depends on `component` because `lcr-wasm/tests/component.rs` loads the built artifact
 # from dist/ and runs it under wasmtime. Without that ordering the component tests would
 # either fail confusingly or, worse, pass against a stale build.

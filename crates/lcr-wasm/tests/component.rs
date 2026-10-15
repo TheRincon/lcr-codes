@@ -160,7 +160,6 @@ fn encodes_and_decodes_through_the_canonical_abi() {
             &mut out,
         )
         .expect("encode-json call");
-    enc_json.post_return(&mut store).unwrap();
 
     let (pixels, width, height, version) = rendered_parts(&out[0]);
     // v2 with finders; the ring's reclaimed modules (D17) fit it in v1.
@@ -182,7 +181,6 @@ fn encodes_and_decodes_through_the_canonical_abi() {
             &mut out,
         )
         .expect("decode call");
-    decode.post_return(&mut store).unwrap();
 
     // --- the packet variant must arrive as `unsigned`, carrying CBOR
     let Val::Result(Ok(Some(res))) = &out[0] else {
@@ -280,14 +278,12 @@ fn accumulator_resource_survives_the_boundary() {
         &mut out,
     )
     .unwrap();
-    f.post_return(&mut store).unwrap();
     let (pixels, width, height, _) = rendered_parts(&out[0]);
 
     let dec = export(&instance, &mut store, None, "lcr:code/decoder@0.4.0");
     let ctor = func(&instance, &mut store, &dec, "[constructor]accumulator");
     let mut handle = [Val::Bool(false)];
     ctor.call(&mut store, &[], &mut handle).expect("construct");
-    ctor.post_return(&mut store).unwrap();
     let Val::Resource(acc) = handle[0] else {
         panic!("expected a resource handle")
     };
@@ -298,7 +294,6 @@ fn accumulator_resource_survives_the_boundary() {
     frames
         .call(&mut store, &[Val::Resource(acc)], &mut n)
         .unwrap();
-    frames.post_return(&mut store).unwrap();
     assert_eq!(n[0], Val::U8(0));
 
     // Push three frames through the ABI.
@@ -314,7 +309,6 @@ fn accumulator_resource_survives_the_boundary() {
             &mut r,
         )
         .expect("push call");
-        push.post_return(&mut store).unwrap();
         assert!(
             matches!(r[0], Val::Result(Ok(_))),
             "push failed: {:?}",
@@ -325,7 +319,6 @@ fn accumulator_resource_survives_the_boundary() {
     frames
         .call(&mut store, &[Val::Resource(acc)], &mut n)
         .unwrap();
-    frames.post_return(&mut store).unwrap();
     assert_eq!(n[0], Val::U8(3), "state persisted across calls");
 
     // §12.4's combined decode.
@@ -339,7 +332,6 @@ fn accumulator_resource_survives_the_boundary() {
     try_decode
         .call(&mut store, &[Val::Resource(acc)], &mut r)
         .expect("try-decode");
-    try_decode.post_return(&mut store).unwrap();
     let Val::Result(Ok(Some(res))) = &r[0] else {
         panic!("expected ok, got {:?}", r[0])
     };
@@ -441,7 +433,6 @@ fn a_blank_frame_returns_an_error_not_a_trap() {
             &mut out,
         )
         .expect("the call itself must succeed — a trap here means the guest panicked");
-    decode.post_return(&mut store).unwrap();
 
     match &out[0] {
         Val::Result(Err(Some(msg))) => {
@@ -480,7 +471,6 @@ fn decode_cost_through_the_component() {
             &mut out,
         )
         .expect("encode-json call");
-    enc_json.post_return(&mut store).unwrap();
     let (pixels, width, height, _) = rendered_parts(&out[0]);
 
     let dec = export(&instance, &mut store, None, "lcr:code/decoder@0.4.0");
@@ -492,7 +482,6 @@ fn decode_cost_through_the_component() {
     decode
         .call(&mut store, std::slice::from_ref(&frame), &mut out)
         .unwrap();
-    decode.post_return(&mut store).unwrap();
 
     const N: u32 = 20;
     let t0 = std::time::Instant::now();
@@ -500,7 +489,6 @@ fn decode_cost_through_the_component() {
         decode
             .call(&mut store, std::slice::from_ref(&frame), &mut out)
             .unwrap();
-        decode.post_return(&mut store).unwrap();
     }
     let each = t0.elapsed() / N;
     println!("decode {width}x{height}: {each:?} per frame over {N} frames");

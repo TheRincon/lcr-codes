@@ -1,0 +1,29 @@
+# `just deny`: dependency licences, sources, and RustSec advisories, per `deny.toml`.
+#
+# Separate from `ci.yml` because of the schedule. An advisory is published against a
+# dependency, not against a commit here, so a check that only runs on push would stay green
+# through a quiet month while a vulnerable crate sits in Cargo.lock. The daily run fails
+# — and GitHub emails the repository owner — the day one lands.
+
+name: Dependencies
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
