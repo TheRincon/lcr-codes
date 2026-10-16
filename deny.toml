@@ -1,8 +1,9 @@
 # `cargo deny check` — dependency policy, run by `just deny` and in CI.
 #
 # The workspace is offered under MIT OR Apache-2.0 OR Unlicense, so every dependency has
-# to be usable under terms at least that permissive: no copyleft, nothing that would
-# narrow what a downstream user may do with an LCR Code implementation.
+# to be usable under terms at least that permissive: no copyleft (bar one file-level
+# exception, below, confined to the CLI), nothing that would narrow what a downstream
+# user may do with an LCR Code implementation.
 
 [graph]
 all-features = true
@@ -18,12 +19,25 @@ allow = [
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
     "BSD-3-Clause",
+    "CC0-1.0",
     "Zlib",
     "Unicode-3.0",
     "Unlicense",
 ]
 confidence-threshold = 0.9
+
+# The one copyleft licence in the tree, allowed for one crate and nowhere else.
+#
+# `avif-parse` reads the AVIF container for `lcr decode`, in the CLI only — no library
+# crate and no component links it. MPL-2.0 is file-level: its obligations attach to
+# avif-parse's own source files, which are used unmodified, and not to the code that
+# calls them, so the `lcr` binary stays MIT OR Apache-2.0 OR Unlicense. Listed per crate
+# so a second MPL dependency arriving anywhere still fails this check.
+[[licenses.exceptions]]
+crate = "avif-parse"
+allow = ["MPL-2.0"]
 
 [bans]
 # Every duplicate version in the graph comes from compile-time code — the wit-bindgen

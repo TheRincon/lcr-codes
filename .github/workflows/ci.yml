@@ -43,10 +43,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install just and wasm-tools
+      - name: Install just, wasm-tools and cbindgen
         uses: taiki-e/install-action@v2
         with:
-          tool: just@1.46.0,wasm-tools@1.254.0
+          tool: just@1.46.0,wasm-tools@1.254.0,cbindgen@0.29.4
 
       # Optional for the build, but the size gate's figures assume it ran.
       - name: Install binaryen (wasm-opt)
@@ -57,6 +57,10 @@ jobs:
 
       - name: Ensure zstd
         run: command -v zstd || sudo apt-get install -y zstd
+
+      # The CLI's AVIF decoder (`rav1d`) builds hand-written x86 assembly, which needs it.
+      - name: Ensure nasm
+        run: command -v nasm || sudo apt-get install -y nasm
 
       - name: just ci
         run: just ci
