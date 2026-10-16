@@ -28,10 +28,13 @@ env:
 jobs:
   ci:
     name: just ci
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`, like the toolchain and binaryen: the size gate
+    # compares bytes against a budget, so moving to a new image should be a commit here,
+    # not something that happens to the gate on GitHub's schedule.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins the exact toolchain, components and wasm target;
       # `rustup toolchain install` with no argument installs whatever it names.
@@ -60,7 +63,7 @@ jobs:
 
       # Built on every run, deployed only from main: a PR that breaks the demo fails here
       # rather than after merge.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -69,7 +72,7 @@ jobs:
 
       - name: Upload site
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: target/site
 
@@ -80,7 +83,7 @@ jobs:
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       !github.event.repository.private
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       pages: write
       id-token: write
@@ -89,4 +92,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
