@@ -185,6 +185,27 @@ Export from the phone (**Copy JSON**, or **Download**), get the file onto the la
 just sweep path/to/sweep-20260908T103000.json
 ```
 
+**Past sweeps** live in `docs/data/capture-sweeps.tar.zst`, a ZSTA archive written by
+[zalt](https://github.com/TheRincon/zalt) — 1.5 MiB of logs in 46 KiB. `just sweep` with no
+argument lists them and `just sweep sweep2.json` reports one. To unpack them:
+
+```bash
+zalt archive extract docs/data/capture-sweeps.tar.zst -C out/              # all of them
+zalt archive extract docs/data/capture-sweeps.tar.zst sweep2.json -C out/  # just one
+zalt archive verify docs/data/capture-sweeps.tar.zst                       # every frame and hash
+```
+
+The archive is also an ordinary `.tar.zst`, so stock tools work too:
+`zstd -dc docs/data/capture-sweeps.tar.zst | tar -x`. To keep a new sweep, append it rather
+than committing the JSON:
+
+```bash
+zalt archive append docs/data/capture-sweeps.tar.zst sweep7.json
+```
+
+Without zalt, rebuild it with `tar -c sweep*.json | zstd -19 > capture-sweeps.tar.zst`:
+still a valid `.tar.zst` that `just sweep` reads, minus ZSTA's index and per-member hashes.
+
 The report gives, per run and per profile: success rate binned by captured pitch, success
 rate binned by obliquity, a stated working range, and the share of frames where nothing was
 found at all.

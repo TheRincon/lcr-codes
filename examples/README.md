@@ -6,7 +6,7 @@ Generated, not hand-made. Regenerate with:
 just gallery
 ```
 
-Each entry is a `.png` (12 device pixels per module, §13.1's preferred range), the same symbol as `.svg`, and the source `.json`. Every one is decoded before it is written, so anything here reads back to the JSON beside it.
+Each entry is a `.png` (12 device pixels per module, §13.1's preferred range), the same symbol as `.svg` and as a one-page [GDF](https://github.com/TheRincon/gdf) document (`.gdf`), and the source `.json`. Every one is decoded before it is written, so anything here reads back to the JSON beside it.
 
 Payloads travel as CBOR, not JSON — §9.4's "author in JSON, transmit CBOR". The two size columns are that conversion. **Layout** is how a symbol is found: **Ring** is finder-less (D17), located and described entirely by its §6.4 ring; **Finders** is the classic layout.
 
@@ -17,12 +17,12 @@ Payloads travel as CBOR, not JSON — §9.4's "author in JSON, transmit CBOR". T
 | Symbol | Profile | Layout | Version | Side | JSON | CBOR | What it is |
 |---|---|---|---|---|---|---|---|
 | [`contact`](contact.png) | C1 | Ring | v1 | 21×21 | 34 B | 26 B | The §6.1 worked example. |
-| [`location-fix`](location-fix.png) | C1 | Ring | v1 | 21×21 | 54 B | 39 B | A position with accuracy and a timestamp. |
+| [`location-fix`](location-fix.png) | C1 | Ring | v1 | 21×21 | 52 B | 39 B | A position with accuracy and a timestamp. |
 | [`allergen-profile`](allergen-profile.png) | C1 | Ring | v1 | 21×21 | 66 B | 53 B | Appendix A, written out as JSON rather than schema-coded — the size argument the schema registry (§11) exists to win back. |
 | [`device-pairing`](device-pairing.png) | C1 | Ring | v1 | 21×21 | 67 B | 52 B | Wi-Fi handoff with no network in between, which is §1.1 goal 1 exactly. |
 | [`membership`](membership.png) | C1 | Ring | v1 | 21×21 | 89 B | 61 B | Unsigned (§10.7): the holder asserts it, nobody attests it. |
 | [`device-config`](device-config.png) | C1 | Ring | v3 | 29×29 | 144 B | 114 B | Nested objects and a float array — provisioning a device off a screen. |
-| [`event-admission`](event-admission.png) | C1 | Ring | v2 | 25×25 | 144 B | 96 B | The shape that would carry a COSE signature (§10) in a deployment that needed one. |
+| [`event-admission`](event-admission.png) | C1 | Ring | v2 | 25×25 | 150 B | 102 B | The shape that would carry a COSE signature (§10) in a deployment that needed one. |
 
 ## The same payload at every profile
 
@@ -46,7 +46,7 @@ These are the same payloads as their ringed twins above.
 | Symbol | Profile | Layout | Version | Side | Ringed twin | JSON | CBOR |
 |---|---|---|---|---|---|---|---|
 | [`contact-no-border`](contact-no-border.png) | C1 | Finders | v2 | 25×25 | [v1 21×21](contact.png) | 34 B | 26 B |
-| [`event-admission-no-border`](event-admission-no-border.png) | C1 | Finders | v4 | 33×33 | [v2 25×25](event-admission.png) | 144 B | 96 B |
+| [`event-admission-no-border`](event-admission-no-border.png) | C1 | Finders | v4 | 33×33 | [v2 25×25](event-admission.png) | 150 B | 102 B |
 
 ## Reading one back
 
