@@ -112,7 +112,7 @@ Chrome and Safari enforce the same rule.
 
 ### `file://` will not work
 
-The page is an ES module and fetches its own wasm, so opening `web/index.html` directly
+The page is an ES module and fetches its own wasm, so opening `web/scan.html` directly
 from disk fails on module CORS before it reaches anything interesting. It must be served.
 
 ### JSPI absence is already handled — do not "fix" it
@@ -154,7 +154,7 @@ It additionally uses `decoder.probe`, so that a frame the decoder *found* but co
 decode still contributes its geometry rather than vanishing into an error string.
 
 All three load the **full** component rather than the scanner build. `display.html` obviously
-needs `encoder`; `index.html` needs `codec.cbor-to-json`, because §9.4 puts CBOR on the
+needs `encoder`; `scan.html` needs `codec.cbor-to-json`, because §9.4 puts CBOR on the
 wire and a phone showing a payload wants the JSON the sender authored. That function is
 kept out of the minimal scanner deliberately: §9.4's JSON writer and the CBOR value tree
 cost ~16 KB raw, which is 8% of §14.2's decode-only budget for a display convenience a

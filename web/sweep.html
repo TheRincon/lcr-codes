@@ -95,9 +95,18 @@
   .note { color: var(--dim); font-size: .8rem; margin-top: 1rem; }
   .note code, .note b { color: var(--ink); }
 </style>
+<link rel="stylesheet" href="nav.css">
 </head>
 <body>
 <div class="wrap">
+<nav class="lcr-nav" aria-label="LCR Code demos">
+  <a class="home" href="./">← LCR Code</a>
+  <a href="scan.html">Scan</a>
+  <a href="display.html">Display</a>
+  <a href="transfer.html">Send a file</a>
+  <a href="receive.html">Receive a file</a>
+  <a href="sweep.html" aria-current="page">Capture sweep</a>
+</nav>
   <h1>LCR Code capture sweep</h1>
   <p class="sub">Records every decode attempt against the geometry it was attempted at, so
     the working range comes out as measured data rather than an impression.</p>

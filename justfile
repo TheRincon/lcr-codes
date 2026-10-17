@@ -250,7 +250,7 @@ web-build:
     export PATH=/opt/homebrew/bin:$PATH
     just component _component-compare
     # The compare component, not the scanner: `display.html` needs `encoder` and now
-    # `compare` for the QR side-by-side, and `index.html` needs `codec.cbor-to-json` to
+    # `compare` for the QR side-by-side, and `scan.html` needs `codec.cbor-to-json` to
     # show a CBOR body as JSON. A shipping scanner would take `lcr-code-scanner.wasm` and
     # render host-side instead — and would carry no QR, which is why the comparison build
     # is a third artifact rather than a change to the other two.
@@ -260,18 +260,21 @@ web-build:
         --name lcr-code -o web/lcr --no-typescript
     cargo run -p lcr-decode --release --example frame -- web/frame.rgba
 
-# Assemble the GitHub Pages site into target/site: the demo pages plus the explainer.
+# Assemble the GitHub Pages site into target/site: the explainer as the front page, and
+# the demo pages beside it.
 #
-# The explainer keeps its repository layout — `docs/explainer.html` beside `docs/img/`, and
-# the one figure it reads from `../examples/` — so its relative links work unchanged and the
-# page needs no build step of its own.
-[doc("Assemble the GitHub Pages site (demo + explainer) into target/site.")]
+# The explainer is written in the repository as `docs/explainer.html`, beside `docs/img/`,
+# so it previews correctly from a checkout. Here it becomes `index.html` at the site root:
+# `docs/img/` moves up with it to `img/`, and its one `../examples/` figure is rewritten to
+# `examples/`. Its links to the demo pages are root-relative already (`scan.html`, …), so
+# they only resolve here — which is the point: the site is where the demos run.
+[doc("Assemble the GitHub Pages site (explainer + demos) into target/site.")]
 site: web-build
     rm -rf target/site
-    mkdir -p target/site/docs target/site/examples
+    mkdir -p target/site/examples
     cp -R web/. target/site/
-    cp docs/explainer.html target/site/docs/
-    cp -R docs/img target/site/docs/
+    sed 's#"\.\./examples/#"examples/#g' docs/explainer.html > target/site/index.html
+    cp -R docs/img target/site/
     cp examples/anatomy-c3.png target/site/examples/
     find target/site -name .DS_Store -delete
     @echo "  wrote target/site — serve with: python3 -m http.server -d target/site"
@@ -285,15 +288,16 @@ web port="8000":
     #!/usr/bin/env bash
     set -euo pipefail
     export PATH=/opt/homebrew/bin:$PATH
-    just web-build
+    just site
     echo
-    echo "  display:  http://localhost:{{port}}/display.html   (laptop)"
-    echo "  transfer: http://localhost:{{port}}/transfer.html  (laptop — file drop)"
-    echo "  receive:  http://localhost:{{port}}/receive.html   (phone — needs HTTPS, see \`just tunnel\`)"
-    echo "  sweep:    http://localhost:{{port}}/sweep.html     (phone — records trials)"
-    echo "  scanner:  http://localhost:{{port}}/               (phone — needs HTTPS)"
+    echo "  explainer: http://localhost:{{port}}/                (start here)"
+    echo "  display:   http://localhost:{{port}}/display.html    (laptop)"
+    echo "  transfer:  http://localhost:{{port}}/transfer.html   (laptop — file drop)"
+    echo "  scan:      http://localhost:{{port}}/scan.html       (phone — needs HTTPS, see \`just tunnel\`)"
+    echo "  receive:   http://localhost:{{port}}/receive.html    (phone — needs HTTPS)"
+    echo "  sweep:     http://localhost:{{port}}/sweep.html      (phone — records trials)"
     echo "  ^C to stop"
-    cd web && python3 -m http.server {{port}}
+    cd target/site && python3 -m http.server {{port}}
 
 # Serve the demo over an HTTPS tunnel, for the file-transfer pages.
 #
@@ -309,8 +313,8 @@ tunnel port="8000":
     set -euo pipefail
     export PATH=/opt/homebrew/bin:$PATH
     command -v cloudflared >/dev/null || { echo "cloudflared not found (brew install cloudflared)" >&2; exit 1; }
-    just web-build
-    ( cd web && python3 -m http.server {{port}} >/dev/null 2>&1 ) &
+    just site
+    ( cd target/site && python3 -m http.server {{port}} >/dev/null 2>&1 ) &
     server=$!
     trap 'kill $server 2>/dev/null || true' EXIT
     echo

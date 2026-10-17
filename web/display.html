@@ -119,11 +119,20 @@
   /* §13.1 wants integer device-pixel multiples; JS sets an exact size, so let it. */
   body.present canvas { max-width: none; }
 </style>
+<link rel="stylesheet" href="nav.css">
 </head>
 <body>
 <div class="wrap">
+<nav class="lcr-nav" aria-label="LCR Code demos">
+  <a class="home" href="./">← LCR Code</a>
+  <a href="scan.html">Scan</a>
+  <a href="display.html" aria-current="page">Display</a>
+  <a href="transfer.html">Send a file</a>
+  <a href="receive.html">Receive a file</a>
+  <a href="sweep.html">Capture sweep</a>
+</nav>
   <h1>LCR Code display</h1>
-  <p class="sub">Encodes on this device and draws the symbol at exact device pixels. Point the scanner page at it.</p>
+  <p class="sub">Encodes on this device and draws the symbol at exact device pixels. Point the <a href="scan.html">scanner page</a> at it, on another device.</p>
 
   <div class="cols">
     <div class="panel">

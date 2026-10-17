@@ -1,0 +1,35 @@
+/* The site bar shared by every demo page: back to the explainer, and across to the other
+   pages. Self-contained, so it does not depend on any one page's custom properties, and
+   hidden in a page's full-screen "present" mode so it never covers a symbol. */
+.lcr-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .35rem 1.1rem;
+  margin: 0 0 1.4rem;
+  padding: 0 0 .7rem;
+  border-bottom: 1px solid #2a3326;
+  font: 500 .78rem/1.4 ui-monospace, "IBM Plex Mono", Menlo, monospace;
+  letter-spacing: .02em;
+}
+.lcr-nav a {
+  color: #97a291;
+  text-decoration: none;
+  padding: .15rem 0;
+}
+.lcr-nav a:hover,
+.lcr-nav a:focus-visible { color: #e9eee4; }
+.lcr-nav a[aria-current="page"] {
+  color: #8bd377;
+  box-shadow: inset 0 -1px 0 #8bd377;
+}
+.lcr-nav .home {
+  color: #e9eee4;
+  font-weight: 600;
+  margin-right: auto;
+}
+body.present .lcr-nav { display: none; }
+
+/* Links in the pages' own copy: none of them styles `a`, and the browser default blue is
+   unreadable on their dark background. */
+.wrap p a { color: #8bd377; text-underline-offset: 2px; }
