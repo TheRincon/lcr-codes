@@ -245,8 +245,8 @@ struct EncodeArgs {
     /// How to interpret the input.
     #[arg(long = "as", value_enum, default_value_t = Kind::Auto)]
     kind: Kind,
-    /// Write the symbol here: `.png` or `.svg`. Without it, a preview prints to the
-    /// terminal.
+    /// Write the symbol here: `.png`, `.svg`, or `.gdf` (a one-page GDF document). Without
+    /// it, a preview prints to the terminal.
     #[arg(short, long)]
     output: Option<PathBuf>,
     /// Compression: auto tries each and keeps the smallest (§9.3).
@@ -337,10 +337,11 @@ fn encode(a: EncodeArgs) -> Result {
         .map(str::to_ascii_lowercase);
     let bytes = match ext.as_deref() {
         Some("svg") => lcr_render::render_svg(&sym, &ropts).into_bytes(),
+        Some("gdf") => lcr_render::render_gdf(&sym, &ropts).into_bytes(),
         Some("png") => lcr_render::render_png(&sym, &ropts),
         _ => {
             return Err(format!(
-                "{}: the output must end in .png or .svg",
+                "{}: the output must end in .png, .svg or .gdf",
                 out.display()
             ));
         }

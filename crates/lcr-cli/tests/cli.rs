@@ -50,6 +50,14 @@ fn json_round_trips_through_png_and_svg() {
     let svg = dir.join("sym.svg");
     ok(&["encode", "-d", json, "-o", s(&svg)]);
     assert!(std::fs::read_to_string(&svg).unwrap().contains("<svg"));
+
+    let gdf = dir.join("sym.gdf");
+    ok(&["encode", "-d", json, "-o", s(&gdf)]);
+    let doc = std::fs::read_to_string(&gdf).unwrap();
+    assert!(
+        doc.starts_with("%GDF-0.3\n") && doc.ends_with("[end]\n"),
+        "{doc}"
+    );
 }
 
 #[test]
@@ -127,7 +135,7 @@ fn failures_exit_non_zero_with_a_reason() {
     assert!(!out.status.success(), "below §13.1's 8 px floor");
 
     let out = lcr(&["encode", "-d", "x", "-o", s(&dir.join("x.gif"))]);
-    assert!(String::from_utf8_lossy(&out.stderr).contains(".png or .svg"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains(".png, .svg or .gdf"));
 }
 
 #[test]
