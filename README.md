@@ -1,9 +1,8 @@
 # LCR Code
 
-**L**uma / **C**hroma / **R**ing code — a colour 2D matrix symbology for **portable offline data
-transmission**. Structured, JSON-shaped payloads at higher density than a monochrome
-matrix code, read from a phone screen or from print, with no network involved at any
-point.
+**L**uma / **C**hroma / **R**ing code — a colour 2D matrix symbol for **portable offline data
+transmission**. Compressed CBOR payloads at higher density than a monochrome
+matrix (QR) code. No network needed.
 
 Reference implementation of [`lcr-code-spec-v0.4.md`](docs/lcr-code-spec-v0.4.md), in Rust,
 shipped as a **WebAssembly component**.
