@@ -1,6 +1,6 @@
 # LCR Code — implementation progress
 
-Reference implementation of [`lcr-code-spec-v0.4.md`](../lcr-code-spec-v0.4.md).
+Reference implementation of [`lcr-code-spec-v0.4.md`](lcr-code-spec-v0.4.md).
 
 **State:** encode and decode are both complete and round-trip end to end through a
 rendered image — and, as of 2026-09-04, **through a real iPhone camera pointed at a real
@@ -10,7 +10,7 @@ envelope is mapped as the success *rate* §15 asks for (`just envelope`). `lcr-w
 both paths as a **WebAssembly component** with a WIT interface (D8), in two builds:
 decode-only and full.
 
-**The capture sweep has been run** (2026-09-14, `docs/sweep1.json` + `docs/sweep2.json`,
+**The capture sweep has been run** (2026-09-14, `docs/data/sweep1.json` + `docs/data/sweep2.json`,
 4,207 trials). Its headline is that **holding the phone face-on, not distance, was the
 dominant failure mode** — see "First measured envelope" below. Every *other* envelope figure
 in this file still comes from the §15 harness, which is code.
@@ -637,9 +637,9 @@ addressed.
 
 ## First measured envelope — 2026-09-14
 
-`docs/sweep1.json` and `docs/sweep2.json`, 4,207 trials, single-frame, `C1` and `C3`, one
+`docs/data/sweep1.json` and `docs/data/sweep2.json`, 4,207 trials, single-frame, `C1` and `C3`, one
 iPhone against one laptop panel. **The first numbers in this project that did not come from
-the §15 harness.** Read with `just sweep docs/sweep2.json`.
+the §15 harness.** Read with `just sweep docs/data/sweep2.json`.
 
 ### The tilt target is obliquity 1.30–1.50, and an angle is the wrong way to say it
 

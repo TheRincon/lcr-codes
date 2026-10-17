@@ -5,7 +5,7 @@ transmission**. Structured, JSON-shaped payloads at higher density than a monoch
 matrix code, read from a phone screen or from print, with no network involved at any
 point.
 
-Reference implementation of [`lcr-code-spec-v0.4.md`](lcr-code-spec-v0.4.md), in Rust,
+Reference implementation of [`lcr-code-spec-v0.4.md`](docs/lcr-code-spec-v0.4.md), in Rust,
 shipped as a **WebAssembly component**.
 
 **Zero warnings.** `just test` runs the whole suite.
@@ -96,11 +96,44 @@ just web          # run the illustrative example, needs a concurrent "cloudflare
 ```
 
 Requires a Rust toolchain, plus [`just`](https://github.com/casey/just),
-[`wasm-tools`](https://github.com/bytecodealliance/wasm-tools) and `zstd`.
+[`wasm-tools`](https://github.com/bytecodealliance/wasm-tools), `zstd`, and
+[`cbindgen`](https://github.com/mozilla/cbindgen) (`cargo install --locked cbindgen`) for
+the C header check. On x86 and x86_64 the CLI's AVIF support also needs `nasm`.
 
 `just hooks` points git at `.githooks`, whose `pre-push` runs `just ci`. Pre-**push**
 rather than pre-commit on purpose: the gate builds two components and runs the suite in
 release mode, which is too slow to sit between `git commit` and your prompt.
+
+### From the command line
+
+```bash
+cargo install --path crates/lcr-cli          # installs `lcr`
+
+lcr encode -d '{"name":"Fred"}' -o fred.png  # JSON goes on the wire as CBOR
+lcr encode notes.txt                         # no -o: a preview in the terminal
+lcr decode photo.jpg                         # prints {"name":"Fred"}
+lcr decode --combine f1.png f2.png f3.png    # multi-frame (§12.4)
+lcr decode --json photo.jpg                  # payload plus diagnostics, as JSON
+lcr capacity                                 # bytes per version and profile
+
+lcr send report.pdf -o symbols/              # a file as a sequence of symbols
+lcr receive symbols/*.png                    # any order; names what is missing
+```
+
+`lcr decode` reads PNG, JPEG, WebP, JPEG XL and AVIF, chosen by the file's content rather
+than its name, all in pure Rust. Each format is a cargo feature, so a smaller build can
+drop what it does not need. HEIC (the iPhone camera's default), GIF, BMP, TIFF and camera
+RAW, JPEG 2000, PSD and PDF are recognised but not read: `lcr` names the format and prints
+the command that converts that file to PNG — `sips` on macOS, ImageMagick elsewhere.
+
+### From C
+
+`crates/lcr-ffi` builds `liblcr_ffi` (static and shared) with the header
+[`include/lcr.h`](crates/lcr-ffi/include/lcr.h): the same surface as the WebAssembly
+component, minus QR comparison. Every call returns a status, `lcr_last_error()` explains a
+failure, and everything the library returns has a matching `_free`.
+[`tests/smoke.c`](crates/lcr-ffi/tests/smoke.c) is the shortest complete example, and
+`just ffi-test` builds and runs it.
 
 ### From Rust
 
@@ -174,8 +207,8 @@ the compressed figure would report headroom that does not exist.
 | `lcr-wasm` | ✅ | The WIT component surface, plus tests run under wasmtime |
 | `lcr-verify` | ✅ | §10 offline verification: COSE_Sign1, CWT claims, ES256 + Ed25519. Optional |
 | `lcr-cft` | ✅ | CBOR File Transfer ([`docs/CFT.md`](docs/CFT.md)): chunked, hash-verified file transfer over any carrier, LCR Code symbols included |
-| `lcr-ffi` | ⬜ | C ABI for native embedders |
-| `lcr-cli` | ⬜ | Dev tool |
+| `lcr-ffi` | ✅ | C ABI: the component's surface as a static or shared library, with a generated header |
+| `lcr-cli` | ✅ | The `lcr` command: encode, decode, probe, capacity, and file transfer from images |
 | `xtask` | ✅ | Table generation that must call into the crates |
 
 Signing is **opt-in and not the point** (§1.2). Most payloads are expected to be unsigned
@@ -223,12 +256,12 @@ carries an explicit patent grant.
 Unless you state otherwise, any contribution you submit for inclusion is offered under the
 same three licences, with no additional terms.
 
-The specification, [`lcr-code-spec-v0.4.md`](lcr-code-spec-v0.4.md), is published under the
+The specification, [`lcr-code-spec-v0.4.md`](docs/lcr-code-spec-v0.4.md), is published under the
 [Open Web Foundation Final Specification Agreement 1.0](https://www.openwebfoundation.org/the-agreements/the-owf-1-0-agreements-granted-claims/owfa-1-0),
 which covers the text and gives implementers a royalty-free patent commitment. The author
 holds no patents on the format and pledges never to assert any against a conforming
 implementation.
 
-See [Appendix B](lcr-code-spec-v0.4.md#appendix-b--prior-art-and-licensing) of the spec for
+See [Appendix B](docs/lcr-code-spec-v0.4.md#appendix-b--prior-art-and-licensing) of the spec for
 prior art — JAB Code, HCCB, and the EU DCC's COSE/CWT container — and read it before
 publishing anything commercial.

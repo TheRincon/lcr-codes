@@ -1,0 +1,26 @@
+# `just ffi-header` regenerates include/lcr.h from src/lib.rs with this config, and
+# `just ffi-header-check` (in `just ci`) fails if the committed header has drifted.
+
+language = "C"
+cpp_compat = true
+include_guard = "LCR_H"
+documentation = true
+documentation_style = "c99"
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+no_includes = true
+usize_is_size_t = true
+style = "type"
+
+header = """
+/*
+ * LCR Code — C API.
+ *
+ * Generated from crates/lcr-ffi/src/lib.rs by `just ffi-header`. Do not edit; edit the
+ * Rust source and regenerate. Conventions (status codes, ownership, threads) are in the
+ * crate documentation at the top of that file.
+ *
+ * SPDX-License-Identifier: MIT OR Apache-2.0 OR Unlicense
+ */"""
+
+[export]
+include = ["LcrStatus"]

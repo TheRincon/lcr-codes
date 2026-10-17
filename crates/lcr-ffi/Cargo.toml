@@ -1,7 +1,25 @@
 [package]
 name = "lcr-ffi"
+description = "C ABI for LCR Code: decode, encode, multi-frame combining and CBOR File Transfer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[lib]
+# `staticlib` and `cdylib` are what a C host links; `rlib` lets the Rust tests in
+# `tests/` call the exported functions directly, through the same ABI a C caller uses.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+# Feature-for-feature what the `lcr-code` component carries, so a native host and a wasm
+# host read and write exactly the same symbols and transfers.
+lcr-core = { workspace = true, features = ["std", "deflate"] }
+lcr-decode = { workspace = true, features = ["std", "deflate"] }
+lcr-encode = { workspace = true, features = ["std", "deflate"] }
+lcr-render = { workspace = true, features = ["std"] }
+# Deflate only, not the crate's default zstd. A transfer written here must be readable by
+# the browser build, which cannot have zstd (see `cft` in crates/lcr-wasm/wit/lcr.wit), and
+# leaving zstd out also keeps a C compiler out of this crate's build.
+lcr-cft = { workspace = true, features = ["std", "deflate"] }
