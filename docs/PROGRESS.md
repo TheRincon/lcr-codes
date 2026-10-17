@@ -641,7 +641,6 @@ addressed.
 iPhone against one laptop panel. **The first numbers in this project that did not come from
 the §15 harness.** Read with `just sweep sweep2.json`.
 
-
 ### The tilt target is obliquity 1.30–1.50, and an angle is the wrong way to say it
 
 Pooled over **1,549 `C1` trials** from sweeps 1–4 (`docs/sweep{1,2,3,4}.json`):

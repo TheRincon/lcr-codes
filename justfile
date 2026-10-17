@@ -586,9 +586,28 @@ debruijn-table:
 # decode attempt against the geometry it was attempted at. This is the only measurement in
 # the project that is not self-referential: every other figure comes from the §15 harness,
 # which is code. See docs/capture-sweep.md for how to run one.
+#
+# `log` is a path to a fresh log, or the name of one already archived in
+# docs/data/capture-sweeps.tar.zst (`just sweep sweep2.json`); with no argument this lists
+# the archive. The archive is a ZSTA file written by zalt, but it is an ordinary .tar.zst,
+# so it is read here with stock `zstd` and `tar` — reading it needs nothing zalt-specific.
 [doc("Reduce a capture-sweep log from web/sweep.html to success rate vs geometry.")]
-sweep log:
-    @cargo run --release -q -p xtask -- sweep {{log}}
+sweep log="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    archive=docs/data/capture-sweeps.tar.zst
+    log="{{log}}"
+    if [ -z "$log" ]; then
+        echo "usage: just sweep <log.json | archived name>; archived sweeps:"
+        zstd -dc "$archive" | tar -tf - | sed 's/^/  /'
+        exit 0
+    fi
+    if [ ! -f "$log" ]; then
+        mkdir -p target/sweeps
+        zstd -dc "$archive" | tar -xf - -C target/sweeps "$log"
+        log="target/sweeps/$log"
+    fi
+    cargo run --release -q -p xtask -- sweep "$log"
 
 # Search for the §4 palette constants against the sRGB gamut (open decisions #1 and #2).
 #

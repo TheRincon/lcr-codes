@@ -1,5 +1,5 @@
-//! Generate the `examples/` gallery: real symbols for representative payloads, plus an
-//! index recording what each one is and what it cost.
+//! Generate the `examples/` gallery: real symbols for representative payloads, as PNG, SVG
+//! and GDF, plus an index recording what each one is and what it cost.
 //!
 //! `cargo run -p lcr-render --release --example gallery -- examples`
 //!
@@ -9,7 +9,7 @@
 use lcr_core::{ContentType, Packet, Profile};
 use lcr_decode::Decoder;
 use lcr_encode::EncodeOptions;
-use lcr_render::{RenderOptions, render_png, render_rgb, render_svg};
+use lcr_render::{RenderOptions, render_gdf, render_png, render_rgb, render_svg};
 
 /// Payloads spanning the §11 candidate schema families, at the sizes they occur at.
 const PAYLOADS: &[(&str, &str, &str)] = &[
@@ -154,6 +154,7 @@ fn write_one(dir: &str, name: &str, json: &str, what: &str, profile: Profile, bo
 
     std::fs::write(format!("{dir}/{name}.png"), render_png(&sym, &render_opts)).unwrap();
     std::fs::write(format!("{dir}/{name}.svg"), render_svg(&sym, &render_opts)).unwrap();
+    std::fs::write(format!("{dir}/{name}.gdf"), render_gdf(&sym, &render_opts)).unwrap();
     std::fs::write(format!("{dir}/{name}.json"), json).unwrap();
 
     println!(
@@ -199,8 +200,9 @@ fn write_index(dir: &str, rows: &[Row]) {
         "Generated, not hand-made. Regenerate with:\n\n\
          ```\njust gallery\n```\n\n\
          Each entry is a `.png` (12 device pixels per module, §13.1's preferred range), \
-         the same symbol as `.svg`, and the source `.json`. Every one is decoded before \
-         it is written, so anything here reads back to the JSON beside it.\n\n\
+         the same symbol as `.svg` and as a one-page [GDF](https://github.com/TheRincon/gdf) \
+         document (`.gdf`), and the source `.json`. Every one is decoded before it is \
+         written, so anything here reads back to the JSON beside it.\n\n\
          Payloads travel as CBOR, not JSON — §9.4's \"author in JSON, transmit CBOR\". \
          The two size columns are that conversion. **Layout** is how a symbol is found: \
          **Ring** is finder-less (D17), located and described entirely by its §6.4 ring; \
