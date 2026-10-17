@@ -274,54 +274,126 @@ pub fn render_rgb(symbol: &Symbol, opts: &RenderOptions) -> Raster {
     }
 }
 
-/// Render a symbol as a standalone SVG document.
+/// The whole canvas as a palette and one index per cell: the shape every vector writer in
+/// this crate starts from.
 ///
-/// Runs of identical colour within a module row are merged into one `<rect>`, which
-/// typically cuts the file size by 3–5× on real symbols and costs nothing to do.
-pub fn render_svg(symbol: &Symbol, opts: &RenderOptions) -> String {
-    let canvas = Canvas::of(symbol);
-    let palette = symbol.palette();
-    let px = opts.module_px.max(1);
-    let n = canvas.modules();
-    let size = n as u32 * px;
+/// A colour symbol is close to noise — on a typical C1 symbol three runs in four are a
+/// single module, and no run spans two rows — so describing it as *shapes* costs bytes per
+/// module however the shapes are merged. What compacts is naming each colour once and
+/// pointing at it. [`render_svg`] and [`render_gdf`] both do that, and draw the commonest
+/// colour as one background rectangle so its cells cost nothing at all.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CellGrid {
+    /// Canvas side in modules, quiet zone and border included.
+    pub side: u16,
+    /// Every colour on the canvas, commonest first; ties keep first appearance in raster
+    /// order, so the result is deterministic.
+    pub colors: Vec<Srgb8>,
+    /// Row-major indices into `colors`, `side × side` of them.
+    pub cells: Vec<u8>,
+}
 
-    let mut s = String::with_capacity(4096);
-    s.push_str(&format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{size}\" height=\"{size}\" \
-         viewBox=\"0 0 {n} {n}\" shape-rendering=\"crispEdges\">\n"
-    ));
-    s.push_str(&format!(
-        "<rect width=\"{n}\" height=\"{n}\" fill=\"#{:06X}\"/>\n",
-        opts.quiet_color.to_hex()
-    ));
+impl CellGrid {
+    /// Sample every canvas cell of `symbol`.
+    pub fn of(symbol: &Symbol, opts: &RenderOptions) -> CellGrid {
+        let canvas = Canvas::of(symbol);
+        let palette = symbol.palette();
+        let side = canvas.modules();
+        let raw: Vec<Srgb8> = (0..side)
+            .flat_map(|cy| (0..side).map(move |cx| (cx, cy)))
+            .map(|(cx, cy)| canvas_color(symbol, &canvas, &palette, opts, cx, cy))
+            .collect();
 
-    for cy in 0..n {
-        let mut run_start = 0u16;
-        let mut run_color = canvas_color(symbol, &canvas, &palette, opts, 0, cy);
-        for cx in 1..=n {
-            let c = if cx < n {
-                Some(canvas_color(symbol, &canvas, &palette, opts, cx, cy))
-            } else {
-                None
-            };
-            if c != Some(run_color) {
-                if run_color != opts.quiet_color {
-                    s.push_str(&format!(
-                        "<rect x=\"{run_start}\" y=\"{cy}\" width=\"{}\" height=\"1\" fill=\"#{:06X}\"/>\n",
-                        cx - run_start,
-                        run_color.to_hex()
-                    ));
-                }
-                run_start = cx;
-                if let Some(c) = c {
-                    run_color = c;
-                }
+        let mut seen: Vec<(Srgb8, usize)> = Vec::new();
+        for c in &raw {
+            match seen.iter_mut().find(|(s, _)| s == c) {
+                Some((_, n)) => *n += 1,
+                None => seen.push((*c, 1)),
             }
         }
+        // Stable, so equal counts keep first appearance.
+        seen.sort_by_key(|&(_, n)| core::cmp::Reverse(n));
+        let colors: Vec<Srgb8> = seen.into_iter().map(|(c, _)| c).collect();
+        let cells = raw
+            .iter()
+            .map(|c| colors.iter().position(|k| k == c).unwrap_or(0) as u8)
+            .collect();
+        CellGrid {
+            side,
+            colors,
+            cells,
+        }
     }
-    s.push_str("</svg>\n");
+
+    /// Horizontal runs of colour `index`, as `(x, y, length)` in row-major order.
+    pub fn runs(&self, index: u8) -> impl Iterator<Item = (u16, u16, u16)> + '_ {
+        let n = self.side as usize;
+        (0..n).flat_map(move |y| {
+            let row = &self.cells[y * n..(y + 1) * n];
+            let mut out = Vec::new();
+            let mut x = 0;
+            while x < n {
+                if row[x] == index {
+                    let start = x;
+                    while x < n && row[x] == index {
+                        x += 1;
+                    }
+                    out.push((start as u16, y as u16, (x - start) as u16));
+                } else {
+                    x += 1;
+                }
+            }
+            out
+        })
+    }
+}
+
+/// Render a symbol as a standalone SVG document.
+///
+/// One `<path>` per colour, each run drawn as a horizontal stroke one module wide with
+/// relative moves — `m4 0h2` rather than a `<rect>` that restates its colour. The
+/// commonest colour is a single background rectangle. On real symbols this is about 8×
+/// smaller than one rectangle per run, and every SVG renderer draws it exactly: strokes
+/// have butt caps, so each run covers precisely its cells.
+pub fn render_svg(symbol: &Symbol, opts: &RenderOptions) -> String {
+    use core::fmt::Write;
+    let grid = CellGrid::of(symbol, opts);
+    let n = grid.side;
+    let size = n as u32 * opts.module_px.max(1);
+
+    let mut s = String::with_capacity(4096);
+    let _ = writeln!(
+        s,
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{size}\" height=\"{size}\" \
+         viewBox=\"0 0 {n} {n}\" shape-rendering=\"crispEdges\">"
+    );
+    let _ = writeln!(
+        s,
+        "<rect width=\"{n}\" height=\"{n}\" fill=\"#{:06X}\"/>",
+        grid.colors[0].to_hex()
+    );
+    // Strokes are centred on their path, so half a module down puts each one exactly
+    // over its row while every coordinate stays an integer.
+    s.push_str("<g transform=\"translate(0 .5)\">\n");
+    for (i, color) in grid.colors.iter().enumerate().skip(1) {
+        let _ = write!(s, "<path stroke=\"#{:06X}\" d=\"", color.to_hex());
+        let mut at: Option<(i32, i32)> = None;
+        for (x, y, len) in grid.runs(i as u8) {
+            let (x, y) = (x as i32, y as i32);
+            let _ = match at {
+                None => write!(s, "M{x} {y}h{len}"),
+                Some((px, py)) => write!(s, "m{} {}h{len}", x - px, y - py),
+            };
+            at = Some((x + len as i32, y));
+        }
+        s.push_str("\"/>\n");
+    }
+    s.push_str("</g>\n</svg>\n");
     s
 }
+
+mod gdf;
+pub use gdf::render_gdf;
 
 /// Encode a raster as a PNG.
 ///
@@ -527,28 +599,170 @@ mod tests {
         assert!(RenderOptions::print().module_px >= 8);
     }
 
-    #[test]
-    fn svg_is_well_formed_and_covers_the_canvas() {
-        let sym = sample(Profile::C1, true);
-        let svg = render_svg(&sym, &RenderOptions::screen());
-        assert!(svg.starts_with("<svg"));
-        assert!(svg.trim_end().ends_with("</svg>"));
-        assert_eq!(svg.matches("<rect").count(), svg.matches("/>").count());
-        let n = Canvas::of(&sym).modules();
-        assert!(svg.contains(&format!("viewBox=\"0 0 {n} {n}\"")));
+    /// Paint a `side × side` grid from horizontal runs: the background, then each run.
+    /// What both vector writers are read back through — a run in the wrong place, of the
+    /// wrong length or in the wrong colour shows up as a cell that disagrees.
+    fn paint(side: usize, bg: u32, runs: &[(u32, i64, i64, i64)]) -> Vec<u32> {
+        let mut g = vec![bg; side * side];
+        for &(color, x, y, len) in runs {
+            assert!(len > 0 && x >= 0 && y >= 0 && x + len <= side as i64 && y < side as i64);
+            for i in 0..len {
+                g[y as usize * side + (x + i) as usize] = color;
+            }
+        }
+        g
+    }
+
+    fn expected(sym: &Symbol, opts: &RenderOptions) -> (usize, Vec<u32>) {
+        let grid = CellGrid::of(sym, opts);
+        let cells = grid
+            .cells
+            .iter()
+            .map(|&i| grid.colors[i as usize].to_hex())
+            .collect();
+        (grid.side as usize, cells)
+    }
+
+    /// Read `M`/`m`/`h` path data back into `(x, y, len)` runs, in modules.
+    ///
+    /// `start` is where a leading `m` is measured from; `shift` is added to the y of an
+    /// absolute `M` (an enclosing transform); `unit` is one module in the file's units.
+    /// Strokes sit on the row's centre line, so a run's row is `(y - unit/2) / unit`.
+    fn runs_of(d: &str, start: (f64, f64), shift: f64, unit: f64) -> Vec<(i64, i64, i64)> {
+        let (mut x, mut y) = start;
+        let mut out = Vec::new();
+        let mut rest = d;
+        while let Some(op) = rest.chars().next() {
+            let end = rest[1..]
+                .find(['M', 'm', 'h'])
+                .map_or(rest.len(), |i| i + 1);
+            let nums: Vec<f64> = rest[1..end]
+                .split(' ')
+                .map(|n| n.parse().unwrap())
+                .collect();
+            match op {
+                'M' => (x, y) = (nums[0], nums[1] + shift),
+                'm' => (x, y) = (x + nums[0], y + nums[1]),
+                'h' => {
+                    let to_module = |v: f64| (v / unit).round() as i64;
+                    out.push((to_module(x), to_module(y - unit / 2.0), to_module(nums[0])));
+                    x += nums[0];
+                }
+                _ => panic!("unexpected path command {op}"),
+            }
+            rest = &rest[end..];
+        }
+        out
+    }
+
+    fn attr<'a>(s: &'a str, key: &str) -> &'a str {
+        let at = s.find(key).unwrap() + key.len();
+        let end = s[at..].find(['"', ' ']).unwrap();
+        &s[at..at + end]
+    }
+
+    fn hex(s: &str) -> u32 {
+        u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap()
     }
 
     #[test]
-    fn svg_merges_runs() {
-        let sym = sample(Profile::M, false);
+    fn svg_paints_exactly_the_canvas() {
+        for (profile, border) in [
+            (Profile::C1, true),
+            (Profile::C3, true),
+            (Profile::M, false),
+        ] {
+            let sym = sample(profile, border);
+            let opts = RenderOptions::screen();
+            let svg = render_svg(&sym, &opts);
+            assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"));
+            let (n, want) = expected(&sym, &opts);
+            assert!(svg.contains(&format!("viewBox=\"0 0 {n} {n}\"")));
+
+            let bg = hex(attr(&svg, "fill=\""));
+            let mut runs = Vec::new();
+            for line in svg.lines().filter(|l| l.starts_with("<path")) {
+                let color = hex(attr(line, "stroke=\""));
+                let d = &line[line.find("d=\"").unwrap() + 3..line.rfind('"').unwrap()];
+                // The group's translate(0 .5) puts each stroke on its row's centre.
+                for (x, y, len) in runs_of(d, (0.0, 0.0), 0.5, 1.0) {
+                    runs.push((color, x, y, len));
+                }
+            }
+            assert_eq!(paint(n, bg, &runs), want, "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn svg_is_compact() {
+        let sym = sample(Profile::C1, true);
         let svg = render_svg(&sym, &RenderOptions::screen());
-        let rects = svg.matches("<rect").count();
-        let cells = Canvas::of(&sym).modules() as usize;
+        let cells = (Canvas::of(&sym).modules() as usize).pow(2);
+        // One <rect> per run was ~30 bytes per cell; stroked runs are well under 5.
         assert!(
-            rects < cells * cells / 2,
-            "{rects} rects for {} cells",
-            cells * cells
+            svg.len() < cells * 5,
+            "{} bytes for {cells} cells",
+            svg.len()
         );
+        // Each colour is named once, never per run.
+        let grid = CellGrid::of(&sym, &RenderOptions::screen());
+        assert_eq!(svg.matches("<path").count(), grid.colors.len() - 1);
+    }
+
+    #[test]
+    fn gdf_paints_exactly_the_canvas() {
+        // 10 is the screen default; 9 makes the row centre a half px, exercising `.5`.
+        for module_px in [10, 9] {
+            for (profile, border) in [(Profile::C1, true), (Profile::C2, false)] {
+                let sym = sample(profile, border);
+                let opts = RenderOptions {
+                    module_px,
+                    ..RenderOptions::screen()
+                };
+                let gdf = render_gdf(&sym, &opts);
+                assert!(gdf.starts_with("%GDF-0.3\n\n[meta]\n"));
+                assert!(gdf.ends_with("\n[end]\n"));
+                let (n, want) = expected(&sym, &opts);
+                let page = n as u32 * module_px;
+                assert!(gdf.contains(&format!("[page 1 size:{page}x{page}]")));
+
+                let style = |name: &str| -> u32 {
+                    let line = gdf
+                        .lines()
+                        .find(|l| l.starts_with(&format!("  paint {name} ")))
+                        .unwrap();
+                    let c = line.split(':').nth(1).unwrap().split(' ').next().unwrap();
+                    assert_eq!(c, c.to_lowercase(), "GDF colours are lower-case");
+                    hex(c)
+                };
+                let bg = style(attr(
+                    gdf.lines().find(|l| l.starts_with("  rect")).unwrap(),
+                    "s:",
+                ));
+                let mut runs = Vec::new();
+                for line in gdf.lines().filter(|l| l.starts_with("  path")) {
+                    let color = style(attr(line, "s:"));
+                    let at = attr(line, "at:");
+                    let (ax, ay) = at.split_once(",+").unwrap();
+                    let d = &line[line.find('"').unwrap() + 1..line.len() - 1];
+                    let unit = module_px as f64;
+                    let start = (ax.parse().unwrap(), ay.parse().unwrap());
+                    for (x, y, len) in runs_of(d, start, 0.0, unit) {
+                        runs.push((color, x, y, len));
+                    }
+                }
+                assert_eq!(paint(n, bg, &runs), want, "{profile:?} at {module_px} px");
+            }
+        }
+    }
+
+    #[test]
+    fn gdf_halves_are_valid_numbers() {
+        assert_eq!(gdf::half(8), "4");
+        assert_eq!(gdf::half(9), "4.5");
+        assert_eq!(gdf::half(-1), "-0.5");
+        assert_eq!(gdf::half(-8), "-4");
+        assert_eq!(gdf::half(0), "0");
     }
 
     #[cfg(feature = "png")]

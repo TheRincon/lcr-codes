@@ -110,6 +110,7 @@ release mode, which is too slow to sit between `git commit` and your prompt.
 cargo install --path crates/lcr-cli          # installs `lcr`
 
 lcr encode -d '{"name":"Fred"}' -o fred.png  # JSON goes on the wire as CBOR
+lcr encode -d '{"name":"Fred"}' -o fred.gdf  # or .svg; .gdf is a one-page GDF document
 lcr encode notes.txt                         # no -o: a preview in the terminal
 lcr decode photo.jpg                         # prints {"name":"Fred"}
 lcr decode --combine f1.png f2.png f3.png    # multi-frame (§12.4)
