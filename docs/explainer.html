@@ -11,7 +11,7 @@
   img { max-width: 100%; }
   [hidden] { display: none !important; }
 </style>
-<title>Luma and Chroma</title>
+<title>LCR Code</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500&display=swap">
@@ -48,7 +48,6 @@
   :root:not([data-theme="light"]) {
     --paper:     #0C100A;
     --surface:   #151A12;
-    --sunk:      #1B211७;
     --sunk:      #1B2117;
     --ink:       #E9EEE4;
     --ink-soft:  #A3AC9C;
@@ -138,6 +137,69 @@ h1 .ch { color: var(--chroma-dark); }
   color: var(--ink-soft);
   margin: 0;
   font-weight: 300;
+}
+
+/* ---------- site bar and demos ---------- */
+
+.sitenav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .35rem 1.2rem;
+  padding: 1.1rem 0 .8rem;
+  border-bottom: 1px solid var(--rule);
+  font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  font-size: .78rem;
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+.sitenav a { color: var(--ink-soft); text-decoration: none; }
+.sitenav a:hover, .sitenav a:focus-visible { color: var(--accent); }
+.sitenav .home { color: var(--ink); font-weight: 600; margin-right: auto; }
+
+.tryit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 0 0 1.25rem;
+}
+.demo {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  padding: 1.15rem 1.25rem 1.2rem;
+}
+.demo h3 { margin: 0 0 .4rem; }
+.demo p {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-size: .9rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin: 0 0 .9rem;
+}
+.steps { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.steps a {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .82rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--surface);
+  background: var(--accent);
+  padding: .4rem .75rem;
+  border-radius: 4px;
+}
+.steps a:hover, .steps a:focus-visible { background: var(--accent-dim); }
+.steps .then {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .75rem;
+  color: var(--ink-faint);
+}
+.tryfoot {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  font-size: .85rem;
+  color: var(--ink-soft);
+  max-width: var(--wide);
 }
 
 /* ---------- sections ---------- */
@@ -387,11 +449,42 @@ td.lo { color: var(--ink-faint); }
 
 <div class="wrap">
 
+<nav class="sitenav" aria-label="LCR Code">
+  <a class="home" href="./">LCR Code</a>
+  <a href="#try">Try it</a>
+  <a href="scan.html">Scan</a>
+  <a href="display.html">Display</a>
+  <a href="transfer.html">Send a file</a>
+  <a href="receive.html">Receive a file</a>
+  <a href="https://github.com/TheRincon/lcr-codes">Source</a>
+</nav>
+
 <header class="masthead">
   <p class="eyebrow">LCR Code · how the format works</p>
   <h1>Reading with <span class="lu">brightness</span> and <span class="ch">colour</span> at the same time</h1>
   <p class="standfirst">An LCR Code carries two independent messages in one picture. One is written in light and dark, the other in green and magenta. Here is what that means, why it is worth doing, and what makes it fail.</p>
 </header>
+
+<section id="try">
+  <div class="shead"><span class="snum">00</span><h2>Try it</h2></div>
+
+  <p class="lead">These demos run in your browser — the encoder and decoder are WebAssembly, and nothing is uploaded. Each demo takes two devices: one shows a symbol, the other points a camera at it.</p>
+
+  <div class="tryit">
+    <div class="demo">
+      <h3>One symbol</h3>
+      <p>Type some JSON on a laptop and it becomes a symbol, drawn beside the QR code that would carry the same bytes. Scan it with a phone and the JSON comes back.</p>
+      <div class="steps"><a href="display.html">Display</a><span class="then">then, on a phone →</span><a href="scan.html">Scan</a></div>
+    </div>
+    <div class="demo">
+      <h3>A whole file</h3>
+      <p>Drop a file on the sender and it is compressed and shown as symbols. The receiver collects them in any order, checks the file's hash, and hands it back.</p>
+      <div class="steps"><a href="transfer.html">Send</a><span class="then">then, on a phone →</span><a href="receive.html">Receive</a></div>
+    </div>
+  </div>
+
+  <p class="tryfoot">The camera pages need a phone browser with camera access; GitHub Pages serves them over HTTPS, which browsers require for that. <a href="sweep.html">Capture sweep</a> is the measurement tool behind the success rates quoted on this page.</p>
+</section>
 
 <section>
   <div class="shead"><span class="snum">01</span><h2>Start with the grid</h2></div>

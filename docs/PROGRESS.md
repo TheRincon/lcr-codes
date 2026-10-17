@@ -361,7 +361,7 @@ D24/D25 against real defocus. The harness's blur is a box and its glare is neutr
 ## First real-world decode — 2026-09-04
 
 **A laptop screen displayed a symbol and an iPhone decoded it**, through `web/display.html`
-and `web/index.html` over a `cloudflared` tunnel. Until this point nothing in the project
+and `web/index.html` (now `web/scan.html`) over a `cloudflared` tunnel. Until this point nothing in the project
 had ever seen a photograph: every figure — the operating envelope, the profile comparison,
 D10's rate validation, D11's `C3` redesign — came from the §15 harness, which is code, and
 which had two of its own bugs fixed the same week (the quiet-zone clipping and the
