@@ -99,9 +99,11 @@ Requires a Rust toolchain, plus [`just`](https://github.com/casey/just),
 [`cbindgen`](https://github.com/mozilla/cbindgen) (`cargo install --locked cbindgen`) for
 the C header check. On x86 and x86_64 the CLI's AVIF support also needs `nasm`.
 
-`just hooks` points git at `.githooks`, whose `pre-push` runs `just ci`. Pre-**push**
-rather than pre-commit on purpose: the gate builds two components and runs the suite in
-release mode, which is too slow to sit between `git commit` and your prompt.
+`just hooks` points git at `.githooks`, whose `pre-push` runs `just pre-push`: formatting,
+clippy and the test suite. GitHub Actions runs the full `just ci` on every push, adding the
+debug-assertion pass, the wasm size gate and the C API checks. Pre-**push** rather than
+pre-commit on purpose: the suite builds two components and runs optimised, which is too
+slow to sit between `git commit` and your prompt.
 
 ### From the command line
 
