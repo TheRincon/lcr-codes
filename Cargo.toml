@@ -49,6 +49,20 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
+# The test suite: `release` optimisation without `release`'s link-time work.
+#
+# `release` is fat LTO with one codegen unit — right for what ships, and slow to build.
+# `cargo test --release` pays that once per test binary, and the workspace has dozens of
+# them, several pulling in wasmtime or the CLI's image decoders. Tests need optimised code
+# (the §15 sweeps take minutes unoptimised), not whole-program inlining, so this keeps
+# opt-level 3 and drops the rest. Everything that ships, and every size the wasm gate
+# measures, still builds with `release` or `wasm-min`.
+[profile.release-tests]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
 # Size-tuned profile used for the wasm scanner bundle (§14.2).
 [profile.wasm-min]
 inherits = "release"

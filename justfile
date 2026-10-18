@@ -53,6 +53,16 @@ _default:
 # runs is not a gate.
 ci: fmt-check clippy test test-debug wasm-size check-compare ffi-header-check ffi-test
 
+# What `.githooks/pre-push` runs: the checks that fail most, at a cost you will sit
+# through before every push.
+#
+# A subset of `ci`, deliberately. The steps left out — the debug-assertion pass, the wasm
+# size gate, the compare component, the C header and C smoke test — are slow and rarely
+# the thing that broke, and GitHub Actions runs every one of them on each push and pull
+# request. Make `just ci` a required check on `main` and nothing unchecked can merge.
+[doc("The fast gate the pre-push hook runs: fmt-check, clippy, test.")]
+pre-push: fmt-check clippy test
+
 # Type-check the comparison component.
 #
 # `test` exercises the `compare` feature on the *host*, and `wasm-size` builds only the two
@@ -81,20 +91,20 @@ deny:
 
 # The whole test suite, including the component under wasmtime.
 test: component
-    cargo test --workspace --release
+    cargo test --workspace --profile release-tests
     # `qr` and `compare` are off by default so no shipped artifact carries QR, which also
     # means the default run never builds their tests. Run them explicitly: the QR round
     # trip against an independent decoder is the only thing standing behind both the
     # density comparison and §17.2 dual-render.
-    cargo test -p lcr-render --release --features qr qr::
-    cargo test -p lcr-wasm --release --features compare
+    cargo test -p lcr-render --profile release-tests --features qr qr::
+    cargo test -p lcr-wasm --profile release-tests --features compare
 
 # Exercise `debug_assert!`, which the release suite above compiles out.
 #
 # This is not redundant with `test`. Release builds strip every `debug_assert!`, so a
 # release-only suite cannot see them — and one of them was failing unnoticed: the §4.2
 # reachability check in `lcr-core/src/palette.rs` had been red since the palettes were
-# pinned, because `just test` is the only command anyone runs and it passes `--release`.
+# pinned, because `just test` is the only command anyone runs and it builds optimised.
 #
 # `--lib` rather than the whole suite: the assertions sit in crate internals that the
 # unit tests reach directly, while the integration suites are dominated by the §15
@@ -105,8 +115,8 @@ test-debug:
 
 # Just the native tests, skipping the component build. Faster inner loop.
 test-fast:
-    cargo test --workspace --release --exclude lcr-wasm
-    cargo test -p lcr-wasm --release --test surface
+    cargo test --workspace --profile release-tests --exclude lcr-wasm
+    cargo test -p lcr-wasm --profile release-tests --test surface
 
 # Build everything, including examples and tests, and fail on any warning.
 build:
@@ -392,13 +402,16 @@ ffi-header-check:
 ffi-test:
     #!/usr/bin/env bash
     set -euo pipefail
-    libs=$(cargo rustc -p lcr-ffi --release --lib --crate-type staticlib -- --print native-static-libs 2>&1 \
+    # `--color never`: CI sets CARGO_TERM_COLOR=always, and a colour reset appended to the
+    # last flag (`-lc\e[0m`) is a library no linker can find.
+    libs=$(cargo rustc -p lcr-ffi --profile release-tests --color never --lib --crate-type staticlib \
+        -- --print native-static-libs 2>&1 \
         | sed -n 's/.*native-static-libs: //p' | tail -1)
     # macOS: the driver links libSystem itself, and naming it again only draws an ld warning.
     libs=${libs//-lSystem/}
     mkdir -p target/ffi
     cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -Icrates/lcr-ffi/include \
-        crates/lcr-ffi/tests/smoke.c target/release/liblcr_ffi.a $libs -o target/ffi/smoke
+        crates/lcr-ffi/tests/smoke.c target/release-tests/liblcr_ffi.a $libs -o target/ffi/smoke
     ./target/ffi/smoke
 
 # ---------------------------------------------------------------- artifacts
@@ -627,7 +640,7 @@ palette:
 # Point git at the tracked hooks. Run once per clone.
 hooks:
     git config core.hooksPath .githooks
-    @echo '  hooks installed — .githooks/pre-push runs: just ci'
+    @echo '  hooks installed — .githooks/pre-push runs: just pre-push (CI runs: just ci)'
 
 # ---------------------------------------------------------------- housekeeping
 
