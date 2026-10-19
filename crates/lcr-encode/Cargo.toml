@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["barcode", "2d-barcode", "encoder", "color", "lcr-code"]
+categories = ["encoding", "multimedia::images"]
 
 [features]
 default = ["std", "deflate", "sign"]

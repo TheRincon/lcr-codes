@@ -1,11 +1,15 @@
 [package]
 name = "lcr-render"
-description = "LCR Code renderers: SVG, RGB raster, PNG"
+description = "LCR Code renderers: RGB raster, PNG, compact SVG and one-page GDF"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["barcode", "svg", "png", "gdf", "lcr-code"]
+categories = ["encoding", "multimedia::images", "rendering"]
 
 [features]
 default = ["std", "png"]
@@ -27,6 +31,10 @@ miniz_oxide = { workspace = true, optional = true }
 qrcodegen = { workspace = true, optional = true }
 
 [dev-dependencies]
-lcr-encode = { workspace = true }
-lcr-decode = { workspace = true }
+lcr-encode = { path = "../lcr-encode", default-features = false }
+lcr-decode = { path = "../lcr-decode", default-features = false }
 rqrr = { workspace = true }
+
+# docs.rs: document the QR module too, which is off by default (see `qr` above).
+[package.metadata.docs.rs]
+all-features = true

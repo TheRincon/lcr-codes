@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+# The deliverable is the component in dist/, published as a GitHub release asset; a
+# crates.io release of the binding layer would serve nobody.
+publish = false
 
 [lib]
 # `cdylib` for the component build, `rlib` so the logic is testable on the host.

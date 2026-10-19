@@ -1,11 +1,15 @@
 [package]
 name = "lcr-core"
-description = "LCR Code: geometry, palette, ECC, and container primitives (no_std + alloc)"
+description = "LCR Code core: geometry, palette, LDPC error correction, framing and masking"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["barcode", "2d-barcode", "color", "matrix-code", "lcr-code"]
+categories = ["encoding", "multimedia::images"]
 
 [features]
 default = ["std", "deflate"]
