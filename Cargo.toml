@@ -19,6 +19,7 @@ edition = "2024"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0 OR Unlicense"
 repository = "https://github.com/TheRincon/lcr-codes"
+homepage = "https://therincon.github.io/lcr-codes/"
 authors = ["LCR Code contributors"]
 
 [workspace.dependencies]

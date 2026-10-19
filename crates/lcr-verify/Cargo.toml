@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["barcode", "cose", "cwt", "signature", "lcr-code"]
+categories = ["cryptography", "encoding"]
 
 [features]
 default = ["std", "ed25519", "es256", "decode"]
@@ -27,7 +31,7 @@ p256 = { workspace = true, optional = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
-lcr-decode = { workspace = true }
-lcr-encode = { workspace = true, features = ["std", "deflate", "sign"] }
-lcr-render = { workspace = true }
+lcr-decode = { path = "../lcr-decode", default-features = false }
+lcr-encode = { path = "../lcr-encode", default-features = false, features = ["std", "deflate", "sign"] }
+lcr-render = { path = "../lcr-render", default-features = false }
 sha2 = { workspace = true }

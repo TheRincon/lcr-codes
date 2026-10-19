@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["barcode", "2d-barcode", "decoder", "scanner", "lcr-code"]
+categories = ["encoding", "multimedia::images"]
 
 [features]
 default = ["std", "deflate"]
@@ -17,7 +21,7 @@ brotli = ["lcr-core/brotli"]
 lcr-core = { workspace = true }
 
 [dev-dependencies]
-lcr-encode = { workspace = true }
+lcr-encode = { path = "../lcr-encode", default-features = false }
 # `png` only here: the examples write PNG figures, and a dev-dependency cannot reach the
 # scanner bundle §14.1 keeps thin.
-lcr-render = { workspace = true, features = ["png", "qr"] }
+lcr-render = { path = "../lcr-render", default-features = false, features = ["png", "qr"] }

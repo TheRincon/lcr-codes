@@ -1,11 +1,15 @@
 [package]
 name = "lcr-cft"
-description = "CFT — CBOR File Transfer: transport-independent chunked file transfer (docs/CFT.md)"
+description = "CFT, CBOR File Transfer: chunked, hash-verified file transfer over any carrier, LCR Code included"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["file-transfer", "cbor", "chunking", "barcode", "lcr-code"]
+categories = ["encoding", "compression"]
 
 [features]
 default = ["std", "zstd"]
@@ -25,7 +29,7 @@ zstd = { version = "0.13", optional = true }
 miniz_oxide = { workspace = true, optional = true }
 
 [dev-dependencies]
-lcr-core = { workspace = true, features = ["std", "deflate"] }
-lcr-decode = { workspace = true, features = ["std", "deflate"] }
-lcr-encode = { workspace = true, features = ["std", "deflate"] }
-lcr-render = { workspace = true }
+lcr-core = { path = "../lcr-core", default-features = false, features = ["std", "deflate"] }
+lcr-decode = { path = "../lcr-decode", default-features = false, features = ["std", "deflate"] }
+lcr-encode = { path = "../lcr-encode", default-features = false, features = ["std", "deflate"] }
+lcr-render = { path = "../lcr-render", default-features = false }

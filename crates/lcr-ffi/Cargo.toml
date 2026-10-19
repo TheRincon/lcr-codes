@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["barcode", "ffi", "c-api", "2d-barcode", "lcr-code"]
+categories = ["development-tools::ffi", "encoding"]
 
 [lib]
 # `staticlib` and `cdylib` are what a C host links; `rlib` lets the Rust tests in
