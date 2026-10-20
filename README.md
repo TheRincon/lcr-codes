@@ -4,12 +4,6 @@
 
 **This project was mostly generated using AI (Claude Opus 5/5.5 and OpenAI Astra 6).** There is no intent to hide this fact. The project is being reviewed, corrected, and updated by humans.
 
-LCR codes are differentiated from [CIMBAR](https://github.com/sz3/libcimbar) and [Microsoft's HCCB](https://en.wikipedia.org/wiki/High_Capacity_Color_Barcode) by the use of the ring for alignment, colour calibration, AND payload, LDPC instead of Reed-Solomon for maximum payload capacity, and a CBOR + compression scheme that can encode up to 34Kb (so far, likely greater) with a highly compressible file. 
-
-The original inspiration was [JAB code](https://github.com/jabcode/jabcode). Take the concept of colours further and then add compression, move alignment out of the main symbol (and make the barcode itself an alignment "bullseye"), and **assume it is read on screens** rather than printed out on paper. The original goal was to transfer 5kb, and now that that has been surpassed, the new target is 50kb payloads consistently. 
-
-LCR codes are meant to be an alternative where one can send the payload **directly from screen to screen**, with a good quality camera, instead of transferring over a network or needing an (ever-changing) endpoint. Why bother with a transient URL when you can just encode a JSON or CBOR?
-
 A Reference implementation of [`lcr-code-spec-v0.4.md`](docs/lcr-code-spec-v0.4.md) is provided in Rust. Find the releases on GitHub as **WebAssembly components**, C libraries, or Rust binaries.
 
 ---
@@ -22,17 +16,19 @@ module), so the size difference is the density difference:
 <table>
   <tr>
     <td align="center" valign="bottom"><img src="examples/profile-c3.png" width="270" alt="An LCR Code (C3 profile), 21 by 21 modules"><br><b>C3</b> · 8 colours · 21×21</td>
-    <td align="center" valign="bottom"><img src="examples/profile-c2.png" width="270" alt="An LCR Code (C2 profile), 33 by 33 modules"><br><b>C2</b> · 4 colours, 2×2 chroma · 33×33</td>
+    <td align="center" valign="bottom"><img src="examples/profile-c2.png" width="270" alt="An LCR Code (C2 profile), 33 by 33 modules"><br><b>C2</b> · 4 colours · 33×33</td>
     <td align="center" valign="bottom"><img src="examples/profile-c1.png" width="270" alt="An LCR Code (C1 profile), 25 by 25 modules"><br><b>C1</b> · 4 colours · 25×25</td>
   </tr>
 </table>
 
 [`examples/`](examples/) has a symbol for each of seven representative payloads, plus one
-per profile, each as PNG, SVG, GDF (experimental), and the source JSON. Every one is decoded before it is written, so anything there reads back to the JSON beside it.
+per profile, each as PNG, SVG, GDF (experimental), and the source JSON.
 
 ## How It Works
 
+LCR codes do not use Reed-Solomon ECC. They instead use LDPC (Low-Density Parity Checks) and the main benefit is the "soft" decisions it allows vs RS. What this means is erasure rather than error. We could use that "softness" recover "glared" out sections, or help the decoder decide between two colours it can't quite read, because of lighting or skew. 
 
+Please consult the "anatomy" examples **[`examples/anatomy-c3.md`](examples/anatomy-c3.png)**, **[`examples/anatomy-expanded-c3.png`](examples/anatomy-expanded-c3.png)**, and **[`examples/anatomy-ldpc-c3.png`](examples/anatomy-ldpc-c3.png)** for much more detail.
 
 
 ## Source Layout
@@ -61,7 +57,13 @@ Two integration guides, for opposite hosts:
 luma and chroma layers actually are, what a decibel means here, how the profiles compare,
 and what each kind of damage does. Open the `explainer.html` in a browser.
 
-## Why not just use a QR code
+## Just use a QR code, or a JAB code, or a CIMBAR, or a...
+
+LCR codes are differentiated from [CIMBAR](https://github.com/sz3/libcimbar) and [Microsoft's HCCB](https://en.wikipedia.org/wiki/High_Capacity_Color_Barcode) by the use of the ring for alignment, colour calibration, AND payload, LDPC instead of Reed-Solomon for "soft decisions", and a CBOR + compression scheme that can encode up to 34Kb (so far, likely greater) with a highly compressible file. 
+
+The original inspiration was [JAB code](https://github.com/jabcode/jabcode). Take the concept of colours further and then add compression, move alignment out of the main symbol (and make the barcode itself an alignment "bullseye"), and **assume it is read on screens** rather than printed out on paper. The original goal was to transfer 5kb, and now that that has been surpassed, the new target is 50kb payloads consistently. 
+
+LCR codes are meant to be an alternative where one can send the payload **directly from screen to screen**, with a good quality camera, instead of transferring over a network or needing an (ever-changing) endpoint. Why bother with a transient URL when you can just encode a JSON or CBOR?
 
 Density, and graceful failure. LCR Code targets **1.5–2.0 bits/module** against monochrome's
 1.0 — measured at **1.73×** on this implementation — so payloads that would need an
