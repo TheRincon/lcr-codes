@@ -1,0 +1,274 @@
+# Pre-built artifacts for a tagged release: the two wasm components, the `lcr` CLI, and
+# the C library — attached to a **draft** GitHub release, so nothing is public until a
+# person reads the notes and presses Publish.
+#
+# Runs on a `v*` tag. A tag with a hyphen (`v0.4.0-rc.1`) is marked a pre-release, which
+# is the way to rehearse this workflow without making a release anyone would download.
+#
+# This does not re-run `just ci`: the tag should point at a commit that already passed it
+# on main. What it does run is a smoke test of each artifact as built — the CLI encodes
+# and decodes a symbol, the C library links and runs tests/smoke.c, and the components
+# load under wasmtime — because a cross-target build can break where the gate never looks.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same binaryen as ci.yml, so the released components are byte-for-byte what the size
+  # gate measured.
+  BINARYEN_VERSION: "132"
+
+jobs:
+  check:
+    name: Check the tag
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # A `v0.5.0` tag on a tree that still says 0.4.0 would ship binaries whose
+      # `--version` and `lcr_version()` disagree with their file names.
+      - id: v
+        name: Tag matches the workspace version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          if [ "${tag%%-*}" != "$crate" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the workspace version $crate"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          case "$tag" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
+
+  native:
+    name: ${{ matrix.cli }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `cli` is the target the `lcr` binary is built for, `lib` the one the C library
+          # is. They differ only on Linux: the binary is static musl so it runs on any
+          # distribution, while a C library has to match the host's libc — and Rust builds
+          # no cdylib for musl — so it is glibc, built on the oldest supported runner for
+          # the widest glibc compatibility.
+          - { os: macos-15, cli: aarch64-apple-darwin, lib: aarch64-apple-darwin, native: true }
+          # Cross-built on Apple silicon (GitHub's Intel macOS runners are being retired),
+          # so it is built and packaged but not run.
+          - { os: macos-15, cli: x86_64-apple-darwin, lib: x86_64-apple-darwin, native: false }
+          - { os: ubuntu-22.04, cli: x86_64-unknown-linux-musl, lib: x86_64-unknown-linux-gnu, native: true }
+          - { os: ubuntu-22.04-arm, cli: aarch64-unknown-linux-musl, lib: aarch64-unknown-linux-gnu, native: true }
+          - { os: windows-2025, cli: x86_64-pc-windows-msvc, lib: x86_64-pc-windows-msvc, native: true }
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      CLI: ${{ matrix.cli }}
+      LIB: ${{ matrix.lib }}
+      # macOS tar otherwise adds `._` resource-fork entries for any file with xattrs.
+      COPYFILE_DISABLE: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      # No rust-cache here, unlike ci.yml: a release is built from a clean tree, not from
+      # whatever an earlier run left in a cache.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup target add "$CLI" "$LIB"
+
+      # `rav1d`, the CLI's AVIF decoder, assembles hand-written x86 code with nasm. On
+      # ARM it compiles GNU assembler sources with the C compiler instead.
+      - name: Install nasm
+        if: startsWith(matrix.cli, 'x86_64')
+        run: |
+          case "$RUNNER_OS" in
+            Linux)   sudo apt-get install -y nasm ;;
+            macOS)   brew install nasm ;;
+            Windows) choco install nasm -y --no-progress
+                     echo "C:\\Program Files\\NASM" >> "$GITHUB_PATH" ;;
+          esac
+
+      # The musl target's C compiler, for rav1d's ARM assembly — and named for the x86
+      # build too, so neither falls back to compiling against glibc's headers.
+      - name: Install musl-gcc
+        if: contains(matrix.cli, 'musl')
+        run: |
+          sudo apt-get install -y musl-tools
+          echo "CC_${CLI//-/_}=musl-gcc" >> "$GITHUB_ENV"
+
+      - name: Build lcr
+        run: cargo build -p lcr-cli --release --locked --target "$CLI"
+
+      # `cargo rustc` rather than `cargo build` only to get rustc's list of the system
+      # libraries a static link needs, which goes into the archive as LINK.txt. `--color
+      # never` for the same reason as `just ffi-test`: a colour reset glued to the last
+      # flag is a library no linker can find.
+      #
+      # The shared library's own name is set explicitly. Left to rustc, the macOS install
+      # name is the runner's absolute build path, so every program linked against the
+      # dylib would look for it under /Users/runner/work/… and fail to start; and the
+      # Linux .so would carry no soname at all.
+      - name: Build the C library
+        run: |
+          set -o pipefail
+          case "$RUNNER_OS" in
+            macOS) name=(-C link-arg=-Wl,-install_name,@rpath/liblcr_ffi.dylib) ;;
+            Linux) name=(-C link-arg=-Wl,-soname,liblcr_ffi.so) ;;
+            *)     name=() ;;
+          esac
+          cargo rustc -p lcr-ffi --release --locked --target "$LIB" --lib --color never \
+            -- --print native-static-libs "${name[@]}" 2>&1 | tee ffi-build.log
+          libs=$(sed -n 's/.*native-static-libs: //p' ffi-build.log | tail -1)
+          echo "STATIC_LIBS=$libs" >> "$GITHUB_ENV"
+
+      - name: Smoke-test lcr
+        if: matrix.native
+        run: |
+          case "$RUNNER_OS" in Windows) lcr="target/$CLI/release/lcr.exe" ;; *) lcr="target/$CLI/release/lcr" ;; esac
+          "$lcr" --version
+          "$lcr" encode -d 'release smoke' -o smoke.png
+          test "$("$lcr" decode smoke.png | tr -d '\r')" = 'release smoke'
+
+      # Not on Windows: MSVC's compiler is not on PATH outside a developer prompt, and the
+      # header and ABI are identical to the other targets'.
+      - name: Smoke-test the C library
+        if: matrix.native && runner.os != 'Windows'
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -Icrates/lcr-ffi/include \
+            crates/lcr-ffi/tests/smoke.c "target/$LIB/release/liblcr_ffi.a" ${STATIC_LIBS//-lSystem/} \
+            -o smoke-c
+          ./smoke-c
+
+      - name: Package
+        run: |
+          case "$RUNNER_OS" in Windows) exe=.exe ;; *) exe= ;; esac
+          licences="LICENSE-MIT LICENSE-APACHE UNLICENSE"
+
+          # The `lcr-cli-<target>-v<version>/` layout is the first one `cargo binstall`
+          # looks for, so `cargo binstall lcr-cli` finds these without any metadata.
+          cli="lcr-cli-$CLI-v$VERSION"
+          mkdir -p "out/$cli"
+          cp "target/$CLI/release/lcr$exe" crates/lcr-cli/README.md $licences "out/$cli/"
+
+          lib="lcr-ffi-$LIB-v$VERSION"
+          mkdir -p "out/$lib/include" "out/$lib/lib"
+          cp crates/lcr-ffi/include/lcr.h "out/$lib/include/"
+          cp crates/lcr-ffi/README.md $licences "out/$lib/"
+          for f in liblcr_ffi.a liblcr_ffi.so liblcr_ffi.dylib lcr_ffi.lib lcr_ffi.dll lcr_ffi.dll.lib; do
+            if [ -f "target/$LIB/release/$f" ]; then cp "target/$LIB/release/$f" "out/$lib/lib/"; fi
+          done
+          [ -f "out/$lib/lib/liblcr_ffi.a" ] || [ -f "out/$lib/lib/lcr_ffi.lib" ] \
+            || { echo "::error::no static library for $LIB"; exit 1; }
+          {
+            echo "Static linking: add these system libraries after lcr_ffi on the link line."
+            echo
+            echo "    $STATIC_LIBS"
+          } > "out/$lib/LINK.txt"
+
+          cd out
+          for d in "$cli" "$lib"; do
+            if [ "$RUNNER_OS" = Windows ]; then 7z a -tzip "../$d.zip" "$d" >/dev/null
+            else tar -czf "../$d.tar.gz" "$d"; fi
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.cli }}
+          path: |
+            *.tar.gz
+            *.zip
+          if-no-files-found: error
+
+  wasm:
+    name: wasm components
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install just and wasm-tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.46.0,wasm-tools@1.254.0
+
+      - name: Install binaryen (wasm-opt)
+        run: |
+          curl -sSL "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_${BINARYEN_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: just component
+
+      # Instantiates the built files from dist/ under wasmtime and round-trips symbols
+      # through them, so what is attached is what was exercised.
+      - name: Load the components under wasmtime
+        run: cargo test -p lcr-wasm --profile release-tests --locked --test component
+
+      # Unversioned names, so `releases/latest/download/lcr-code.wasm` is a stable link.
+      # The WIT package inside each file carries the version.
+      - name: Collect
+        run: |
+          mkdir -p out
+          cp dist/lcr-code.wasm dist/lcr-code-scanner.wasm crates/lcr-wasm/wit/lcr.wit out/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wasm
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: Draft the release
+    needs: [check, native, wasm]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # Build-provenance attestations: `gh attestation verify <file> --repo <owner/repo>`
+      # proves a file was built by this workflow from this tag.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: assets
+        run: sha256sum * | tee SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: assets/*
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          flags=(--draft --verify-tag --generate-notes --title "LCR Code $GITHUB_REF_NAME")
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" assets/*
