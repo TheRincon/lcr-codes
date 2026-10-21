@@ -462,7 +462,7 @@ td.lo { color: var(--ink-faint); }
 <header class="masthead">
   <p class="eyebrow">LCR Code · how the format works</p>
   <h1>Reading with <span class="lu">brightness</span> and <span class="ch">colour</span> at the same time</h1>
-  <p class="standfirst">An LCR Code carries two independent messages in one picture. One is written in light and dark, the other in green and magenta. Here is what that means, why it is worth doing, and what makes it fail.</p>
+  <p class="standfirst">An LCR Code carries two independent messages in one picture. One is written in light and dark, the other in green and magenta.</p>
 </header>
 
 <section id="try">
@@ -500,16 +500,16 @@ td.lo { color: var(--ink-faint); }
     <figcaption><b>A real symbol.</b> 25×25 modules carrying 96 bytes. Every picture on this page was produced by the encoder itself, then damaged by the project's test harness — none of them are mock-ups.</figcaption>
   </figure>
 
-  <p>Dropping the finders is worth more than it sounds. They and their supporting patterns cost a fixed 204 modules at every size — <strong>46% of the smallest symbol</strong> — and that area is now payload. The same 96 bytes above used to need a 33×33 grid; it fits in 25×25.</p>
+  <p>The decision to drop the finders was not taken lightly. They and their supporting patterns cost a fixed 204 modules at every size — <strong>46% of the smallest symbol</strong> — and that area is now payload. The same 96 bytes above used to need a 33×33 grid; it fits in 25×25.</p>
 
   <figure>
     <img src="../examples/anatomy-c3.png" alt="An annotated LCR Code symbol with every structural part boxed in red and numbered, and a legend explaining each one." width="950">
-    <figcaption><b>Every part, labelled.</b> The same ring, on an eight-colour symbol, with each piece boxed: the dark corners, where the sequence starts, the calibration cells, the format bits and the payload. Generated from the format's own geometry, so it cannot drift from the code.</figcaption>
+    <figcaption>C3 profile explained: The dark corners where the sequence starts, the color and location calibration cells, the formatting bits, and the payload interspersed thorughout the ring.</figcaption>
   </figure>
 </section>
 
 <section>
-  <div class="shead"><span class="snum">02</span><h2>Two messages, one picture</h2></div>
+  <div class="shead"><span class="snum">02</span><h2>Two layers in one picture</h2></div>
 
   <p class="lead">Here is the whole idea. Look at any module and ask two separate questions about it.</p>
 
