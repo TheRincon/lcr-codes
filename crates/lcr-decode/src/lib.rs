@@ -219,7 +219,15 @@ impl Default for DecodeOptions {
 pub struct Decoder<V = NoKeys> {
     verifier: V,
     options: DecodeOptions,
+    // A field rather than a `DecodeOptions` member so adding it was not a breaking change
+    // to a published struct with public fields.
+    hard_decisions: bool,
 }
+
+/// The LLR magnitude every bit gets under [`Decoder::with_hard_decisions`]. Min-sum is
+/// scale invariant, so the value is immaterial as long as it sits far below the
+/// shortened bits' certainty.
+const HARD_LLR: f32 = 1.0;
 
 impl Decoder<NoKeys> {
     /// A decoder that decodes but will not verify signatures.
@@ -227,6 +235,7 @@ impl Decoder<NoKeys> {
         Decoder {
             verifier: NoKeys,
             options: DecodeOptions::default(),
+            hard_decisions: false,
         }
     }
 }
@@ -237,6 +246,7 @@ impl<V: PacketVerifier> Decoder<V> {
         Decoder {
             verifier,
             options: self.options,
+            hard_decisions: self.hard_decisions,
         }
     }
 
@@ -244,6 +254,30 @@ impl<V: PacketVerifier> Decoder<V> {
     pub fn with_options(mut self, options: DecodeOptions) -> Self {
         self.options = options;
         self
+    }
+
+    /// Hand the LDPC decoder hard decisions: every payload LLR keeps its sign and loses its
+    /// magnitude, as if demodulation had sliced each module to a bit. **Diagnostics only.**
+    ///
+    /// It discards exactly what §12.4 says soft information is worth, and exists so that
+    /// claim can be measured rather than quoted — `just soft-gain` runs the same symbols
+    /// both ways. Everything before the LDPC decode stays soft: the §12.2 format read,
+    /// multi-frame accumulation, and the equalising retry's neighbour estimates.
+    pub fn with_hard_decisions(mut self, on: bool) -> Self {
+        self.hard_decisions = on;
+        self
+    }
+
+    /// Deinterleave one layer's LLRs and LDPC-decode it — the one place a layer's soft
+    /// information reaches the code, so [`Decoder::with_hard_decisions`] is applied here.
+    fn ldpc(&self, code: &Code, n: usize, llrs: &[f32]) -> Result<DecodeResult, LcrError> {
+        let mut rx = Interleaver::new(n).deinterleave(llrs);
+        if self.hard_decisions {
+            for l in &mut rx {
+                *l = HARD_LLR.copysign(*l);
+            }
+        }
+        code.decode(&rx, self.options.max_iterations)
     }
 
     /// Decode from a packed RGB8 buffer.
@@ -419,10 +453,7 @@ impl<V: PacketVerifier> Decoder<V> {
         }
         let ecc = p.format.ecc;
         let code = Code::new(CHROMA_RATE_INDEX[ecc.chroma as usize & 3], cap.chroma_bits)?;
-        let out = code.decode(
-            &Interleaver::new(cap.chroma_bits).deinterleave(&again.chroma),
-            self.options.max_iterations,
-        )?;
+        let out = self.ldpc(&code, cap.chroma_bits, &again.chroma)?;
         Ok(out.converged.then_some(out))
     }
 
@@ -461,10 +492,7 @@ impl<V: PacketVerifier> Decoder<V> {
                 break;
             };
             demod::unmask_luma(&mut llrs, &p.layout, p.format.mask);
-            let out = luma_code.decode(
-                &Interleaver::new(cap.luma_bits).deinterleave(&llrs),
-                self.options.max_iterations,
-            )?;
+            let out = self.ldpc(luma_code, cap.luma_bits, &llrs)?;
             if out.converged {
                 *luma_out = out;
                 changed = true;
@@ -494,10 +522,7 @@ impl<V: PacketVerifier> Decoder<V> {
                 ) else {
                     break;
                 };
-                let out = code.decode(
-                    &Interleaver::new(cap.chroma_bits).deinterleave(&llrs),
-                    self.options.max_iterations,
-                )?;
+                let out = self.ldpc(&code, cap.chroma_bits, &llrs)?;
                 if out.converged {
                     *chroma_out = Some(out);
                     changed = true;
@@ -533,20 +558,13 @@ impl<V: PacketVerifier> Decoder<V> {
         let mut luma_llrs = d.luma.clone();
         demod::unmask_luma(&mut luma_llrs, &p.layout, p.format.mask);
         let luma_code = Code::new(LUMA_RATE_INDEX[ecc.luma as usize & 3], cap.luma_bits)?;
-        let mut luma_out = luma_code.decode(
-            &Interleaver::new(cap.luma_bits).deinterleave(&luma_llrs),
-            self.options.max_iterations,
-        )?;
+        let mut luma_out = self.ldpc(&luma_code, cap.luma_bits, &luma_llrs)?;
 
         // §12.5 step 2: chroma, if it is there at all.
         let mut chroma_out = None;
         if !d.chroma.is_empty() && cap.chroma_bits > 0 {
             let code = Code::new(CHROMA_RATE_INDEX[ecc.chroma as usize & 3], cap.chroma_bits)?;
-            let out = code.decode(
-                &Interleaver::new(cap.chroma_bits).deinterleave(&d.chroma),
-                self.options.max_iterations,
-            )?;
-            chroma_out = Some(out);
+            chroma_out = Some(self.ldpc(&code, cap.chroma_bits, &d.chroma)?);
         }
 
         // §12.5 step 3: concatenate luma-first, then the CRC decides.

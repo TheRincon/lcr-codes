@@ -486,6 +486,13 @@ payload-sizes:
 envelope trials="":
     cargo run -p lcr-decode --release --example envelope -- {{trials}}
 
+# What §12.4's soft decisions are worth: every profile decoded twice, LLRs against hard
+# decisions, per impairment and per ECC level. Table 2 is the storage answer — how much
+# stronger a code hard decisions would need to survive the same noise.
+[doc("Measure the soft-decision gain: the same symbols decoded with LLRs and with hard bits.")]
+soft-gain trials="" profile="":
+    cargo run -p lcr-decode --release --example soft_gain -- {{trials}} {{profile}}
+
 # Measure where each layer fails, to calibrate the §8.2 rate split (open decision #5).
 #
 # Second argument is the profile — `just tune 12 C3`. Worth running per profile: chroma is
