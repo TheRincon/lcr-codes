@@ -137,6 +137,7 @@ lcr capacity                                 # bytes per version and profile
 
 lcr send report.pdf -o symbols/              # a file as a sequence of symbols
 lcr receive symbols/*.png                    # any order; names what is missing
+lcr send big.zip -o frames/ --fountain       # a carousel: any ~K of its frames will do (feature `fountain`)
 ```
 
 `lcr decode` reads PNG, JPEG, WebP, JPEG XL and AVIF. lcr decode picks the format from the file's contents, **not its extension**. This can be a gotcha, but was intended to avoid security issues.

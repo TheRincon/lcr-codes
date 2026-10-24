@@ -90,7 +90,7 @@ deny:
 # either fail confusingly or, worse, pass against a stale build.
 
 # The whole test suite, including the component under wasmtime.
-test: component
+test: component _component-compare
     cargo test --workspace --profile release-tests
     # `qr` and `compare` are off by default so no shipped artifact carries QR, which also
     # means the default run never builds their tests. Run them explicitly: the QR round
@@ -98,6 +98,11 @@ test: component
     # density comparison and §17.2 dual-render.
     cargo test -p lcr-render --profile release-tests --features qr qr::
     cargo test -p lcr-wasm --profile release-tests --features compare
+    # The fountain (docs/CFT.md §21) is off by default for the same reason: the demo's
+    # illustration, not a shipped feature. `compare` above carries it into the demo
+    # component; these are its native tests.
+    cargo test -p lcr-cft --profile release-tests --features fountain
+    cargo test -p lcr-cli --profile release-tests --features fountain
 
 # Exercise `debug_assert!`, which the release suite above compiles out.
 #
@@ -130,6 +135,7 @@ fmt-check:
 
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy -p lcr-cft -p lcr-cli -p lcr-ffi --all-targets --features fountain -- -D warnings
 
 # ---------------------------------------------------------------- component
 
@@ -404,13 +410,15 @@ ffi-test:
     set -euo pipefail
     # `--color never`: CI sets CARGO_TERM_COLOR=always, and a colour reset appended to the
     # last flag (`-lc\e[0m`) is a library no linker can find.
-    libs=$(cargo rustc -p lcr-ffi --profile release-tests --color never --lib --crate-type staticlib \
+    # With `fountain`, and `-DLCR_FOUNTAIN` below, so the smoke test covers the guarded
+    # part of the header too.
+    libs=$(cargo rustc -p lcr-ffi --profile release-tests --features fountain --color never --lib --crate-type staticlib \
         -- --print native-static-libs 2>&1 \
         | sed -n 's/.*native-static-libs: //p' | tail -1)
     # macOS: the driver links libSystem itself, and naming it again only draws an ld warning.
     libs=${libs//-lSystem/}
     mkdir -p target/ffi
-    cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -Icrates/lcr-ffi/include \
+    cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic -DLCR_FOUNTAIN -Icrates/lcr-ffi/include \
         crates/lcr-ffi/tests/smoke.c target/release-tests/liblcr_ffi.a $libs -o target/ffi/smoke
     ./target/ffi/smoke
 
