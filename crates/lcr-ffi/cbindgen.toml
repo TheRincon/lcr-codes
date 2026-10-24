@@ -24,3 +24,8 @@ header = """
 
 [export]
 include = ["LcrStatus"]
+
+# Items behind a cargo feature appear in the header behind a macro, so a C program built
+# against a library without the feature does not see functions that are not there.
+[defines]
+"feature = fountain" = "LCR_FOUNTAIN"

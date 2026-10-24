@@ -62,12 +62,16 @@ extern crate alloc;
 
 pub mod chunk;
 pub mod codec;
+#[cfg(feature = "fountain")]
+pub mod fountain;
 pub mod manifest;
 pub mod recv;
 pub mod send;
 
 pub use chunk::Chunk;
 pub use codec::Compression;
+#[cfg(feature = "fountain")]
+pub use fountain::{Fountain, Repair};
 pub use manifest::{HashAlg, Manifest};
 pub use recv::{Reassembler, Status};
 pub use send::{Transfer, split};

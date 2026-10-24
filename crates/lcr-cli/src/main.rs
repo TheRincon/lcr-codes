@@ -41,7 +41,8 @@ enum Command {
     Probe(ProbeArgs),
     /// Show how many bytes a symbol holds, per version and profile.
     Capacity(CapacityArgs),
-    /// Split a file into a sequence of symbols (CBOR File Transfer).
+    /// Split a file into a sequence of symbols (CBOR File Transfer), or with --fountain a
+    /// carousel any slightly-more-than-all of whose frames rebuild it.
     Send(SendArgs),
     /// Reassemble a file from images of the symbols `lcr send` wrote.
     Receive(ReceiveArgs),
@@ -729,8 +730,38 @@ struct SendArgs {
     /// Name the receiver will save the file as. Default: the file's own name.
     #[arg(long)]
     name: Option<String>,
+    /// Send as a fountain (docs/CFT.md §21): the chunks once, then repair symbols, any
+    /// slightly-more-than-all of which rebuild the file. For a one-way carousel — a video,
+    /// a slideshow, a screen — where frames will be missed and nobody can ask for them
+    /// again. The images are numbered in the order to show them.
+    #[cfg(feature = "fountain")]
+    #[arg(long)]
+    fountain: bool,
+    /// With --fountain: how many frames to write, manifests included. Default: the source
+    /// pass plus as many repair symbols again, which survives losing about 40% of them.
+    #[cfg(feature = "fountain")]
+    #[arg(long, requires = "fountain", value_parser = clap::value_parser!(u64).range(1..))]
+    frames: Option<u64>,
     #[command(flatten)]
     symbol: SymbolArgs,
+}
+
+/// What `lcr send` writes: every message once, or a fountain's carousel.
+enum Plan {
+    Plain(Vec<Vec<u8>>),
+    #[cfg(feature = "fountain")]
+    Fountain(lcr_cft::Fountain, u64),
+}
+
+/// Default fountain length for `k` chunks: the source pass plus as many repair symbols
+/// again, plus the manifests [`lcr_cft::fountain::Fountain::frame`] interleaves. A receiver
+/// needs a little more than `k` of the `2k`, so it can lose about 40% of the frames — more
+/// for a large file, less for a handful of chunks, where the code's overhead is largest.
+#[cfg(feature = "fountain")]
+fn default_frames(k: u32) -> u64 {
+    let data = 2 * k as u64;
+    let every = lcr_cft::fountain::MANIFEST_EVERY;
+    data + data.div_ceil(every - 1) + 1
 }
 
 /// Eight bytes that will not repeat between transfers.
@@ -749,6 +780,38 @@ fn transfer_id(file: &[u8]) -> Vec<u8> {
     h.write_u128(now.as_nanos());
     h.write_u32(std::process::id());
     h.finish().to_be_bytes().to_vec()
+}
+
+/// The plan for one candidate chunk size, and the messages whose size decides whether it
+/// fits: every message of a plain transfer, or a fountain's manifest and last repair symbol.
+fn plan_for(a: &SendArgs, t: lcr_cft::Transfer) -> (Plan, Vec<Vec<u8>>) {
+    #[cfg(feature = "fountain")]
+    if a.fountain {
+        let k = t.manifest.total_chunks;
+        let frames = a.frames.unwrap_or_else(|| default_frames(k));
+        let f = lcr_cft::Fountain::new(t);
+        let every = lcr_cft::fountain::MANIFEST_EVERY;
+        let last_id = (frames - frames.div_ceil(every)).saturating_sub(1);
+        let last_id = u32::try_from(last_id).unwrap_or(u32::MAX).max(k);
+        let probe = vec![f.manifest(), f.symbol(last_id)];
+        return (Plan::Fountain(f, frames), probe);
+    }
+    #[cfg(not(feature = "fountain"))]
+    let _ = a;
+    let messages = t.messages();
+    (Plan::Plain(messages.clone()), messages)
+}
+
+/// Repair symbols a receive used: none without the `fountain` feature, which is also the
+/// only way a receiver can take one.
+fn repairs_seen(rx: &lcr_cft::Reassembler) -> usize {
+    #[cfg(feature = "fountain")]
+    return rx.repairs_seen();
+    #[cfg(not(feature = "fountain"))]
+    {
+        let _ = rx;
+        0
+    }
 }
 
 fn send(a: SendArgs) -> Result {
@@ -771,8 +834,11 @@ fn send(a: SendArgs) -> Result {
     // manifest more than a chunk. Start at the symbol's capacity and shrink by however much
     // the largest message overshot until every message encodes; that converges in a pass
     // or two, and it measures the real framing rather than assuming it.
+    //
+    // A fountain's largest message is its last repair symbol — the payload is padded to the
+    // full chunk size and its id is the largest — so that is the one measured.
     let mut chunk = cap as u32;
-    let messages = loop {
+    let plan = loop {
         let t = lcr_cft::split(
             &file,
             name.clone(),
@@ -781,13 +847,13 @@ fn send(a: SendArgs) -> Result {
             chunk,
         )
         .map_err(err)?;
-        let messages = t.messages();
-        let largest = messages.iter().map(Vec::len).max().unwrap_or(0);
+        let (plan, probe) = plan_for(&a, t);
+        let largest = probe.iter().map(Vec::len).max().unwrap_or(0);
         if largest <= cap
-            && let Some(m) = messages.iter().find(|m| m.len() == largest)
+            && let Some(m) = probe.iter().find(|m| m.len() == largest)
             && lcr_encode::encode_bytes(m, &opts).is_ok()
         {
-            break messages;
+            break plan;
         }
         let overshoot = (largest.saturating_sub(cap) as u32).max(8);
         chunk = chunk
@@ -808,22 +874,62 @@ fn send(a: SendArgs) -> Result {
         .file_stem()
         .map_or("lcr".into(), |s| s.to_string_lossy().into_owned());
     let ropts = a.symbol.render_options();
-    let width = messages.len().to_string().len().max(3);
-    for (i, m) in messages.iter().enumerate() {
-        let sym = lcr_encode::encode_bytes(m, &opts).map_err(|e| format!("message {i}: {e}"))?;
+    let write = |i: u64, width: usize, m: &[u8], opts: &lcr_encode::EncodeOptions| -> Result {
+        let sym = lcr_encode::encode_bytes(m, opts).map_err(|e| format!("message {i}: {e}"))?;
         let path = a.out_dir.join(format!("{stem}-{i:0width$}.png"));
         std::fs::write(&path, lcr_render::render_png(&sym, &ropts))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+            .map_err(|e| format!("{}: {e}", path.display()))
+    };
+    match plan {
+        Plan::Plain(messages) => {
+            let width = messages.len().to_string().len().max(3);
+            for (i, m) in messages.iter().enumerate() {
+                write(i as u64, width, m, &opts)?;
+            }
+            eprintln!(
+                "{} bytes → {} symbols (manifest + {} chunks), v{} {}, in {}",
+                file.len(),
+                messages.len(),
+                messages.len() - 1,
+                version.get(),
+                profile_name(opts.profile),
+                a.out_dir.display()
+            );
+        }
+        #[cfg(feature = "fountain")]
+        Plan::Fountain(f, frames) => {
+            // Each frame at the smallest version that holds it (CFT.md §21.5): full chunks
+            // and repair symbols come out at `version` anyway, while the manifest and the
+            // short last chunk fill a small symbol rather than a large one that is mostly
+            // zero padding — which reads far worse once a camera clips the contrast.
+            let each = lcr_encode::EncodeOptions {
+                version: None,
+                ..opts.clone()
+            };
+            let width = frames.saturating_sub(1).to_string().len().max(4);
+            for n in 0..frames {
+                write(n, width, &f.frame(n), &each)?;
+            }
+            let k = f.source_count();
+            let data = frames - frames.div_ceil(lcr_cft::fountain::MANIFEST_EVERY);
+            if data < k as u64 {
+                eprintln!(
+                    "lcr: warning: {frames} frames carry {data} data symbols, fewer than the \
+                     {k} chunks; even a receiver that reads every one cannot finish"
+                );
+            }
+            eprintln!(
+                "{} bytes → {} chunks at v{} {}, as {frames} fountain frames in {}\n\
+                 Show them in order and loop; a receiver needs slightly more than {k} \
+                 of the data frames, whichever they are.",
+                file.len(),
+                k,
+                version.get(),
+                profile_name(opts.profile),
+                a.out_dir.display()
+            );
+        }
     }
-    eprintln!(
-        "{} bytes → {} symbols (manifest + {} chunks), v{} {}, in {}",
-        file.len(),
-        messages.len(),
-        messages.len() - 1,
-        version.get(),
-        profile_name(opts.profile),
-        a.out_dir.display()
-    );
     Ok(())
 }
 
@@ -860,6 +966,15 @@ fn receive(a: ReceiveArgs) -> Result {
                 "the manifest (symbol 0) is missing; {held} chunk(s) are held until it arrives"
             ));
         }
+        // A fountain has no particular symbol to ask for: any more of its frames will do.
+        #[cfg(feature = "fountain")]
+        lcr_cft::Status::Receiving { have, total } if rx.repairs_seen() > 0 => {
+            return Err(format!(
+                "{have} of {total} chunks recovered from a fountain, {} repair symbol(s) \
+                 still unresolved; any further frames of it will do, whichever they are",
+                rx.pending()
+            ));
+        }
         lcr_cft::Status::Receiving { have, total } => {
             // `lcr send` numbers files from the manifest at 0, so chunk i is file i + 1.
             let missing: Vec<String> = rx.missing().iter().map(|c| (c + 1).to_string()).collect();
@@ -887,6 +1002,15 @@ fn receive(a: ReceiveArgs) -> Result {
     std::fs::File::create(&out)
         .and_then(|mut f| f.write_all(&file))
         .map_err(|e| format!("{}: {e}", out.display()))?;
-    eprintln!("{} bytes, hash verified → {}", file.len(), out.display());
+    if repairs_seen(&rx) > 0 {
+        eprintln!(
+            "{} bytes, hash verified → {} ({} repair symbol(s) used)",
+            file.len(),
+            out.display(),
+            repairs_seen(&rx)
+        );
+    } else {
+        eprintln!("{} bytes, hash verified → {}", file.len(), out.display());
+    }
     Ok(())
 }

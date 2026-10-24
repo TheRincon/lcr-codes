@@ -22,6 +22,13 @@
 // tightening the code rate.
 typedef struct LcrAccumulator LcrAccumulator;
 
+#if defined(LCR_FOUNTAIN)
+// A fountain transfer (CFT.md §21): the source chunks once, then repair symbols without
+// end, any slightly-more-than-`source_count` of which rebuild the file. Opaque; create
+// with `lcr_cft_fountain_new`, release with `lcr_cft_fountain_free`.
+typedef struct LcrCftFountain LcrCftFountain;
+#endif
+
 // Collects CFT messages in any order and reconstructs the file. Opaque; create with
 // `lcr_cft_receiver_new`, release with `lcr_cft_receiver_free`.
 typedef struct LcrCftReceiver LcrCftReceiver;
@@ -468,6 +475,69 @@ LcrStatus lcr_cft_split(const uint8_t *file,
                         uint32_t chunk_size,
                         LcrCftTransfer **out);
 
+#if defined(LCR_FOUNTAIN)
+// Compress and split `file` as `lcr_cft_split` does, and wrap the chunks as a fountain.
+// Arguments are as for `lcr_cft_split`.
+//
+// # Safety
+//
+// As for `lcr_cft_split`.
+LcrStatus lcr_cft_fountain_new(const uint8_t *file,
+                               size_t file_len,
+                               const char *filename,
+                               const uint8_t *transfer_id,
+                               size_t transfer_id_len,
+                               uint32_t chunk_size,
+                               LcrCftFountain **out);
+#endif
+
+#if defined(LCR_FOUNTAIN)
+// Release a fountain. Null is ignored.
+//
+// # Safety
+//
+// `f` must be null or a live handle from `lcr_cft_fountain_new`.
+void lcr_cft_fountain_free(LcrCftFountain *f);
+#endif
+
+#if defined(LCR_FOUNTAIN)
+// The message for frame `n` of the carousel, counting from 0: the manifest every eighth
+// frame, otherwise the source chunks once and then repair symbols. Encode each with
+// `lcr_encode_bytes` and show them in order. Free `out` with `lcr_bytes_free`.
+//
+// # Safety
+//
+// `f` must be a live handle and `out` valid for writes.
+LcrStatus lcr_cft_fountain_frame(const LcrCftFountain *f, uint64_t n, LcrBytes *out);
+#endif
+
+#if defined(LCR_FOUNTAIN)
+// Source chunk count, `K`. Zero for null.
+//
+// # Safety
+//
+// `f` must be null or a live handle.
+uint32_t lcr_cft_fountain_source_count(const LcrCftFountain *f);
+#endif
+
+#if defined(LCR_FOUNTAIN)
+// The file's size before compression. Zero for null.
+//
+// # Safety
+//
+// `f` must be null or a live handle.
+uint64_t lcr_cft_fountain_original_size(const LcrCftFountain *f);
+#endif
+
+#if defined(LCR_FOUNTAIN)
+// The compressed stream's size. Zero for null.
+//
+// # Safety
+//
+// `f` must be null or a live handle.
+uint64_t lcr_cft_fountain_compressed_size(const LcrCftFountain *f);
+#endif
+
 // Release a transfer. Null is ignored.
 //
 // # Safety
@@ -525,8 +595,9 @@ LcrCftReceiver *lcr_cft_receiver_new(void);
 // `r` must be null or a live handle from `lcr_cft_receiver_new`.
 void lcr_cft_receiver_free(LcrCftReceiver *r);
 
-// Feed one decoded CFT message — manifest or chunk, in any order. `out` may be null;
-// otherwise it receives the status after this message.
+// Feed one decoded CFT message — manifest, chunk, or with the `fountain` feature a repair
+// symbol — in any order.
+// `out` may be null; otherwise it receives the status after this message.
 //
 // # Safety
 //
@@ -543,6 +614,15 @@ LcrStatus lcr_cft_receiver_accept(LcrCftReceiver *r,
 //
 // `r` must be null or a live handle.
 LcrCftStatus lcr_cft_receiver_status(const LcrCftReceiver *r);
+
+#if defined(LCR_FOUNTAIN)
+// Fountain repair symbols held that have not yet resolved to a chunk. Zero for null.
+//
+// # Safety
+//
+// `r` must be null or a live handle.
+uint32_t lcr_cft_receiver_pending(const LcrCftReceiver *r);
+#endif
 
 // Chunk indices still outstanding (CFT.md §10) — what a receiver shows so the sender
 // knows which symbols to display again.

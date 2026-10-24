@@ -31,6 +31,9 @@ jxl = ["dep:jxl-oxide"]
 # turns on its hand-written assembly, which needs `nasm` at build time; on ARM it is pure
 # Rust. See README.md.
 avif = ["dep:avif-decode"]
+# `lcr send --fountain` and receiving one (docs/CFT.md §21). Off by default: the demo's
+# illustration of a one-way carousel, not something most transfers need.
+fountain = ["lcr-cft/fountain"]
 
 [dependencies]
 lcr-core = { workspace = true, features = ["std", "deflate"] }

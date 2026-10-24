@@ -27,7 +27,9 @@ encode = ["dep:lcr-encode", "dep:lcr-render", "dep:lcr-cft"]
 # `dist/lcr-code-compare.wasm`. A symbology crate has no business carrying a competing
 # symbology, and the density claim in the README is the one thing that needs QR present —
 # so it is present exactly there and nowhere else.
-compare = ["encode", "lcr-render/qr"]
+# Also the demo's fountain transfers (docs/CFT.md §21, `cft-fountain` in the WIT): the
+# other illustration that no shipped artifact carries.
+compare = ["encode", "lcr-render/qr", "lcr-cft/fountain"]
 
 [dependencies]
 # `std` is on, deliberately. §14.2's bans are C dependencies and `getrandom`, not the

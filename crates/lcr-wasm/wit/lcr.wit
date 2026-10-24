@@ -346,7 +346,8 @@ interface cft {
   /// Collects messages in any order and reconstructs the file.
   resource receiver {
     constructor();
-    /// Feed one decoded CFT message — manifest or chunk, in any order.
+    /// Feed one decoded CFT message — manifest or chunk, in any order. In the demo build,
+    /// which exports `cft-fountain`, a fountain repair symbol too.
     accept: func(bytes: list<u8>) -> result<status, string>;
     status: func() -> status;
     /// Chunk indices still outstanding (CFT.md §10).
@@ -363,6 +364,41 @@ interface cft {
   }
 }
 
+/// Fountain transfers (docs/CFT.md §21), for a carrier with no way back: the source chunks
+/// once, then repair symbols without end, any slightly-more-than-`source-count` of which
+/// rebuild the file — so a receiver never waits for a particular symbol to come round.
+///
+/// **Demo build only**, like `compare`: an illustration of the one-way case that most
+/// transfers, where a receiver can name what it missed, do not need. Where this interface
+/// is exported, `cft.receiver` also takes repair symbols; elsewhere it rejects them as
+/// out-of-range chunks, as any receiver that predates §21 does.
+interface cft-fountain {
+  use cft.{receiver};
+
+  /// A fountain transfer: the carousel's frames, on demand.
+  resource fountain {
+    /// The message for frame `n` of the carousel, counting from 0: the manifest every
+    /// eighth frame, otherwise the source chunks once and then repair symbols. Show them
+    /// in order, one per displayed symbol, for as long as anyone is receiving.
+    frame: func(n: u64) -> list<u8>;
+    /// Source chunk count, `K`.
+    source-count: func() -> u32;
+    original-size: func() -> u64;
+    compressed-size: func() -> u64;
+  }
+
+  /// Compress `file` and split it as `split` does, then wrap the chunks as a fountain.
+  start-fountain: func(
+    file: list<u8>,
+    filename: string,
+    transfer-id: list<u8>,
+    chunk-size: u32,
+  ) -> result<fountain, string>;
+
+  /// Fountain repair symbols `rx` holds that have not yet resolved to a chunk.
+  pending: func(rx: borrow<receiver>) -> u32;
+}
+
 /// Decode only — the scanner build. §14.1 keeps the encoder out so a scanner cannot
 /// acquire it by accident.
 world scanner {
@@ -377,7 +413,7 @@ world lcr-code {
   export cft;
 }
 
-/// The demo build: everything above plus QR generation. Built only by `just web`, never
+/// The demo build: everything above plus QR generation and fountain transfers. Built only by `just web`, never
 /// shipped, so a competing symbology cannot reach an artifact anyone embeds.
 world lcr-code-compare {
   export decoder;
@@ -385,4 +421,5 @@ world lcr-code-compare {
   export codec;
   export compare;
   export cft;
+  export cft-fountain;
 }

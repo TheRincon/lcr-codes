@@ -28,14 +28,23 @@ pub enum Status {
 /// CFT.md §9: chunks may arrive in any order, so this keeps a slot per index rather than
 /// a queue. §10: nothing assumes they all arrive — [`Reassembler::missing`] is what a
 /// QR-transport receiver displays so the holder knows which symbols to show again.
+///
+/// With the `fountain` feature it also takes fountain repair symbols (CFT.md §21) — see
+/// [`crate::fountain`]. [`Status`] then counts chunks known by either route, so a caller
+/// does not need to know which kind of transfer it is watching. Without the feature a
+/// repair symbol is rejected as an out-of-range chunk, which is how any receiver that
+/// predates §21 treats one.
 #[derive(Clone, Debug)]
 pub struct Reassembler {
-    limits: Limits,
-    manifest: Option<Manifest>,
-    slots: Vec<Option<Vec<u8>>>,
+    pub(crate) limits: Limits,
+    pub(crate) manifest: Option<Manifest>,
+    pub(crate) slots: Vec<Option<Vec<u8>>>,
     /// Chunks that arrived before the manifest did.
     orphans: Vec<Chunk>,
-    have: u32,
+    pub(crate) have: u32,
+    /// The fountain decoder's state.
+    #[cfg(feature = "fountain")]
+    pub(crate) peel: crate::fountain::Peel,
 }
 
 impl Reassembler {
@@ -47,6 +56,8 @@ impl Reassembler {
             slots: Vec::new(),
             orphans: Vec::new(),
             have: 0,
+            #[cfg(feature = "fountain")]
+            peel: Default::default(),
         }
     }
 
@@ -55,11 +66,18 @@ impl Reassembler {
         self.manifest.as_ref()
     }
 
-    /// Feed one CFT message — manifest or chunk, in any order.
+    /// Feed one CFT message — manifest or chunk, in any order, and with the `fountain`
+    /// feature a repair symbol too.
     ///
     /// The kind is decided by [`crate::chunk::parse`], so a caller scanning symbols does
     /// not have to know which it just read.
     pub fn accept(&mut self, bytes: &[u8]) -> Result<Status, CftError> {
+        // Checked before `parse`, whose `Message` predates repair symbols and would read
+        // one as an out-of-range chunk.
+        #[cfg(feature = "fountain")]
+        if crate::fountain::is_repair(bytes) {
+            return self.accept_repair(crate::Repair::from_slice(bytes, &self.limits)?);
+        }
         match parse(bytes, &self.limits)? {
             Message::Manifest(m) => self.accept_manifest(m),
             Message::Chunk(c) => self.accept_chunk(c),
@@ -82,6 +100,8 @@ impl Reassembler {
             return Err(CftError::Unsupported(manifest.compression.to_u8()));
         }
         self.slots = alloc::vec![None; manifest.total_chunks as usize];
+        #[cfg(feature = "fountain")]
+        self.peel.start(manifest.total_chunks);
         // An inline manifest carries the stream itself, so the transfer is complete the
         // moment it arrives.
         if let Some(inline) = manifest.inline.clone() {
@@ -94,6 +114,8 @@ impl Reassembler {
         for chunk in core::mem::take(&mut self.orphans) {
             self.accept_chunk(chunk)?;
         }
+        #[cfg(feature = "fountain")]
+        self.replay_repairs()?;
         Ok(self.status())
     }
 
@@ -102,8 +124,13 @@ impl Reassembler {
         let Some(manifest) = &self.manifest else {
             // Hold it. Without a manifest there is nothing to validate it against, and
             // guessing the transfer from the first chunk seen is how you end up merging
-            // two transfers.
-            if self.orphans.len() < self.limits.max_chunks as usize {
+            // two transfers. Once per index: a camera reads each symbol on several frames,
+            // and keeping every read grows without bound until the manifest turns up.
+            let held = self
+                .orphans
+                .iter()
+                .any(|o| o.index == chunk.index && o.transfer_id == chunk.transfer_id);
+            if !held && self.orphans.len() < self.limits.max_chunks as usize {
                 self.orphans.push(chunk);
             }
             return Ok(self.status());
@@ -127,23 +154,55 @@ impl Reassembler {
             return Err(CftError::ChunkLength(chunk.index));
         }
 
-        let slot = &mut self.slots[chunk.index as usize];
-        match slot {
+        match &self.slots[chunk.index as usize] {
             Some(existing) if *existing == chunk.payload => {}
             Some(_) => return Err(CftError::ChunkConflict(chunk.index)),
-            None => {
-                *slot = Some(chunk.payload);
-                self.have += 1;
-            }
+            None => self.learn(chunk.index, chunk.payload)?,
         }
         Ok(self.status())
     }
 
+    /// Record chunk `index`, newly known. With the `fountain` feature this also resolves
+    /// any held repair symbol it was the last unknown of.
+    fn learn(&mut self, index: u32, bytes: Vec<u8>) -> Result<(), CftError> {
+        #[cfg(feature = "fountain")]
+        return self.learn_and_peel(index, bytes);
+        #[cfg(not(feature = "fountain"))]
+        self.store(index, bytes).map(|_| ())
+    }
+
+    /// Put chunk `index` in its slot unless it is already there. Returns whether it was new.
+    ///
+    /// `bytes` may be longer than the chunk — a fountain-recovered chunk comes at the full
+    /// `chunk_size` — in which case the excess must be the zero padding a short final
+    /// chunk was XORed with, and is dropped.
+    pub(crate) fn store(&mut self, index: u32, mut bytes: Vec<u8>) -> Result<bool, CftError> {
+        if self.slots[index as usize].is_some() {
+            return Ok(false);
+        }
+        let len = self
+            .manifest
+            .as_ref()
+            .and_then(|m| m.chunk_len(index))
+            .ok_or(CftError::Incomplete)?;
+        if bytes.len() < len || bytes[len..].iter().any(|&b| b != 0) {
+            return Err(CftError::ChunkLength(index));
+        }
+        bytes.truncate(len);
+        self.slots[index as usize] = Some(bytes);
+        self.have += 1;
+        Ok(true)
+    }
+
     /// Current state.
     pub fn status(&self) -> Status {
+        #[cfg(feature = "fountain")]
+        let early_repairs = self.peel.orphans();
+        #[cfg(not(feature = "fountain"))]
+        let early_repairs = 0;
         match &self.manifest {
             None => Status::AwaitingManifest {
-                held: self.orphans.len(),
+                held: self.orphans.len() + early_repairs,
             },
             Some(m) if self.have == m.total_chunks => Status::Complete,
             Some(m) => Status::Receiving {

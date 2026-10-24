@@ -18,6 +18,9 @@ use wasmtime::{Config, Engine, Store};
 
 const FULL: &str = "../../dist/lcr-code.wasm";
 const SCANNER: &str = "../../dist/lcr-code-scanner.wasm";
+/// The demo build, which `just test` builds alongside the shipped two.
+#[cfg(feature = "compare")]
+const COMPARE: &str = "../../dist/lcr-code-compare.wasm";
 
 const JSON: &str = r#"{"name":"Fred","loc":"45.00,55.0"}"#;
 
@@ -492,4 +495,148 @@ fn decode_cost_through_the_component() {
     }
     let each = t0.elapsed() / N;
     println!("decode {width}x{height}: {each:?} per frame over {N} frames");
+}
+
+#[cfg(feature = "compare")]
+fn bytes_val(b: &[u8]) -> Val {
+    Val::List(b.iter().map(|x| Val::U8(*x)).collect())
+}
+
+#[cfg(feature = "compare")]
+fn bytes_of(v: &Val) -> Vec<u8> {
+    let Val::List(items) = v else {
+        panic!("expected list<u8>, got {v:?}")
+    };
+    items
+        .iter()
+        .map(|b| match b {
+            Val::U8(n) => *n,
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+/// The fountain is the demo's illustration, not a shipped feature: neither shipped
+/// artifact may export it.
+#[test]
+fn shipped_artifacts_carry_no_fountain() {
+    for path in [FULL, SCANNER] {
+        let (engine, component) = load(path);
+        let linker: Linker<()> = Linker::new(&engine);
+        let mut store = Store::new(&engine, ());
+        let instance = linker.instantiate(&mut store, &component).unwrap();
+        assert!(
+            instance
+                .get_export(&mut store, None, "lcr:code/cft-fountain@0.4.0")
+                .is_none(),
+            "{path} exports cft-fountain"
+        );
+    }
+}
+
+/// A fountain transfer through the real ABI (CFT.md §21): the sender resource built by
+/// `start-fountain`, frames taken from it with a third of them dropped, and the receiver
+/// resource finishing — verified — from whatever arrived. Against the demo build, the one
+/// that exports `cft-fountain`.
+#[cfg(feature = "compare")]
+#[test]
+fn a_fountain_transfer_crosses_the_boundary() {
+    let (engine, component) = load(COMPARE);
+    let linker: Linker<()> = Linker::new(&engine);
+    let mut store = Store::new(&engine, ());
+    let instance = linker
+        .instantiate(&mut store, &component)
+        .expect("instantiate");
+    let cft = export(&instance, &mut store, None, "lcr:code/cft@0.4.0");
+    let fountain = export(&instance, &mut store, None, "lcr:code/cft-fountain@0.4.0");
+
+    // Incompressible, so the chunk count is what the size says: 40 chunks of 300 bytes.
+    let mut s = 0x9E37_79B9u32;
+    let file: Vec<u8> = (0..12_000)
+        .map(|_| {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            s as u8
+        })
+        .collect();
+
+    let start = func(&instance, &mut store, &fountain, "start-fountain");
+    let mut out = [Val::Bool(false)];
+    start
+        .call(
+            &mut store,
+            &[
+                bytes_val(&file),
+                Val::String("noise.bin".into()),
+                bytes_val(b"\x01\x02\x03\x04"),
+                Val::U32(300),
+            ],
+            &mut out,
+        )
+        .expect("start-fountain call");
+    let Val::Result(Ok(Some(handle))) = &out[0] else {
+        panic!("start-fountain failed: {:?}", out[0])
+    };
+    let Val::Resource(tx) = **handle else {
+        panic!("expected a fountain handle")
+    };
+
+    let count = func(
+        &instance,
+        &mut store,
+        &fountain,
+        "[method]fountain.source-count",
+    );
+    let mut k = [Val::Bool(false)];
+    count
+        .call(&mut store, &[Val::Resource(tx)], &mut k)
+        .unwrap();
+    let Val::U32(k) = k[0] else { panic!() };
+    assert!(k > 30, "expected ~40 chunks, got {k}");
+
+    let ctor = func(&instance, &mut store, &cft, "[constructor]receiver");
+    let mut rx = [Val::Bool(false)];
+    ctor.call(&mut store, &[], &mut rx).unwrap();
+    let Val::Resource(rx) = rx[0] else { panic!() };
+
+    let frame = func(&instance, &mut store, &fountain, "[method]fountain.frame");
+    let accept = func(&instance, &mut store, &cft, "[method]receiver.accept");
+    let mut done = false;
+    for n in 0..20 * k as u64 {
+        // Drop every third frame: a fixed pattern a plain carousel would also survive,
+        // but only after looping round for the chunks it lost.
+        if n % 3 == 2 {
+            continue;
+        }
+        let mut msg = [Val::Bool(false)];
+        frame
+            .call(&mut store, &[Val::Resource(tx), Val::U64(n)], &mut msg)
+            .unwrap();
+        let mut st = [Val::Bool(false)];
+        accept
+            .call(&mut store, &[Val::Resource(rx), msg[0].clone()], &mut st)
+            .unwrap();
+        let Val::Result(Ok(Some(status))) = &st[0] else {
+            panic!("accept failed at frame {n}: {:?}", st[0])
+        };
+        if matches!(**status, Val::Variant(ref tag, _) if tag == "complete") {
+            done = true;
+            break;
+        }
+    }
+    assert!(done, "never completed");
+
+    let finish = func(&instance, &mut store, &cft, "[method]receiver.finish");
+    let mut got = [Val::Bool(false)];
+    finish
+        .call(&mut store, &[Val::Resource(rx)], &mut got)
+        .unwrap();
+    let Val::Result(Ok(Some(bytes))) = &got[0] else {
+        panic!("finish failed: {:?}", got[0])
+    };
+    assert_eq!(bytes_of(bytes), file);
+
+    tx.resource_drop(&mut store).expect("drop fountain");
+    rx.resource_drop(&mut store).expect("drop receiver");
 }

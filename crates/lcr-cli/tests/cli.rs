@@ -221,3 +221,73 @@ fn every_format_decodes() {
         assert_eq!(stdout(&out).trim(), r#"{"fixture":true}"#, "{name}");
     }
 }
+
+/// `lcr send --fountain` (CFT.md §21): lose a third of the frames — manifests included —
+/// and the rest still rebuild the file. Too few, and `receive` says any more will do
+/// rather than naming symbols a carousel has no way to repeat.
+#[cfg(feature = "fountain")]
+#[test]
+fn a_fountain_survives_lost_frames() {
+    let dir = scratch("fountain");
+    let file = dir.join("noise.bin");
+    let mut s32 = 0x2545_f491u32;
+    let data: Vec<u8> = (0..6000)
+        .map(|_| {
+            s32 ^= s32 << 13;
+            s32 ^= s32 >> 17;
+            s32 ^= s32 << 5;
+            s32 as u8
+        })
+        .collect();
+    std::fs::write(&file, &data).unwrap();
+    let frames = dir.join("frames");
+    ok(&[
+        "send",
+        s(&file),
+        "-o",
+        s(&frames),
+        "--version",
+        "12",
+        "--fountain",
+    ]);
+
+    let mut images: Vec<PathBuf> = std::fs::read_dir(&frames)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    images.sort();
+    assert!(images.len() > 8, "6000 bytes at v12 is several chunks");
+
+    let out_file = dir.join("received.bin");
+    let kept: Vec<&str> = images
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 3 != 2)
+        .map(|(_, p)| s(p))
+        .collect();
+    let mut args = vec!["receive", "-o", s(&out_file)];
+    args.extend(kept.iter().copied());
+    let out = ok(&args);
+    assert_eq!(std::fs::read(&out_file).unwrap(), data);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("repair symbol"));
+
+    // The manifest and the last two frames, both repair symbols: not enough, and the
+    // message asks for more frames rather than naming particular ones.
+    let short = dir.join("short.bin");
+    let n = images.len();
+    let out = lcr(&[
+        "receive",
+        "-o",
+        s(&short),
+        s(&images[0]),
+        s(&images[n - 1]),
+        s(&images[n - 2]),
+    ]);
+    assert!(!out.status.success());
+    assert!(!short.exists());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("any further frames"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

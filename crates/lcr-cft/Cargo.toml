@@ -21,12 +21,21 @@ std = ["lcr-core/std"]
 zstd = ["dep:zstd", "std"]
 deflate = ["dep:miniz_oxide"]
 brotli = ["lcr-core/brotli"]
+# Fountain repair symbols (docs/CFT.md §21): a one-way carousel any slightly-more-than-all
+# of whose frames rebuild the file. Off by default — a plain transfer, where a receiver
+# can name what it missed, is what most carriers want, and this is the demo's illustration
+# of the other kind. Without it a receiver rejects repair symbols, as any pre-§21 one does.
+fountain = []
 
 [dependencies]
 lcr-core = { workspace = true }
 sha2 = { workspace = true }
 zstd = { version = "0.13", optional = true }
 miniz_oxide = { workspace = true, optional = true }
+
+[[test]]
+name = "fountain"
+required-features = ["fountain"]
 
 [dev-dependencies]
 lcr-core = { path = "../lcr-core", default-features = false, features = ["std", "deflate"] }
