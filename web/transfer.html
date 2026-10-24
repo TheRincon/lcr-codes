@@ -84,7 +84,9 @@
   body.present .controls,
   body.present .meta,
   body.present .err,
-  body.present #present { display: none; }
+  body.present #present,
+  body.present #pause,
+  body.present #restart { display: none; }
   body.present .stage {
     position: fixed; inset: 0; min-height: 0; padding: 0; border-radius: 0;
     background: #fff; overflow: hidden; display: block;
@@ -110,9 +112,12 @@
 </nav>
   <h1>File transfer — sender</h1>
   <p class="sub">
-    Drop a file. It is compressed and encoded into <b>one</b> LCR Code symbol, carrying its
-    own filename and SHA-256. Point the <a href="./receive.html">receiver</a> at it once.
-    No animation, no sequence, nothing uploaded — it all happens in this tab.
+    Drop a file. It is compressed and, if it fits, encoded into <b>one</b> LCR Code symbol
+    carrying its own filename and SHA-256 — point the <a href="./receive.html">receiver</a>
+    at it once. A bigger file becomes a <b>fountain</b>: the chunks once, then an endless
+    stream of repair symbols, any slightly-more-than-all of which rebuild the file, so a
+    receiver that misses frames never waits for one to come round again. Nothing is
+    uploaded — it all happens in this tab.
   </p>
 
   <div class="cols">
@@ -151,16 +156,42 @@
         </div>
       </div>
 
+      <div class="row">
+        <div>
+          <label class="f" for="fps">Symbols per second</label>
+          <select id="fps">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+            <option value="10">10</option>
+            <option value="12">12</option>
+          </select>
+        </div>
+        <div>
+          <label class="f" for="always">Fountain</label>
+          <select id="always">
+            <option value="0" selected>Only if needed</option>
+            <option value="1">Always</option>
+          </select>
+        </div>
+      </div>
+
       <p class="note">
         One symbol tops out at <b id="ceiling">…</b> after compression — the §9.1 container's
         14-bit length field, not the geometry. Auto picks the smallest version that fits, so
-        a small file stays easy to scan.
+        a small file stays easy to scan. Past that, Auto picks the largest version up to v40
+        that fits this screen at the module size, and the file is sent as a fountain. Pick
+        a symbol rate the receiver can decode: it gains nothing from symbols it is too slow
+        to read, but losing some costs only a little time.
       </p>
     </div>
 
     <div>
       <div class="stage" id="stage"><div class="idle">No file yet.</div></div>
       <button id="present" hidden>Present full screen</button>
+      <button id="pause" hidden>Pause</button>
+      <button id="restart" hidden>Restart from frame 0</button>
       <div class="meta" id="meta"></div>
       <div class="err" id="err"></div>
     </div>
@@ -169,7 +200,7 @@
 <div id="presentWarn"></div>
 
 <script type="module">
-import { encoder, cft } from './lcr/lcr-code.js';
+import { encoder, cft, cftFountain } from './lcr/lcr-code.js';
 
 const $ = id => document.getElementById(id);
 const stage = $('stage'), meta = $('meta'), err = $('err');
@@ -317,7 +348,160 @@ function idle(text) {
     { className: 'idle', textContent: text }));
 }
 
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+function fmtTime(sec) {
+  if (sec < 90) return `${sec.toFixed(0)} s`;
+  if (sec < 5400) return `${Math.floor(sec / 60)} min ${Math.round(sec % 60)} s`;
+  return `${(sec / 3600).toFixed(1)} h`;
+}
+
+// ---------------------------------------------------------------- fountain (CFT.md §21)
+//
+// A file past one symbol's capacity goes out as a carousel that never repeats itself:
+// frame n is `fountain.frame(n)` — the manifest every eighth frame, the source chunks
+// once, then repair symbols, each the XOR of a pseudo-random set of chunks. A receiver
+// needs slightly more than K of whichever it catches, so a dropped frame costs one more
+// frame rather than a wait for the loop to come round to it.
+
+// CBOR around a repair symbol's payload: map header, transfer id, symbol id, chunk count,
+// byte-string header and scheme. 25 bytes at most; the rest is margin.
+const CHUNK_SLACK = 40;
+// Above this, symbols get slow to encode and hard for a phone camera to resolve.
+const FOUNTAIN_AUTO_MAX = 40;
+// One frame in this many is the manifest — `MANIFEST_EVERY` in lcr-cft.
+const MANIFEST_EVERY = 8;
+
+let fountain = null, fState = null, timer = 0;
+
+function stopFountain() {
+  if (timer) cancelAnimationFrame(timer);
+  timer = 0;
+  try { fountain?.[Symbol.dispose](); } catch { /* already gone */ }
+  fountain = null;
+  fState = null;
+  $('pause').hidden = $('restart').hidden = true;
+}
+
+// Like `render`, but into the one canvas a fountain reuses for every frame, so presenting
+// does not re-place a new element ten times a second. Returns whether its size changed.
+function paintInto(canvas, rendered) {
+  const { pixels, width, height } = rendered;
+  const resized = canvas.width !== width || canvas.height !== height;
+  if (resized) { canvas.width = width; canvas.height = height; }
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(width, height);
+  for (let i = 0, j = 0; i < width * height; i++) {
+    img.data[j++] = pixels[i * 3];
+    img.data[j++] = pixels[i * 3 + 1];
+    img.data[j++] = pixels[i * 3 + 2];
+    img.data[j++] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return resized;
+}
+
+// Auto: the largest version up to FOUNTAIN_AUTO_MAX whose symbol — side plus about six
+// modules a side of gap, ring and quiet zone — fits the screen at this module size. Bigger
+// symbols carry more per frame, which is the whole throughput of the transfer.
+function fountainVersion(modulePx) {
+  const chosen = Number($('version').value);
+  if (chosen) return chosen;
+  const dpr = window.devicePixelRatio || 1;
+  const room = Math.min(screen.width, screen.height) * dpr;
+  let best = 1;
+  for (let v = 1; v <= FOUNTAIN_AUTO_MAX; v++) {
+    if ((21 + 4 * (v - 1) + 12) * modulePx <= room) best = v;
+  }
+  return best;
+}
+
+function startFountainMode(bytes, file, s, modulePx) {
+  const version = fountainVersion(modulePx);
+  const cap = capacityAt(version, s);
+  const chunk = cap - CHUNK_SLACK;
+  if (chunk < 64) {
+    throw new Error(`v${version} holds ${cap} B — too little to carry a fountain. Pick a larger version.`);
+  }
+  const id = crypto.getRandomValues(new Uint8Array(4));
+  fountain = cftFountain.startFountain(bytes, file.name, id, chunk);
+  const manifest = fountain.frame(0n);
+  if (manifest.length > cap) {
+    throw new Error(
+      `The manifest is ${manifest.length} B, mostly the filename, and v${version} holds ` +
+      `${cap} B. Shorten the filename or pick a larger version.`);
+  }
+  const canvas = document.createElement('canvas');
+  stage.replaceChildren(canvas);
+  fState = {
+    version, s, modulePx, chunk, n: 0n, last: 0, paused: false, sym: null,
+    k: fountain.sourceCount(), name: file.name,
+    orig: Number(fountain.originalSize()), comp: Number(fountain.compressedSize()),
+  };
+  current = { version };
+  modulePxShown = modulePx;
+  $('present').hidden = $('pause').hidden = $('restart').hidden = false;
+  $('pause').textContent = 'Pause';
+  showFrame();
+  timer = requestAnimationFrame(loop);
+}
+
+function loop(t) {
+  timer = requestAnimationFrame(loop);
+  if (!fState || fState.paused) return;
+  // Paced by the clock, not by frames: a slow encode delays the next symbol rather than
+  // queueing a burst of them to catch up, which would show some for a single refresh.
+  if (t - fState.last < 1000 / Number($('fps').value)) return;
+  fState.last = t;
+  showFrame();
+}
+
+function showFrame() {
+  const f = fState;
+  try {
+    // Each frame at the smallest version that holds it, not the transfer's version. Full
+    // chunks come out at that version anyway; the manifest and the short final chunk get a
+    // small, full symbol instead of a large one that is mostly zero padding — which reads
+    // far worse once a camera clips the contrast, and the manifest is the one symbol a
+    // receiver cannot do without.
+    const sym = encoder.encodeBytes(fountain.frame(f.n), { ...f.s, version: undefined }, f.modulePx);
+    if (paintInto(stage.querySelector('canvas'), sym)) fitPresent();
+    f.sym = sym;
+  } catch (e) {
+    stopFountain();
+    err.textContent = `Encoding frame ${f.n} failed: ${e && e.message || e}`;
+    return;
+  }
+  f.n += 1n;
+  fountainMeta();
+}
+
+function fountainMeta() {
+  const f = fState;
+  const n = Number(f.n);
+  const sent = n - Math.ceil(n / MANIFEST_EVERY);   // data frames, manifests excluded
+  const fps = Number($('fps').value);
+  const phase = sent < f.k
+    ? `source pass — <b>${sent.toLocaleString()}</b> of ${f.k.toLocaleString()}`
+    : `repairing — <b>${(sent - f.k).toLocaleString()}</b> repair symbols sent`;
+  // The best case: a receiver that reads every frame needs K data frames plus the
+  // manifests among them. Each frame it misses costs about one more.
+  const best = (f.k * MANIFEST_EVERY / (MANIFEST_EVERY - 1)) / fps;
+  meta.innerHTML = `
+    <div class="big">Fountain — v${f.version}, ${f.k.toLocaleString()} chunks of ${f.chunk.toLocaleString()} B</div>
+    <div>file <b>${esc(f.name)}</b></div>
+    <div>original <b>${f.orig.toLocaleString()} B</b></div>
+    <div>compressed <b>${f.comp.toLocaleString()} B</b></div>
+    <div>frame <b>${n.toLocaleString()}</b>${f.paused ? ' (paused)' : ''}</div>
+    <div>${phase}</div>
+    <div>throughput <b>${(f.chunk * fps * (MANIFEST_EVERY - 1) / MANIFEST_EVERY / 1024).toFixed(1)} KiB/s</b></div>
+    <div>receiving every frame <b>${fmtTime(best)}</b></div>
+    <div id="display"></div>`;
+  if (f.sym) reportDisplay(f.sym, f.modulePx);
+}
+
 async function load(file) {
+  stopFountain();
   err.textContent = '';
   meta.innerHTML = '';
   idle('Encoding…');
@@ -335,12 +519,10 @@ async function load(file) {
     // it fits, which is what makes this one symbol rather than two.
     const ceiling = capacityAt(MAX_VERSION, s) - MANIFEST_SLACK;
     const probe = cft.split(bytes, file.name, id, ceiling);
-    if (probe.totalChunks !== 1) {
-      throw new Error(
-        `${bytes.length.toLocaleString()} B compresses to ` +
-        `${Number(probe.compressedSize).toLocaleString()} B, which is past the ` +
-        `${capacityAt(MAX_VERSION, s).toLocaleString()} B a single symbol can hold.\n` +
-        `Use a smaller file, or a more compressible one.`);
+    // Past one symbol — or asked for — it is a fountain.
+    if (probe.totalChunks !== 1 || $('always').value === '1') {
+      startFountainMode(bytes, file, s, modulePx);
+      return;
     }
     const streamLen = Number(probe.compressedSize);
 
@@ -356,10 +538,10 @@ async function load(file) {
 
     const cap = capacityAt(version, s);
     const transfer = cft.split(bytes, file.name, id, cap - MANIFEST_SLACK);
+    // The chosen version is too small for one symbol: send it as a fountain at that version.
     if (transfer.totalChunks !== 1) {
-      throw new Error(
-        `v${version} holds ${cap.toLocaleString()} B but the stream needs ` +
-        `${streamLen.toLocaleString()} B. Pick a larger version, or leave it on Auto.`);
+      startFountainMode(bytes, file, s, modulePx);
+      return;
     }
 
     const t0 = performance.now();
@@ -384,6 +566,7 @@ async function load(file) {
       <div id="display"></div>`;
     reportDisplay(one, modulePx);
   } catch (e) {
+    stopFountain();
     current = null;
     $('present').hidden = true;
     idle('Nothing to show.');
@@ -402,7 +585,21 @@ for (const ev of ['dragleave', 'drop']) {
 }
 drop.addEventListener('drop', e => e.dataTransfer.files[0] && load(e.dataTransfer.files[0]));
 
-for (const id of ['version', 'profile', 'ecc', 'modulePx']) {
+// The symbol rate is read on every tick, so changing it needs no re-encode.
+$('fps').addEventListener('change', () => { if (fState) fountainMeta(); });
+$('pause').onclick = () => {
+  if (!fState) return;
+  fState.paused = !fState.paused;
+  $('pause').textContent = fState.paused ? 'Resume' : 'Pause';
+  fountainMeta();
+};
+$('restart').onclick = () => {
+  if (!fState) return;
+  fState.n = 0n;
+  showFrame();
+};
+
+for (const id of ['version', 'profile', 'ecc', 'modulePx', 'always']) {
   $(id).addEventListener('change', () => {
     showCeiling();
     const f = $('file').files[0];
@@ -417,6 +614,11 @@ document.addEventListener('fullscreenchange', () => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.body.classList.contains('present')) present(false);
+  // Space pauses a fountain, which matters most while presenting, where the buttons are hidden.
+  if (e.key === ' ' && fState && e.target === document.body) {
+    e.preventDefault();
+    $('pause').click();
+  }
 });
 // Clicking the symbol leaves too: on a phone or tablet there may be no Esc key.
 stage.addEventListener('click', () => {
