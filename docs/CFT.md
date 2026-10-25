@@ -701,7 +701,155 @@ The initial CFT design follows these principles:
 
 ---
 
-# 21. Potential Future Extensions
+# 21. Fountain Repair Symbols
+
+*Added by the reference implementation (`lcr_cft::fountain`), not part of the original
+sketch. It is §22's "forward error correction above the transport", for the case that
+needs it most.*
+
+*Optional, and off by default there: the `fountain` cargo feature of `lcr-cft`, `lcr-cli`
+and `lcr-ffi`, and in WebAssembly only the demo build (`cft-fountain` in the WIT, exported
+by the `lcr-code-compare` world that the web pages load). Most transfers have a receiver
+that can name what it missed; this is the illustration of the one-way case. A receiver
+without it rejects repair symbols as out-of-range chunks.*
+
+A camera pointed at a screen has no way back to the sender. §10's missing-chunk list
+assumes someone will show those chunks again; on a one-way carousel the receiver can only
+wait for the loop to come round, and a chunk it misses twice costs it two whole loops. At
+30% frame loss a plain carousel needs 5–7 frames per chunk, and the figure grows with the
+file.
+
+With repair symbols the sender never repeats itself. It shows the source chunks once, then
+an endless stream of new symbols, each the XOR of a pseudo-random set of chunks. **Any**
+slightly-more-than-`K` of them rebuild the file, so which ones were missed stops mattering.
+Measured by `crates/lcr-cft/tests/fountain.rs` (`survey_vs_carousel`), in frames per chunk
+for a receiver watching from the start:
+
+| Chunks | 10% lost | 30% lost | 50% lost |
+|---:|---:|---:|---:|
+| 100, fountain | 1.31 | 1.67 | 2.37 |
+| 100, plain carousel | 2.21 | 4.54 | 6.98 |
+| 1,000, fountain | 1.43 | 1.85 | 2.72 |
+| 1,000, plain carousel | 3.30 | 5.66 | 9.89 |
+| 3,000, fountain | 1.41 | 2.20 | 3.26 |
+| 3,000, plain carousel | 4.02 | 7.18 | 13.26 |
+
+The code is **LT** (Luby, 2002) in systematic form. **Not RaptorQ** (RFC 6330): it needs
+fewer symbols, but it is covered by patent declarations, and the LCR Code specification's
+royalty-free commitment cannot extend over somebody else's patents. LT's own patents have
+expired.
+
+## 21.1 Symbol ids
+
+Symbols are numbered from 0. With `K` = the manifest's `total_chunks`:
+
+* **ids `0..K` are the source chunks**, sent as ordinary §6 chunk messages. A receiver that
+  knows nothing of this section still reads them.
+* **ids `K..` are repair symbols**, carried in the message of §21.2.
+
+## 21.2 The repair message
+
+A CBOR map with the chunk's keys plus one:
+
+| Key | Field | Type | Meaning |
+|---:|---|---|---|
+| 0 | `transfer_id` | byte string | as in a chunk |
+| 1 | `id` | uint | the symbol id, at least `K` |
+| 2 | `total` | uint | `K`; must equal the manifest's count |
+| 3 | `payload` | byte string | XOR of the chunks of §21.3, each zero-padded to `chunk_size`; always exactly `chunk_size` bytes |
+| 4 | `scheme` | uint | `1`, systematic LT as defined here |
+
+**Key 4 is the discriminator.** Key 0 is a byte string, as in a chunk, so a receiver checks
+for key 4 first. A receiver that predates this section parses a repair symbol as a chunk and
+rejects it, because its `id` is at least `total`. Old receivers therefore ignore repair
+symbols rather than misreading them. An unknown `scheme` is rejected, per §4.
+
+## 21.3 Which chunks a repair symbol combines
+
+Sender and receiver must derive **bit-identical** sets, and they are routinely different
+builds — native and WebAssembly, say. So the definition uses integer arithmetic only. A
+degree table computed with `ln` and `sqrt` in floating point can differ in the last place
+between platforms' maths libraries, and one flipped threshold is a symbol XORed into the
+wrong chunks.
+
+**Generator.** SplitMix64, with state `x` initialised to the symbol id:
+
+```text
+next():  x ← x + 0x9E3779B97F4A7C15            (mod 2⁶⁴)
+         z ← x
+         z ← (z ⊕ (z ≫ 30)) · 0xBF58476D1CE4E5B9
+         z ← (z ⊕ (z ≫ 27)) · 0x94D049BB133111EB
+         return z ⊕ (z ≫ 31)
+below(n): ⌊next() · n / 2⁶⁴⌋                     (128-bit product)
+```
+
+**Dense or sparse.** Repair symbol `id` is **dense** when `K ≤ 256`, or when
+`(id − K) mod 8 = 7`; otherwise it is sparse.
+
+**Sparse symbols** draw a degree from the robust soliton distribution in integer form. Let
+`U = 2³²`, `S = max(1, ⌊√K⌋)`, the spike `M = max(1, ⌊K / S⌋)`, and `b` = the bit length of
+`20·S`. For `d` in `1..=min(K, 65536)` the weight is `w(d) = ρ(d) + τ(d)`, each term floored
+on its own:
+
+```text
+ρ(1) = ⌊U / K⌋                    ρ(d) = ⌊U / (d·(d−1))⌋          for d ≥ 2
+τ(d) = ⌊U·S / (K·d)⌋              for d < M
+τ(M) = ⌊U·S·693·b / (1000·K)⌋
+τ(d) = 0                          for d > M
+```
+
+This is Luby's distribution with `R = S` — what `c·ln(K/δ)·√K` comes to at his recommended
+`c ≈ 0.1, δ = 0.05` for the sizes a file transfer meets — and with `ln(S/δ)` approximated as
+`0.693·b`. The approximation need not be good, only exact: it is the definition.
+
+With `Z = Σ w(d)`, take `r = ⌊next() · Z / 2⁶⁴⌋`. The degree is the smallest `d` whose
+cumulative weight `w(1) + … + w(d)` exceeds `r`. If `d ≥ K` the set is every chunk.
+Otherwise each further `below(K)` names a chunk, a repeat is drawn again, and the first `d`
+distinct chunks are the set.
+
+**Dense symbols** take generator outputs as a bit string, least significant bit first, one
+`next()` per 64 chunks. Chunk `j` is in the set when bit `j` is 1. A set that comes out empty
+is instead `{ below(K) }`.
+
+**Why both.** Sparse symbols, mostly degree 2 or 3, are what let a receiver that starts
+from nothing peel its way in. They are mostly wasted on one that watched the source pass and
+missed only a few chunks: a degree-2 symbol usually misses its few gaps. A dense symbol
+almost always covers some. One in eight is the balance the survey above settled on. Up to
+256 chunks every repair symbol is dense: §21.4's receiver can then always solve the whole
+file by elimination, against which random dense symbols need only about `K + 2`.
+
+## 21.4 Receiving
+
+A receiver XORs every chunk it already holds out of an arriving repair symbol. A symbol
+left with one unknown chunk **is** that chunk; recovering it may reduce other held symbols
+to one in turn (*peeling*). A chunk recovered from a repair symbol is `chunk_size` bytes,
+and the final, short chunk's padding must be zero and is stripped.
+
+Peeling alone needs 1.2–1.6× `K` symbols. The reference receiver also solves by Gaussian
+elimination over GF(2) once at most 256 chunks remain unknown and it holds at least as many
+symbols as unknowns. That finishes as soon as the held symbols determine the file, which
+for small transfers is within a few percent of `K`. Dense symbols are only worth holding
+for elimination, so a receiver missing more than 256 chunks may discard them on arrival.
+
+A receiver should count each repair id once. A camera reads the same symbol on several
+frames.
+
+## 21.5 Sending
+
+The reference schedule, `Fountain::frame(n)`: frame `n` is the manifest when `n` is a
+multiple of 8, and otherwise symbol `n − ⌊n / 8⌋ − 1` — the source chunks once, then repair
+symbols in id order. A receiver that starts mid-stream is never more than seven frames from
+a manifest.
+
+On an LCR Code carrier, encode each message at the **smallest version that holds it**, not
+at the transfer's version. Full chunks come out at that version anyway. The manifest and the
+short final chunk then fill a small symbol instead of leaving a large one mostly zero
+padding, which reads markedly worse once a camera clips the contrast. The manifest is the
+one symbol a receiver cannot do without.
+
+---
+
+# 22. Potential Future Extensions
 
 A production version could add:
 
@@ -709,7 +857,6 @@ A production version could add:
 * Encryption
 * Resumable transfers
 * Chunk-level hashes
-* Forward error correction above the transport
 * Multiple compression algorithms
 * Directory/archive transfers
 * MIME/content-type metadata

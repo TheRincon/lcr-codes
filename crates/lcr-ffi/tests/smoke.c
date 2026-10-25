@@ -141,11 +141,57 @@ static void file_transfer(void) {
   lcr_cft_transfer_free(t);
 }
 
+#if defined(LCR_FOUNTAIN)
+/* A fountain (CFT.md §21): show frames in order, lose every third, and the receiver still
+ * finishes — from whichever symbols it caught, with no request to show anything again. */
+static void fountain_transfer(void) {
+  unsigned char file[6000];
+  unsigned int s = 0x2545f491u;
+  for (size_t i = 0; i < sizeof file; i++) {
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    file[i] = (unsigned char)s;
+  }
+  const unsigned char id[4] = {9, 8, 7, 6};
+
+  LcrCftFountain *f = NULL;
+  CHECK(lcr_cft_fountain_new(file, sizeof file, "noise.bin", id, sizeof id, 300, &f) == LCR_OK);
+  uint32_t k = lcr_cft_fountain_source_count(f);
+  CHECK(k > 10);
+
+  LcrCftReceiver *rx = lcr_cft_receiver_new();
+  LcrCftStatus st = lcr_cft_receiver_status(rx);
+  uint64_t n = 0;
+  for (; n < 20u * k && st.state != LCR_CFT_COMPLETE; n++) {
+    if (n % 3 == 2) continue;
+    LcrBytes msg;
+    CHECK(lcr_cft_fountain_frame(f, n, &msg) == LCR_OK);
+    CHECK(lcr_cft_receiver_accept(rx, msg.data, msg.len, &st) == LCR_OK);
+    lcr_bytes_free(&msg);
+  }
+  CHECK(st.state == LCR_CFT_COMPLETE);
+
+  LcrBytes got;
+  CHECK(lcr_cft_receiver_finish(rx, &got) == LCR_OK);
+  CHECK(got.len == sizeof file && memcmp(got.data, file, sizeof file) == 0);
+  printf("fountain: %u chunks, complete after %llu frames with a third lost\n", k,
+         (unsigned long long)n);
+
+  lcr_bytes_free(&got);
+  lcr_cft_receiver_free(rx);
+  lcr_cft_fountain_free(f);
+}
+#endif
+
 int main(void) {
   printf("liblcr %s\n", lcr_version());
   json_round_trip();
   errors_are_reported();
   file_transfer();
+#if defined(LCR_FOUNTAIN)
+  fountain_transfer();
+#endif
   if (failures) {
     fprintf(stderr, "%d check(s) failed\n", failures);
     return 1;

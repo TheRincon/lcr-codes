@@ -16,6 +16,12 @@ categories = ["development-tools::ffi", "encoding"]
 # `tests/` call the exported functions directly, through the same ABI a C caller uses.
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# `lcr_cft_fountain_*` and `lcr_cft_receiver_pending` (docs/CFT.md §21). Off by default,
+# like the WebAssembly side, where only the demo build carries it. In the header these sit
+# behind `LCR_FOUNTAIN`: define it when linking a library built with this feature.
+fountain = ["lcr-cft/fountain"]
+
 [dependencies]
 # Feature-for-feature what the `lcr-code` component carries, so a native host and a wasm
 # host read and write exactly the same symbols and transfers.

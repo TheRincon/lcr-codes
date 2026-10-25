@@ -36,6 +36,11 @@
   .hint { font-size: .85rem; color: var(--bad); margin-top: .5rem; }
   .err { color: var(--bad); font-size: .82rem; margin-top: .5rem; white-space: pre-wrap; }
   .ok { color: var(--ok); }
+
+  /* Fountain progress: a bar, and one cell per chunk — lit once known, by whatever route. */
+  .bar { height: .5rem; background: var(--line); border-radius: 3px; margin-top: .6rem; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .2s; }
+  #map { display: block; width: 100%; margin-top: .6rem; image-rendering: pixelated; border-radius: 3px; }
 </style>
 <link rel="stylesheet" href="nav.css">
 </head>
@@ -51,8 +56,10 @@
 </nav>
   <h1>File transfer — receiver</h1>
   <p class="sub">
-    Point the camera at the <a href="transfer.html">sender's</a> symbol and hold steady. It is a single symbol — one
-    good read is the whole file. Nothing leaves this device.
+    Point the camera at the <a href="transfer.html">sender's</a> symbol and hold steady. A small file is a single
+    symbol — one good read is the whole file. A large one is a fountain: keep the camera on the changing symbols
+    and the file completes once slightly more than its chunk count have been read, whichever they were.
+    Nothing leaves this device.
   </p>
 
   <video id="video" playsinline muted></video>
@@ -60,6 +67,8 @@
 
   <div class="card">
     <div class="big" id="state">Ready.</div>
+    <div class="bar" id="bar" hidden><i id="barFill"></i></div>
+    <canvas id="map" hidden></canvas>
     <div class="kv" id="kv"></div>
     <div class="hint" id="hint"></div>
     <div class="err" id="err"></div>
@@ -71,7 +80,7 @@
 <canvas id="scratch" hidden></canvas>
 
 <script type="module">
-import { decoder, cft } from './lcr/lcr-code.js';
+import { decoder, cft, cftFountain } from './lcr/lcr-code.js';
 
 const $ = id => document.getElementById(id);
 const video = $('video'), scratch = $('scratch');
@@ -90,17 +99,73 @@ let frames = 0, probes = 0;
 // smear the very LLRs being accumulated.
 let acc = null;
 
+// One receiver for the whole transfer, kept across frames. A single-symbol file completes
+// on its first message; a fountain (CFT.md §21) feeds it symbol after symbol until it does.
+//
+// `multi` turns on once a message arrives that does not complete the file on its own. From
+// then the accumulator is bypassed: it combines frames on the assumption they show the same
+// symbol, and a fountain changes symbol several times a second.
+let rx = null, multi = false;
+let seen = new Set(), reads = 0, startedAt = 0, lastDraw = 0;
+
 function reset() {
   frames = probes = 0;
   acc = new decoder.Accumulator();
+  try { rx?.[Symbol.dispose](); } catch { /* already gone */ }
+  rx = new cft.Receiver();
+  multi = false;
+  seen = new Set(); reads = 0; startedAt = 0; lastDraw = 0;
   if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
   $('save').hidden = true;
   $('again').hidden = true;
+  $('bar').hidden = true;
+  $('map').hidden = true;
   $('err').textContent = '';
   $('hint').textContent = '';
   $('kv').textContent = '';
   $('state').textContent = 'Ready.';
   $('state').classList.remove('ok');
+}
+
+// The chunk map: one cell per chunk, lit once known. Drawn at most four times a second;
+// `missing()` is a list of up to K indices and the camera loop has better things to do.
+function drawProgress(force) {
+  const now = performance.now();
+  if (!force && now - lastDraw < 250) return;
+  lastDraw = now;
+  const st = rx.status();
+  const secs = startedAt ? (now - startedAt) / 1000 : 0;
+  if (st.tag === 'awaiting-manifest') {
+    $('state').textContent = 'Receiving — waiting for the manifest';
+    $('kv').innerHTML = `held <b>${st.val}</b> symbols · reads <b>${reads}</b> · ${secs.toFixed(0)} s`;
+    return;
+  }
+  if (st.tag !== 'receiving') return;
+  const { have, total } = st.val;
+  const pct = 100 * have / total;
+  $('state').textContent = `Receiving — ${pct.toFixed(pct < 10 ? 1 : 0)}%`;
+  $('bar').hidden = false;
+  $('barFill').style.width = `${pct}%`;
+
+  const map = $('map');
+  map.hidden = false;
+  const cols = Math.min(total, Math.max(16, Math.ceil(Math.sqrt(total * 4))));
+  const rows = Math.ceil(total / cols);
+  if (map.width !== cols || map.height !== rows) { map.width = cols; map.height = rows; }
+  map.style.height = `${Math.min(10, Math.max(1.2, rows * 0.5))}rem`;
+  const ctx = map.getContext('2d');
+  ctx.fillStyle = '#8bd377';
+  ctx.fillRect(0, 0, cols, rows);
+  ctx.fillStyle = '#2a3326';
+  for (const i of rx.missing()) ctx.fillRect(i % cols, Math.floor(i / cols), 1, 1);
+
+  const name = rx.filename();
+  const rate = secs > 0 ? seen.size / secs : 0;
+  $('kv').innerHTML =
+    (name ? `file <b>${name.replace(/[&<>"]/g, '')}</b> · ` : '') +
+    `chunks <b>${have.toLocaleString()}</b> / ${total.toLocaleString()} · ` +
+    `repair held <b>${cftFountain.pending(rx)}</b> · symbols <b>${seen.size}</b> ` +
+    `(${rate.toFixed(1)}/s) · ${secs.toFixed(0)} s`;
 }
 
 function sniff(b) {
@@ -126,7 +191,17 @@ function offer(bytes, name, type) {
   $('state').textContent = `Verified — ${bytes.length.toLocaleString()} bytes`;
   $('state').classList.add('ok');
   $('hint').textContent = '';
-  $('kv').innerHTML = `file <b>${name}</b> · frames <b>${frames}</b>`;
+  const safe = name.replace(/[&<>"]/g, '');
+  if (multi) {
+    drawProgress(true);
+    $('state').textContent = `Verified — ${bytes.length.toLocaleString()} bytes`;
+    const secs = (performance.now() - startedAt) / 1000;
+    $('kv').innerHTML =
+      `file <b>${safe}</b> · <b>${seen.size}</b> distinct symbols read in ` +
+      `<b>${secs.toFixed(0)} s</b> · ${(bytes.length / 1024 / secs).toFixed(1)} KiB/s`;
+  } else {
+    $('kv').innerHTML = `file <b>${safe}</b> · frames <b>${frames}</b>`;
+  }
   $('save').hidden = false;
   $('again').hidden = false;
   $('save').textContent = `Save ${name}`;
@@ -143,22 +218,36 @@ function offer(bytes, name, type) {
   };
 }
 
-// One decoded symbol is the whole transfer: CFT carries the stream inline in the manifest,
-// so the first message completes it — filename and hash included.
+// Feed one decoded body to the receiver. Returns true once the file is whole and offered.
+//
+// A small file is one symbol — CFT carries the stream inline in the manifest, so the first
+// message completes it, filename and hash included. Anything else is part of a larger
+// transfer, and the camera keeps going.
 function handle(body) {
-  const rx = new cft.Receiver();
+  // A camera reads each symbol on several frames; only new ones are news.
+  const key = `${body.length}:${body.subarray(0, 24).join(',')}`;
+  const fresh = !seen.has(key);
+  reads++;
   let complete = false;
   try {
     complete = rx.accept(body).tag === 'complete';
-  } catch {
-    // Not a CFT message. A whole file sent as raw bytes still decodes; it just has no
-    // filename or hash to check, so sniff a type and hand it over.
-    const [ext, type] = sniff(body);
-    offer(body, `received.${ext}`, type);
-    return true;
+  } catch (e) {
+    if (!multi) {
+      // Not a CFT message. A whole file sent as raw bytes still decodes; it just has no
+      // filename or hash to check, so sniff a type and hand it over.
+      const [ext, type] = sniff(body);
+      offer(body, `received.${ext}`, type);
+      return true;
+    }
+    // Mid-transfer, a symbol that will not fit is from something else on screen — a
+    // second sender, or one restarted with a new transfer ID. Say so and carry on.
+    $('err').textContent = `Ignored a symbol: ${e && e.message || e}`;
+    return false;
   }
+  if (fresh) seen.add(key);
   if (!complete) {
-    $('err').textContent = 'That symbol is part of a multi-symbol transfer, which this page does not collect.';
+    if (!multi) { multi = true; startedAt = performance.now(); $('err').textContent = ''; }
+    drawProgress(false);
     return false;
   }
   try {
@@ -185,11 +274,15 @@ function tick() {
   try {
     // Feed the accumulator first. A frame that fails to demodulate is skipped rather than
     // fatal — in a preview stream most frames are blurred or mid-refresh.
+    // Not during a fountain: every few frames show a different symbol, and combining them
+    // would only cost time.
     let combined = 0;
-    try {
-      acc.push(image);
-      combined = acc.frames();
-    } catch { /* nothing usable in this frame */ }
+    if (!multi) {
+      try {
+        acc.push(image);
+        combined = acc.frames();
+      } catch { /* nothing usable in this frame */ }
+    }
 
     // Try the accumulated evidence, then this frame alone. The accumulator wins on a
     // marginal capture; the single frame wins when the camera has just been re-aimed and
@@ -203,19 +296,26 @@ function tick() {
   } catch {
     // No decode. Probe occasionally so the page can say *why* rather than just waiting —
     // §12.1–§12.3 without the payload work. Every sixth frame, so it stays cheap.
+    // Mid-fountain only the hint changes: the headline is the transfer's progress, and a
+    // frame caught between two symbols failing is normal.
     if (++probes % 6 === 0) {
       try {
         const pr = decoder.probe({ pixels: img.data, width: w, height: h, stride: w * 4, format: 'rgba8' });
         const px = pr.capturePitchMin;
-        $('state').textContent = `Symbol found — v${pr.version}`;
+        if (!multi) $('state').textContent = `Symbol found — v${pr.version}`;
         $('hint').textContent = px < 3
           ? `Only ${px.toFixed(1)} px per module. Move closer.`
-          : `${px.toFixed(1)} px per module, but the payload will not decode yet. Hold steadier, or avoid glare.`;
+          : multi ? '' : `${px.toFixed(1)} px per module, but the payload will not decode yet. Hold steadier, or avoid glare.`;
       } catch {
-        $('state').textContent = 'Looking…';
+        if (!multi) $('state').textContent = 'Looking…';
         $('hint').textContent = 'No symbol in frame. Fill more of the view with it.';
       }
     }
+  }
+  if (multi) {
+    drawProgress(false);
+    requestAnimationFrame(tick);
+    return;
   }
   let combined = 0;
   try { combined = acc.frames(); } catch { /* ignore */ }

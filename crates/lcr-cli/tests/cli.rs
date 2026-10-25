@@ -205,19 +205,103 @@ fn send_and_receive_a_file() {
 /// The fixtures come from ImageMagick (JPEG, AVIF, both PNG variants), `cwebp` and `cjxl`,
 /// all lossy except the PNGs, so this checks the decoders against files this project did
 /// not write — and, in CI, that AVIF builds and decodes on x86 as well as ARM.
+///
+/// Each format only when its feature is on; `just test` turns them all on. A format left
+/// out must say which feature brings it back.
 #[test]
 fn every_format_decodes() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    for name in [
-        "symbol.png",
-        "symbol-rgba.png",
-        "symbol-indexed.png",
-        "symbol.jpg",
-        "symbol.webp",
-        "symbol.jxl",
-        "symbol.avif",
+    for (name, feature, on) in [
+        ("symbol.png", "png", cfg!(feature = "png")),
+        ("symbol-rgba.png", "png", cfg!(feature = "png")),
+        ("symbol-indexed.png", "png", cfg!(feature = "png")),
+        ("symbol.jpg", "jpeg", cfg!(feature = "jpeg")),
+        ("symbol.webp", "webp", cfg!(feature = "webp")),
+        ("symbol.jxl", "jxl", cfg!(feature = "jxl")),
+        ("symbol.avif", "avif", cfg!(feature = "avif")),
     ] {
-        let out = ok(&["decode", s(&dir.join(name))]);
-        assert_eq!(stdout(&out).trim(), r#"{"fixture":true}"#, "{name}");
+        let path = dir.join(name);
+        if on {
+            let out = ok(&["decode", s(&path)]);
+            assert_eq!(stdout(&out).trim(), r#"{"fixture":true}"#, "{name}");
+        } else {
+            let out = lcr(&["decode", s(&path)]);
+            assert!(!out.status.success(), "{name}");
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                err.contains(&format!("--features {feature}")),
+                "{name}: {err}"
+            );
+        }
     }
+}
+
+/// `lcr send --fountain` (CFT.md §21): lose a third of the frames — manifests included —
+/// and the rest still rebuild the file. Too few, and `receive` says any more will do
+/// rather than naming symbols a carousel has no way to repeat.
+#[cfg(feature = "fountain")]
+#[test]
+fn a_fountain_survives_lost_frames() {
+    let dir = scratch("fountain");
+    let file = dir.join("noise.bin");
+    let mut s32 = 0x2545_f491u32;
+    let data: Vec<u8> = (0..6000)
+        .map(|_| {
+            s32 ^= s32 << 13;
+            s32 ^= s32 >> 17;
+            s32 ^= s32 << 5;
+            s32 as u8
+        })
+        .collect();
+    std::fs::write(&file, &data).unwrap();
+    let frames = dir.join("frames");
+    ok(&[
+        "send",
+        s(&file),
+        "-o",
+        s(&frames),
+        "--version",
+        "12",
+        "--fountain",
+    ]);
+
+    let mut images: Vec<PathBuf> = std::fs::read_dir(&frames)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    images.sort();
+    assert!(images.len() > 8, "6000 bytes at v12 is several chunks");
+
+    let out_file = dir.join("received.bin");
+    let kept: Vec<&str> = images
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 3 != 2)
+        .map(|(_, p)| s(p))
+        .collect();
+    let mut args = vec!["receive", "-o", s(&out_file)];
+    args.extend(kept.iter().copied());
+    let out = ok(&args);
+    assert_eq!(std::fs::read(&out_file).unwrap(), data);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("repair symbol"));
+
+    // The manifest and the last two frames, both repair symbols: not enough, and the
+    // message asks for more frames rather than naming particular ones.
+    let short = dir.join("short.bin");
+    let n = images.len();
+    let out = lcr(&[
+        "receive",
+        "-o",
+        s(&short),
+        s(&images[0]),
+        s(&images[n - 1]),
+        s(&images[n - 2]),
+    ]);
+    assert!(!out.status.success());
+    assert!(!short.exists());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("any further frames"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

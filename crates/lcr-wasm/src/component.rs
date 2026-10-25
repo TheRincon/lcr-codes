@@ -225,7 +225,7 @@ mod cft_impl {
     /// **Deflate, not Zstandard.** `zstd-sys` compiles C and there is no C toolchain for
     /// `wasm32-unknown-unknown`, so the browser build uses the pure-Rust codec. The
     /// manifest records the choice, so a receiver is never guessing.
-    const CODEC: Compression = Compression::Deflate;
+    pub(super) const CODEC: Compression = Compression::Deflate;
 
     fn status_out(s: Status) -> WitStatus {
         match s {
@@ -256,7 +256,7 @@ mod cft_impl {
         }
     }
 
-    pub struct Rx(RefCell<Reassembler>);
+    pub struct Rx(pub(super) RefCell<Reassembler>);
 
     impl GuestReceiver for Rx {
         fn new() -> Self {
@@ -292,6 +292,62 @@ mod cft_impl {
 
         fn finish(&self) -> Result<Vec<u8>, String> {
             self.0.borrow().finish().map_err(|e| e.to_string())
+        }
+    }
+}
+
+// ---------------------------------------------------------------- cft-fountain
+
+/// Fountain transfers (docs/CFT.md §21). The demo world only — see the interface note in
+/// `wit/lcr.wit` — so it rides on `compare`, which is what builds that world.
+#[cfg(feature = "compare")]
+mod cft_fountain_impl {
+    use super::Component;
+    use super::cft_impl::{CODEC, Rx};
+    use super::exports;
+    use exports::lcr::code::cft::ReceiverBorrow;
+    use exports::lcr::code::cft_fountain::{
+        Fountain as WitFountain, Guest as FountainGuest, GuestFountain,
+    };
+    use lcr_cft::Fountain;
+
+    impl FountainGuest for Component {
+        type Fountain = Tx;
+
+        fn start_fountain(
+            file: Vec<u8>,
+            filename: String,
+            transfer_id: Vec<u8>,
+            chunk_size: u32,
+        ) -> Result<WitFountain, String> {
+            let name = (!filename.is_empty()).then_some(filename);
+            let t = lcr_cft::split(&file, name, transfer_id, CODEC, chunk_size)
+                .map_err(|e| e.to_string())?;
+            Ok(WitFountain::new(Tx(Fountain::new(t))))
+        }
+
+        fn pending(rx: ReceiverBorrow<'_>) -> u32 {
+            rx.get::<Rx>().0.borrow().pending() as u32
+        }
+    }
+
+    pub struct Tx(Fountain);
+
+    impl GuestFountain for Tx {
+        fn frame(&self, n: u64) -> Vec<u8> {
+            self.0.frame(n)
+        }
+
+        fn source_count(&self) -> u32 {
+            self.0.source_count()
+        }
+
+        fn original_size(&self) -> u64 {
+            self.0.transfer().manifest.original_size
+        }
+
+        fn compressed_size(&self) -> u64 {
+            self.0.transfer().manifest.compressed_size
         }
     }
 }

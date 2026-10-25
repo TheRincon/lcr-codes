@@ -114,7 +114,8 @@ just web          # run the illustrative example, needs a concurrent "cloudflare
 Requires a Rust toolchain, plus [`just`](https://github.com/casey/just),
 [`wasm-tools`](https://github.com/bytecodealliance/wasm-tools), `zstd`, and
 [`cbindgen`](https://github.com/mozilla/cbindgen) (`cargo install --locked cbindgen`) for
-the C header check. On x86 and x86_64 the CLI's AVIF support also needs `nasm`.
+the C header check. On x86 and x86_64 the CLI's opt-in AVIF support, which `just test`
+builds, also needs `nasm`.
 
 `just hooks` points git at `.githooks`, whose `pre-push` runs `just pre-push`: formatting,
 clippy and the test suite. GitHub Actions runs the full `just ci` on every push, adding the
@@ -137,12 +138,13 @@ lcr capacity                                 # bytes per version and profile
 
 lcr send report.pdf -o symbols/              # a file as a sequence of symbols
 lcr receive symbols/*.png                    # any order; names what is missing
+lcr send big.zip -o frames/ --fountain       # a carousel: any ~K of its frames will do (feature `fountain`)
 ```
 
-`lcr decode` reads PNG, JPEG, WebP, JPEG XL and AVIF. lcr decode picks the format from the file's contents, **not its extension**. This can be a gotcha, but was intended to avoid security issues.
+`lcr decode` reads PNG, JPEG and WebP, plus JPEG XL and AVIF with `--features jxl,avif`. lcr decode picks the format from the file's contents, **not its extension**. This can be a gotcha, but was intended to avoid security issues.
 
 Each image format is a separate cargo feature, so a smaller build can
-drop what it does not need. HEIC (the iPhone camera's default), GIF, BMP, TIFF and camera
+drop what it does not need. JPEG XL and AVIF are off by default because together they nearly triple the binary's size. HEIC (the iPhone camera's default), GIF, BMP, TIFF and camera
 RAW, JPEG 2000, PSD and PDF are recognised but not read: `lcr` names the format and prints
 the command that converts that file to PNG — `sips` on macOS, ImageMagick elsewhere.
 

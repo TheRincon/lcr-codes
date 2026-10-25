@@ -986,15 +986,8 @@ pub unsafe extern "C" fn lcr_cft_split(
                 borrow(transfer_id, transfer_id_len, "transfer_id")?,
             )
         };
-        let name = if filename.is_null() {
-            None
-        } else {
-            // SAFETY: the caller promises a valid C string.
-            let s = unsafe { CStr::from_ptr(filename) }
-                .to_str()
-                .map_err(|e| fail(LCR_ERR_ARGUMENT, format!("`filename` is not UTF-8: {e}")))?;
-            (!s.is_empty()).then(|| s.to_owned())
-        };
+        // SAFETY: forwarded to the caller.
+        let name = unsafe { cft_filename(filename) }?;
         let t = lcr_cft::split(file, name, id.to_vec(), CFT_CODEC, chunk_size).map_err(failed)?;
         let handle = Box::new(LcrCftTransfer {
             messages: t.messages(),
@@ -1006,6 +999,133 @@ pub unsafe extern "C" fn lcr_cft_split(
         unsafe { out.write(Box::into_raw(handle)) };
         Ok(())
     })())
+}
+
+/// A CFT filename argument: null or empty for none, otherwise UTF-8.
+///
+/// # Safety
+///
+/// `filename` must be null or a valid C string.
+unsafe fn cft_filename(filename: *const c_char) -> Result<Option<String>, LcrStatus> {
+    if filename.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: the caller promises a valid C string.
+    let s = unsafe { CStr::from_ptr(filename) }
+        .to_str()
+        .map_err(|e| fail(LCR_ERR_ARGUMENT, format!("`filename` is not UTF-8: {e}")))?;
+    Ok((!s.is_empty()).then(|| s.to_owned()))
+}
+
+/// A fountain transfer (CFT.md §21): the source chunks once, then repair symbols without
+/// end, any slightly-more-than-`source_count` of which rebuild the file. Opaque; create
+/// with `lcr_cft_fountain_new`, release with `lcr_cft_fountain_free`.
+#[cfg(feature = "fountain")]
+pub struct LcrCftFountain(lcr_cft::Fountain);
+
+/// Compress and split `file` as `lcr_cft_split` does, and wrap the chunks as a fountain.
+/// Arguments are as for `lcr_cft_split`.
+///
+/// # Safety
+///
+/// As for `lcr_cft_split`.
+#[cfg(feature = "fountain")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lcr_cft_fountain_new(
+    file: *const u8,
+    file_len: usize,
+    filename: *const c_char,
+    transfer_id: *const u8,
+    transfer_id_len: usize,
+    chunk_size: u32,
+    out: *mut *mut LcrCftFountain,
+) -> LcrStatus {
+    nonnull!(out);
+    status((|| {
+        // SAFETY: forwarded to the caller.
+        let (file, id, name) = unsafe {
+            (
+                borrow(file, file_len, "file")?,
+                borrow(transfer_id, transfer_id_len, "transfer_id")?,
+                cft_filename(filename)?,
+            )
+        };
+        let t = lcr_cft::split(file, name, id.to_vec(), CFT_CODEC, chunk_size).map_err(failed)?;
+        let handle = Box::new(LcrCftFountain(lcr_cft::Fountain::new(t)));
+        // SAFETY: checked non-null.
+        unsafe { out.write(Box::into_raw(handle)) };
+        Ok(())
+    })())
+}
+
+/// Release a fountain. Null is ignored.
+///
+/// # Safety
+///
+/// `f` must be null or a live handle from `lcr_cft_fountain_new`.
+#[cfg(feature = "fountain")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lcr_cft_fountain_free(f: *mut LcrCftFountain) {
+    if !f.is_null() {
+        // SAFETY: the caller promises a live handle from `Box::into_raw`.
+        drop(unsafe { Box::from_raw(f) });
+    }
+}
+
+/// The message for frame `n` of the carousel, counting from 0: the manifest every eighth
+/// frame, otherwise the source chunks once and then repair symbols. Encode each with
+/// `lcr_encode_bytes` and show them in order. Free `out` with `lcr_bytes_free`.
+///
+/// # Safety
+///
+/// `f` must be a live handle and `out` valid for writes.
+#[cfg(feature = "fountain")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lcr_cft_fountain_frame(
+    f: *const LcrCftFountain,
+    n: u64,
+    out: *mut LcrBytes,
+) -> LcrStatus {
+    nonnull!(f, out);
+    // SAFETY: checked non-null.
+    unsafe { out.write(LcrBytes::from_vec((*f).0.frame(n))) };
+    LCR_OK
+}
+
+/// Source chunk count, `K`. Zero for null.
+///
+/// # Safety
+///
+/// `f` must be null or a live handle.
+#[cfg(feature = "fountain")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lcr_cft_fountain_source_count(f: *const LcrCftFountain) -> u32 {
+    // SAFETY: the caller promises null or a live handle.
+    unsafe { f.as_ref() }.map_or(0, |f| f.0.source_count())
+}
+
+/// The file's size before compression. Zero for null.
+///
+/// # Safety
+///
+/// `f` must be null or a live handle.
+#[cfg(feature = "fountain")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lcr_cft_fountain_original_size(f: *const LcrCftFountain) -> u64 {
+    // SAFETY: the caller promises null or a live handle.
+    unsafe { f.as_ref() }.map_or(0, |f| f.0.transfer().manifest.original_size)
+}
+
+/// The compressed stream's size. Zero for null.
+///
+/// # Safety
+///
+/// `f` must be null or a live handle.
+#[cfg(feature = "fountain")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lcr_cft_fountain_compressed_size(f: *const LcrCftFountain) -> u64 {
+    // SAFETY: the caller promises null or a live handle.
+    unsafe { f.as_ref() }.map_or(0, |f| f.0.transfer().manifest.compressed_size)
 }
 
 /// Release a transfer. Null is ignored.
@@ -1167,8 +1287,9 @@ pub unsafe extern "C" fn lcr_cft_receiver_free(r: *mut LcrCftReceiver) {
     }
 }
 
-/// Feed one decoded CFT message — manifest or chunk, in any order. `out` may be null;
-/// otherwise it receives the status after this message.
+/// Feed one decoded CFT message — manifest, chunk, or with the `fountain` feature a repair
+/// symbol — in any order.
+/// `out` may be null; otherwise it receives the status after this message.
 ///
 /// # Safety
 ///
@@ -1206,6 +1327,18 @@ pub unsafe extern "C" fn lcr_cft_receiver_status(r: *const LcrCftReceiver) -> Lc
         Some(r) => cft_status_out(r.0.status()),
         None => cft_status_out(lcr_cft::Status::AwaitingManifest { held: 0 }),
     }
+}
+
+/// Fountain repair symbols held that have not yet resolved to a chunk. Zero for null.
+///
+/// # Safety
+///
+/// `r` must be null or a live handle.
+#[cfg(feature = "fountain")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lcr_cft_receiver_pending(r: *const LcrCftReceiver) -> u32 {
+    // SAFETY: the caller promises null or a live handle.
+    unsafe { r.as_ref() }.map_or(0, |r| u32::try_from(r.0.pending()).unwrap_or(u32::MAX))
 }
 
 /// Chunk indices still outstanding (CFT.md §10) — what a receiver shows so the sender

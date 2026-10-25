@@ -58,7 +58,8 @@ jobs:
       - name: Ensure zstd
         run: command -v zstd || sudo apt-get install -y zstd
 
-      # The CLI's AVIF decoder (`rav1d`) builds hand-written x86 assembly, which needs it.
+      # The CLI's opt-in AVIF decoder (`rav1d`) builds hand-written x86 assembly, which
+      # needs it. Off by default, but `just ci` tests and lints the CLI with every feature.
       - name: Ensure nasm
         run: command -v nasm || sudo apt-get install -y nasm
 
