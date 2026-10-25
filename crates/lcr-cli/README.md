@@ -14,13 +14,18 @@ lcr receive symbols/*.png                    # any order; names what is missing
 lcr send big.zip -o frames/ --fountain       # a carousel: any ~K of its frames will do (feature `fountain`)
 ```
 
-`lcr decode` reads PNG, JPEG, WebP, JPEG XL and AVIF, identified by content rather than file
-name, in pure Rust. Formats it cannot read, such as HEIC, get a ready-made command to convert
-them.
+`lcr decode` reads PNG, JPEG and WebP, identified by content rather than file name, in pure
+Rust. Formats it cannot read, such as HEIC, get a ready-made command to convert them.
 
-**Building on x86 or x86_64 needs [`nasm`](https://www.nasm.us/)** for the AVIF decoder's
-assembly (`brew install nasm`, `apt install nasm`). Build without AVIF with
-`cargo install lcr-cli --no-default-features --features png,jpeg,webp,jxl`. Requires Rust 1.98.
+JPEG XL and AVIF are opt-in, since together they nearly triple the binary's size:
+
+```bash
+cargo install lcr-cli --features jxl,avif
+```
+
+**AVIF on x86 or x86_64 needs [`nasm`](https://www.nasm.us/)** for the decoder's assembly
+(`brew install nasm`, `apt install nasm`), and Rust 1.98. The pre-built binaries on the
+releases page have the default formats.
 
 ---
 

@@ -102,7 +102,10 @@ test: component _component-compare
     # illustration, not a shipped feature. `compare` above carries it into the demo
     # component; these are its native tests.
     cargo test -p lcr-cft --profile release-tests --features fountain
-    cargo test -p lcr-cli --profile release-tests --features fountain
+    # `--all-features` also brings in the opt-in JPEG XL and AVIF decoders, so the fixture
+    # test reads every format. The default build's own run above checks the other side:
+    # that a format left out names the feature to rebuild with.
+    cargo test -p lcr-cli --profile release-tests --all-features
 
 # Exercise `debug_assert!`, which the release suite above compiles out.
 #
@@ -135,7 +138,11 @@ fmt-check:
 
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo clippy -p lcr-cft -p lcr-cli -p lcr-ffi --all-targets --features fountain -- -D warnings
+    cargo clippy -p lcr-cft -p lcr-ffi --all-targets --features fountain -- -D warnings
+    # Both ends of the CLI's image formats: every one, and none — the build where code
+    # shared between decoders goes unused.
+    cargo clippy -p lcr-cli --all-targets --all-features -- -D warnings
+    cargo clippy -p lcr-cli --all-targets --no-default-features -- -D warnings
 
 # ---------------------------------------------------------------- component
 

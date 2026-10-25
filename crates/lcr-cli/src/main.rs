@@ -4,8 +4,8 @@
 //! `lcr-encode`, `lcr-decode` or `lcr-cft`, and output formatting. Nothing here is logic
 //! the libraries lack, so anything the CLI can do a Rust or C host can do the same way.
 //!
-//! Image input goes through [`load`], which reads PNG, JPEG, WebP, JPEG XL and AVIF by
-//! content rather than by extension.
+//! Image input goes through [`load`], which reads PNG, JPEG and WebP — and JPEG XL and
+//! AVIF behind their features — by content rather than by extension.
 
 mod load;
 
@@ -361,7 +361,7 @@ fn encode(a: EncodeArgs) -> Result {
 
 #[derive(Args)]
 struct DecodeArgs {
-    /// Images to read: PNG, JPEG, WebP, JPEG XL or AVIF.
+    /// Images to read: PNG, JPEG or WebP, and JPEG XL or AVIF in builds with those features.
     #[arg(required = true)]
     images: Vec<PathBuf>,
     /// Treat the images as frames of one symbol and combine them before decoding (§12.4).

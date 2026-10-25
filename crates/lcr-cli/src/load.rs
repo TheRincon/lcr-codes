@@ -226,7 +226,8 @@ pub fn load_bytes(data: &[u8]) -> Result<Frame, String> {
     let format = sniff(data).ok_or("not a recognised image (PNG, JPEG, WebP, JPEG XL or AVIF)")?;
     let missing = |feature: &str| {
         Err(format!(
-            "{} support is not compiled into this build (cargo feature `{feature}`)",
+            "{} support is not compiled into this build: rebuild with \
+             `cargo install lcr-cli --features {feature}`, or convert it to PNG",
             format.name()
         ))
     };
@@ -271,6 +272,13 @@ pub fn load_bytes(data: &[u8]) -> Result<Frame, String> {
 
 /// Pack interleaved 8-bit samples with `channels` per pixel: 1 grey, 2 grey + alpha,
 /// 3 RGB, 4 RGBA. Grey stays grey and colour becomes RGB8; alpha is composited over white.
+#[cfg(any(
+    feature = "png",
+    feature = "jpeg",
+    feature = "webp",
+    feature = "jxl",
+    feature = "avif"
+))]
 fn to_rgb(samples: &[u8], channels: usize, width: u32, height: u32) -> Result<Frame, String> {
     let n = width as usize * height as usize;
     if samples.len() < n * channels {
@@ -547,6 +555,13 @@ mod tests {
         assert_eq!(quote(Path::new("it's.gif")), r"'it'\''s.gif'");
     }
 
+    #[cfg(any(
+        feature = "png",
+        feature = "jpeg",
+        feature = "webp",
+        feature = "jxl",
+        feature = "avif"
+    ))]
     #[test]
     fn alpha_composites_over_white() {
         let f = to_rgb(&[0, 0, 0, 0, 10, 20, 30, 255], 4, 2, 1).unwrap();

@@ -93,27 +93,16 @@ jobs:
           rustup toolchain install
           rustup target add "$CLI" "$LIB"
 
-      # `rav1d`, the CLI's AVIF decoder, assembles hand-written x86 code with nasm. On
-      # ARM it compiles GNU assembler sources with the C compiler instead.
-      - name: Install nasm
-        if: startsWith(matrix.cli, 'x86_64')
-        run: |
-          case "$RUNNER_OS" in
-            Linux)   sudo apt-get install -y nasm ;;
-            macOS)   brew install nasm ;;
-            Windows) choco install nasm -y --no-progress
-                     echo "C:\\Program Files\\NASM" >> "$GITHUB_PATH" ;;
-          esac
-
-      # The musl target's C compiler, for rav1d's ARM assembly — and named for the x86
-      # build too, so neither falls back to compiling against glibc's headers.
-      - name: Install musl-gcc
-        if: contains(matrix.cli, 'musl')
-        run: |
-          sudo apt-get install -y musl-tools
-          echo "CC_${CLI//-/_}=musl-gcc" >> "$GITHUB_ENV"
-
+      # Default features: PNG, JPEG and WebP. The opt-in JPEG XL and AVIF decoders are two
+      # thirds of the binary's size, and AVIF would bring back the build's only C and
+      # assembly (`rav1d`: nasm on x86, musl-gcc for the static Linux builds).
+      #
+      # Stripped, because the release profile is shared with builds that want their
+      # symbols: the test suite's backtraces, and the wasm core module, which keeps its
+      # names so a trap is debuggable there. The symbol table was 10% of the binary.
       - name: Build lcr
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: symbols
         run: cargo build -p lcr-cli --release --locked --target "$CLI"
 
       # `cargo rustc` rather than `cargo build` only to get rustc's list of the system

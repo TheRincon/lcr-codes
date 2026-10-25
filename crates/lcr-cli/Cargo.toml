@@ -3,10 +3,9 @@ name = "lcr-cli"
 description = "The `lcr` command: encode, decode, probe and transfer files as LCR Code symbols"
 version.workspace = true
 edition.workspace = true
-# Above the workspace's 1.94, and only here: `avif-decode` needs 1.98. The libraries keep
-# the lower floor; a user who needs the CLI on an older toolchain can build it with
-# `--no-default-features --features png,jpeg,webp,jxl`.
-rust-version = "1.98"
+# The workspace's 1.94. The opt-in `avif` feature needs 1.98, which `avif-decode` declares
+# itself, so cargo names it if an older toolchain tries.
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -19,17 +18,21 @@ name = "lcr"
 path = "src/main.rs"
 
 [features]
-# Every image format `lcr decode` can read is a feature, all on by default, so a build
-# that needs a smaller tree — or has no assembler for AVIF — can drop what it does not use.
-# A format is detected from the file's leading bytes, never its extension.
-default = ["png", "jpeg", "webp", "jxl", "avif"]
+# Every image format `lcr decode` can read is a feature. A format is detected from the
+# file's leading bytes, never its extension.
+#
+# PNG, JPEG and WebP are on by default: screenshots, camera photos and the web, for 380 KB
+# of decoder between them. JPEG XL and AVIF are opt-in, because they are 1.2 MB and 1.4 MB
+# respectively — two thirds of a binary that had all five — for formats few captures
+# arrive in. A file in a format left out gets an error naming the feature to rebuild with.
+default = ["png", "jpeg", "webp"]
 png = ["dep:png"]
 jpeg = ["dep:zune-jpeg"]
 webp = ["dep:image-webp"]
 jxl = ["dep:jxl-oxide"]
 # AV1 still images, through `rav1d` (a Rust port of dav1d). On x86 and x86_64 `rav1d`
 # turns on its hand-written assembly, which needs `nasm` at build time; on ARM it is pure
-# Rust. See README.md.
+# Rust. Needs Rust 1.98. See README.md.
 avif = ["dep:avif-decode"]
 # `lcr send --fountain` and receiving one (docs/CFT.md §21). Off by default: the demo's
 # illustration of a one-way carousel, not something most transfers need.
@@ -46,7 +49,7 @@ lcr-cft = { workspace = true, features = ["std", "deflate"] }
 
 clap = { version = "4.6", features = ["derive"] }
 
-# Image decoders. Pure Rust throughout (see `avif` above for the one build-time caveat).
+# Image decoders. Pure Rust throughout (see `avif` above for its build-time caveat).
 png = { version = "0.18", optional = true }
 zune-jpeg = { version = "0.5", optional = true }
 image-webp = { version = "0.2", optional = true }

@@ -205,20 +205,34 @@ fn send_and_receive_a_file() {
 /// The fixtures come from ImageMagick (JPEG, AVIF, both PNG variants), `cwebp` and `cjxl`,
 /// all lossy except the PNGs, so this checks the decoders against files this project did
 /// not write — and, in CI, that AVIF builds and decodes on x86 as well as ARM.
+///
+/// Each format only when its feature is on; `just test` turns them all on. A format left
+/// out must say which feature brings it back.
 #[test]
 fn every_format_decodes() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    for name in [
-        "symbol.png",
-        "symbol-rgba.png",
-        "symbol-indexed.png",
-        "symbol.jpg",
-        "symbol.webp",
-        "symbol.jxl",
-        "symbol.avif",
+    for (name, feature, on) in [
+        ("symbol.png", "png", cfg!(feature = "png")),
+        ("symbol-rgba.png", "png", cfg!(feature = "png")),
+        ("symbol-indexed.png", "png", cfg!(feature = "png")),
+        ("symbol.jpg", "jpeg", cfg!(feature = "jpeg")),
+        ("symbol.webp", "webp", cfg!(feature = "webp")),
+        ("symbol.jxl", "jxl", cfg!(feature = "jxl")),
+        ("symbol.avif", "avif", cfg!(feature = "avif")),
     ] {
-        let out = ok(&["decode", s(&dir.join(name))]);
-        assert_eq!(stdout(&out).trim(), r#"{"fixture":true}"#, "{name}");
+        let path = dir.join(name);
+        if on {
+            let out = ok(&["decode", s(&path)]);
+            assert_eq!(stdout(&out).trim(), r#"{"fixture":true}"#, "{name}");
+        } else {
+            let out = lcr(&["decode", s(&path)]);
+            assert!(!out.status.success(), "{name}");
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                err.contains(&format!("--features {feature}")),
+                "{name}: {err}"
+            );
+        }
     }
 }
 
