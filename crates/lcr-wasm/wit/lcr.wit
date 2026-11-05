@@ -302,10 +302,9 @@ interface compare {
 /// Chunked file transfer (docs/CFT.md), so a payload larger than one symbol can cross as
 /// a sequence of them.
 ///
-/// **Deflate, not Zstandard.** CFT.md makes zstd the codec and the project grants it a C
-/// exception, but `zstd-sys` compiles C and there is no C toolchain for
-/// `wasm32-unknown-unknown`. The manifest names whichever codec was used, so a browser
-/// sender and a browser receiver agree without either being told.
+/// Sends Zstandard, CFT.md's preferred codec, through the pure-Rust `zalt-codec`, and also
+/// receives Deflate from a 0.4 sender. The manifest names whichever codec was used, so a
+/// sender and a receiver agree without either being told.
 ///
 /// Exported by the encode-bearing worlds only. A scanner build would want the receiving
 /// half, but §14.2's size budget has no room for it — a shipping scanner should reassemble

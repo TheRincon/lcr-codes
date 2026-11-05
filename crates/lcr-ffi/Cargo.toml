@@ -29,7 +29,7 @@ lcr-core = { workspace = true, features = ["std", "deflate"] }
 lcr-decode = { workspace = true, features = ["std", "deflate"] }
 lcr-encode = { workspace = true, features = ["std", "deflate"] }
 lcr-render = { workspace = true, features = ["std"] }
-# Deflate only, not the crate's default zstd. A transfer written here must be readable by
-# the browser build, which cannot have zstd (see `cft` in crates/lcr-wasm/wit/lcr.wit), and
-# leaving zstd out also keeps a C compiler out of this crate's build.
-lcr-cft = { workspace = true, features = ["std", "deflate"] }
+# Zstandard to send, like the component, so a transfer written here is readable by the
+# browser build. Deflate as well, to receive what a 0.4 sender wrote; the manifest names the
+# codec.
+lcr-cft = { workspace = true, features = ["std", "zstd", "deflate"] }

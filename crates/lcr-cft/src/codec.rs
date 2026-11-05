@@ -1,6 +1,8 @@
 //! Compression, CFT.md §5.
 //!
-//! ZALT will be the compression lib. Forthcoming change.
+//! Zstandard is `zalt-codec`: pure Rust, `no_std` and free of `unsafe`, so the codec CFT.md
+//! prefers is available in every build, the browser's included. It reads and writes standard
+//! RFC 8878 frames, so the format is still zstd and any other implementation interoperates.
 
 use crate::CftError;
 use alloc::vec::Vec;
@@ -59,18 +61,21 @@ impl Compression {
         match self {
             Compression::None => Ok(data.to_vec()),
             #[cfg(feature = "zstd")]
-            // Level 19, and **not** 20–22. CFT compresses once, offline, so a slow level
-            // costs nothing at transfer time and the temptation is to turn it up. Measured
-            // on 2026-09-24, 19 → 22 is worth nothing at all:
+            // Level 19, the highest there is: CFT compresses once, offline, so a slow level
+            // costs nothing at transfer time. Against libzstd at the same level, measured on
+            // 2026-11-03, it comes out 0–2.5% larger on source, JSON, logs and wasm.
             //
-            //   tikz.pdf      17,992 → 17,992   ( 0.00%)
-            //   kino_ticket   98,547 → 98,542   (-0.01%)
-            //   5.2 MB manual  5,092,997 → 5,092,993  (+0.00%)
-            //   685 KB source    168,545 →   168,543  (-0.00%)
-            //
-            // Four bytes on five megabytes. `--ultra` also raises the decoder's window to
-            // 128 MB, which is a real cost on a phone for no measurable gain.
-            Compression::Zstd => zstd::encode_all(data, 19).map_err(|_| CftError::Codec),
+            // `Strategy::Compress` has to be asked for; the default only stores. No content
+            // checksum, because the manifest's SHA-256 already covers the file.
+            Compression::Zstd => zalt_codec::encode::compress(
+                data,
+                &zalt_codec::encode::EncodeParams {
+                    level: zalt_codec::encode::level::LEVEL_MAX,
+                    strategy: zalt_codec::encode::Strategy::Compress,
+                    ..Default::default()
+                },
+            )
+            .map_err(|_| CftError::Codec),
             #[cfg(feature = "deflate")]
             // miniz_oxide directly, not `lcr_core::frame::compress`. The frame helpers are
             // sized for what one symbol carries; CFT compresses a whole file. See the
@@ -92,19 +97,7 @@ impl Compression {
         let out = match self {
             Compression::None => data.to_vec(),
             #[cfg(feature = "zstd")]
-            Compression::Zstd => {
-                use std::io::Read;
-                let mut decoder = zstd::stream::Decoder::new(data).map_err(|_| CftError::Codec)?;
-                let mut out = Vec::new();
-                // `take` bounds the read at one byte past the promise, so an overlong
-                // stream is detected without ever buffering it.
-                decoder
-                    .by_ref()
-                    .take(max_output.saturating_add(1))
-                    .read_to_end(&mut out)
-                    .map_err(|_| CftError::Codec)?;
-                out
-            }
+            Compression::Zstd => decompress_zstd(data, max_output)?,
             #[cfg(feature = "deflate")]
             // **Not** `lcr_core::frame::decompress`: that caps output at `MAX_PAYLOAD`
             // (65,532 bytes), which is the most a single LCR Code frame can hold and has
@@ -130,5 +123,62 @@ impl Compression {
             });
         }
         Ok(out)
+    }
+}
+
+/// The largest window a received stream may declare: 8 MiB, RFC 8878's interop floor and the
+/// most any level of our own encoder uses. Checked before the window is allocated, so a
+/// hostile manifest's stream cannot ask a phone for gigabytes in one header.
+#[cfg(feature = "zstd")]
+const MAX_WINDOW_LOG: u8 = 23;
+
+/// Decode a whole stream, bounded by `max_output`.
+///
+/// **A loop, not `zalt_codec::decode::decompress`.** Its `max_decoded_size` counts per frame
+/// and RFC 8878 allows frames to be concatenated, so a 43 KB stream of 1,024 frames decodes
+/// to 1 GiB under a 1 MiB limit (docs/zalt-decoded-size-gap.md). Each call here returns at a
+/// frame boundary with that frame capped, so checking the running total after each one
+/// holds memory to about twice `max_output`.
+///
+/// An overlong stream is `SizeMismatch`, as with the other codecs, not an opaque codec error.
+#[cfg(feature = "zstd")]
+fn decompress_zstd(data: &[u8], max_output: u64) -> Result<Vec<u8>, CftError> {
+    use zalt_codec::decode::{ScalarDecoder, Status};
+
+    let cap = max_output.saturating_add(1);
+    let too_long = || CftError::SizeMismatch {
+        expected: max_output,
+        actual: cap,
+    };
+    let mut decoder = ScalarDecoder::new(zalt_codec::params::DecodeLimits {
+        max_window_log: MAX_WINDOW_LOG,
+        max_decoded_size: Some(cap),
+    });
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    loop {
+        let progress = decoder
+            .decompress(&data[cursor..], &mut out)
+            .map_err(|e| match e {
+                zalt_codec::Error::TooLarge => too_long(),
+                _ => CftError::Codec,
+            })?;
+        cursor += progress.consumed;
+        if out.len() as u64 > max_output {
+            return Err(too_long());
+        }
+        match progress.status {
+            Status::FrameComplete if cursor >= data.len() => return Ok(out),
+            Status::FrameComplete => {}
+            // Ended on a skippable frame: complete, unless there were never any frames.
+            Status::NeedMoreInput if progress.consumed == 0 => {
+                return if cursor > 0 && decoder.is_between_frames() {
+                    Ok(out)
+                } else {
+                    Err(CftError::Codec)
+                };
+            }
+            Status::NeedMoreInput => {}
+        }
     }
 }

@@ -43,9 +43,10 @@ lcr-core = { workspace = true, features = ["std", "deflate"] }
 lcr-decode = { workspace = true, features = ["std", "deflate"] }
 lcr-encode = { workspace = true, features = ["std", "deflate"] }
 lcr-render = { workspace = true, features = ["std", "png"] }
-# Deflate only, like lcr-ffi and the component, so a transfer sent from the command line
-# can be received by the browser demo and vice versa.
-lcr-cft = { workspace = true, features = ["std", "deflate"] }
+# Zstandard to send, like lcr-ffi and the component, so a transfer sent from the command
+# line can be received by the browser demo and vice versa. Deflate as well, to receive what
+# a 0.4 sender wrote; the manifest names the codec.
+lcr-cft = { workspace = true, features = ["std", "zstd", "deflate"] }
 
 clap = { version = "4.6", features = ["derive"] }
 

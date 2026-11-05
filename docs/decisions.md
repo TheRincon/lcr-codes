@@ -1606,6 +1606,49 @@ De-duplication bought correctness rather than size. The luma-order change is the
 and stays. The ring-outline change saves work at run time for 450 bytes; it is the cheapest
 thing here to give back if bytes matter more than scan time.
 
+### D29. CFT sends Zstandard through ZALT, in every build
+
+`lcr-cft` now uses [`zalt-codec`](https://crates.io/crates/zalt-codec) in place of the `zstd`
+crate. The format is unchanged: standard RFC 8878 frames with the same wire value, 3, so
+`Compression::Zstd` keeps its name.
+
+Before this, the crate's only zstd support compiled C, which kept it out of the browser. The
+CLI, the C library and the component all sent Deflate so that any of them could read the
+others, which meant nothing shipped used CFT.md's preferred codec. `zalt-codec` is pure Rust,
+`no_std` and `forbid(unsafe_code)`, so all three now send zstd. They still receive Deflate from
+a 0.4 sender, because the manifest names the codec.
+
+Sending side, in the component under Node, against the Deflate it replaces:
+
+| File | Original | Deflate | ZALT 19 | Chunks of 1000 B | `split`, Deflate → ZALT |
+|---|---|---|---|---|---|
+| Sweep logs | 1,624,064 | 87,082 | 46,826 | 88 → 47 | 87 → 884 ms |
+| JSON records | 3,990,424 | 1,083,108 | 909,558 | 1084 → 910 | 340 → 4,875 ms |
+| Source tree | 3,502,080 | 1,988,734 | 1,845,663 | 1989 → 1846 | 309 → 1,099 ms |
+| `lcr-code.wasm` | 356,346 | 162,835 | 148,746 | 163 → 149 | 38 → 127 ms |
+| Random | 1,000,000 | 1,000,160 | 1,000,034 | 1001 → 1001 | 43 → 86 ms |
+
+Against libzstd at level 19 it comes out 0–2.5% larger on these. Decoding matches Deflate in the
+component, within a few milliseconds. Three costs, accepted:
+
+- **Size.** `lcr-code.wasm` goes from 356,346 to 443,874 bytes (+88 KB, or +32 KB under zstd),
+  the CLI by 99 KB and the C library by 99 KB, because all carry the encoder. The scanner has no
+  CFT and stays at 200,049.
+- **Compression time.** Level 19 takes seconds on a large file in the browser, on the main
+  thread, and `transfer.html` compresses more than once while choosing a layout. That is small
+  beside the transfer itself: 174 fewer chunks on the JSON above saves 43 s at 4 frames per
+  second.
+- **A narrower window for received streams.** 8 MiB rather than libzstd's default limit of
+  128 MiB, so a stream from `zstd --ultra` or `--long` is refused (CFT.md §5). `zstd -19` stays
+  within it, checked on a 17 MB file, and no shipped build ever sent zstd at all.
+
+The output limit in `zalt-codec` counts per frame, so `lcr-cft` also checks the total across
+frames itself. See `zalt-decoded-size-gap.md`.
+
+To return a build to Deflate, change `CODEC` in `crates/lcr-wasm/src/component.rs`, `CFT_CODEC`
+in `crates/lcr-ffi/src/lib.rs` and the `split` call in `crates/lcr-cli/src/main.rs`, and drop
+the `zstd` feature there.
+
 ## Pinned — filling holes the draft left open
 
 | # | Spec item | Pinned as | Where |

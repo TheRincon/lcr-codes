@@ -7,8 +7,10 @@ order, reports which chunks are missing, and returns the file only when its hash
 Size limits are checked before anything is allocated, so a hostile manifest cannot exhaust
 memory.
 
-Deflate is pure Rust and always available. The default `zstd` feature adds Zstandard, which
-compiles C.
+The default `zstd` feature compresses with Zstandard through
+[`zalt-codec`](https://crates.io/crates/zalt-codec), pure Rust that writes standard RFC 8878
+frames and builds for WebAssembly. Received streams may declare a window of at most 8 MiB.
+The `deflate` feature adds DEFLATE.
 
 ---
 

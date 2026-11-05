@@ -349,7 +349,7 @@ fn svg_and_capacity() {
 
 #[test]
 fn cft_transfers_a_file_across_symbols() {
-    // xorshift: deterministic, and incompressible enough that deflate cannot fold 6000
+    // xorshift: deterministic, and incompressible enough that zstd cannot fold 6000
     // bytes into one symbol.
     let mut s = 0x9e37_79b9u32;
     let file: Vec<u8> = (0..6000)

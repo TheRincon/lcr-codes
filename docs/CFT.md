@@ -162,7 +162,14 @@ The initial format supports:
 7: "zstd"
 ```
 
-The data being chunked is the **compressed Zstandard byte stream**.
+The data being chunked is the **compressed Zstandard byte stream**: standard RFC 8878 frames,
+which `lcr-cft` writes and reads with the pure-Rust [ZALT](https://github.com/TheRincon/zalt).
+
+A receiver bounds what it decodes, because the stream comes from whoever is sending:
+
+* The stream's window may be at most **8 MiB**, RFC 8878's interop floor. `zstd` up to level 19
+  stays within it; `--ultra` levels and `--long` do not.
+* The output, across all frames, may not exceed the manifest's `original_size`.
 
 The pipeline is therefore:
 

@@ -843,7 +843,7 @@ fn send(a: SendArgs) -> Result {
             &file,
             name.clone(),
             id.clone(),
-            lcr_cft::Compression::Deflate,
+            lcr_cft::Compression::Zstd,
             chunk,
         )
         .map_err(err)?;

@@ -223,7 +223,7 @@ function settings() {
     profile: $('profile').value,
     eccLuma: ecc,
     eccChroma: ecc,
-    // The payload is already deflated by CFT, so a second pass is wasted work.
+    // The payload is already compressed by CFT, so a second pass is wasted work.
     compression: 'none',
     referenceBorder: true,
     mask: undefined,

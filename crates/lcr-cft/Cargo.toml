@@ -14,11 +14,9 @@ categories = ["encoding", "compression"]
 [features]
 default = ["std", "zstd"]
 std = ["lcr-core/std"]
-# Zstandard via the reference C library. CFT.md makes this the preferred codec and the
-# project grants it an explicit exception to §14.2's no-C rule — but the exception is
-# scoped: `lcr-wasm` must not enable it, because zstd-sys cannot build for
-# wasm32-unknown-unknown. See the note in `codec.rs`.
-zstd = ["dep:zstd", "std"]
+# Zstandard through `zalt-codec`: pure Rust, `no_std` and free of `unsafe`, so unlike the
+# reference C library it builds for wasm32-unknown-unknown and needs no §14.2 exception.
+zstd = ["dep:zalt-codec"]
 deflate = ["dep:miniz_oxide"]
 brotli = ["lcr-core/brotli"]
 # Fountain repair symbols (docs/CFT.md §21): a one-way carousel any slightly-more-than-all
@@ -30,7 +28,7 @@ fountain = []
 [dependencies]
 lcr-core = { workspace = true }
 sha2 = { workspace = true }
-zstd = { version = "0.13", optional = true }
+zalt-codec = { version = "0.1", optional = true }
 miniz_oxide = { workspace = true, optional = true }
 
 [[test]]

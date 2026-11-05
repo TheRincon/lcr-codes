@@ -222,10 +222,9 @@ mod cft_impl {
     };
     use lcr_cft::{Compression, Reassembler, Status};
 
-    /// **Deflate, not Zstandard.** `zstd-sys` compiles C and there is no C toolchain for
-    /// `wasm32-unknown-unknown`, so the browser build uses the pure-Rust codec. The
-    /// manifest records the choice, so a receiver is never guessing.
-    pub(super) const CODEC: Compression = Compression::Deflate;
+    /// Zstandard, CFT.md's preferred codec, through the pure-Rust `zalt-codec`. The manifest
+    /// records the choice, so a receiver is never guessing.
+    pub(super) const CODEC: Compression = Compression::Zstd;
 
     fn status_out(s: Status) -> WitStatus {
         match s {

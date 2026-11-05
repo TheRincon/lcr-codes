@@ -942,10 +942,9 @@ pub unsafe extern "C" fn lcr_json_to_cbor(
 
 // ---------------------------------------------------------------- cft
 
-/// **Deflate, not Zstandard**, to match the WebAssembly component: a transfer split here
-/// must be receivable by a browser, which cannot have zstd. The manifest names the codec,
-/// so a receiver is never guessing.
-const CFT_CODEC: lcr_cft::Compression = lcr_cft::Compression::Deflate;
+/// Zstandard, the same as the WebAssembly component. The manifest names the codec, so a
+/// receiver is never guessing.
+const CFT_CODEC: lcr_cft::Compression = lcr_cft::Compression::Zstd;
 
 /// A file, compressed and split into CFT messages (docs/CFT.md). Opaque; create with
 /// `lcr_cft_split`, release with `lcr_cft_transfer_free`.

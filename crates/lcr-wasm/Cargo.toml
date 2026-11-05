@@ -40,9 +40,9 @@ compare = ["encode", "lcr-render/qr", "lcr-cft/fountain"]
 lcr-core = { workspace = true, features = ["std", "deflate"] }
 lcr-decode = { workspace = true, features = ["std", "deflate"] }
 lcr-encode = { workspace = true, optional = true }
-# CFT with the pure-Rust codec only: `zstd-sys` compiles C and cannot target
-# wasm32-unknown-unknown. See `cft_impl::CODEC`.
-lcr-cft = { workspace = true, optional = true, default-features = false, features = ["std", "deflate"] }
+# CFT, sending Zstandard through `zalt-codec`, which is pure Rust. Deflate as well, to receive
+# what a 0.4 sender wrote; the manifest names the codec. See `cft_impl::CODEC`.
+lcr-cft = { workspace = true, optional = true, default-features = false, features = ["std", "zstd", "deflate"] }
 lcr-render = { workspace = true, optional = true }
 
 # Component Model bindings. Generates the guest side of wit/lcr.wit; the `wasm32-wasip2`

@@ -314,6 +314,125 @@ fn a_decompression_bomb_is_bounded_by_the_declared_size() {
     );
 }
 
+/// RFC 8878 allows frames to be concatenated, and `zalt-codec`'s output limit counts per
+/// frame: every frame here obeys the limit, and together they would be 1 GiB from 43 KB
+/// (docs/zalt-decoded-size-gap.md). The bound has to cover the whole stream.
+#[test]
+fn concatenated_frames_cannot_escape_the_declared_size() {
+    const LIMIT: usize = 1 << 20;
+    let frame = Compression::Zstd.compress(&vec![0u8; LIMIT]).unwrap();
+    let bomb = frame.repeat(1024);
+    assert!(bomb.len() < 64 << 10, "{} B", bomb.len());
+    assert!(matches!(
+        Compression::Zstd.decompress(&bomb, LIMIT as u64),
+        Err(CftError::SizeMismatch { .. })
+    ));
+
+    // Two frames landing exactly on the limit are a legitimate stream; one byte over is not.
+    let two = frame.repeat(2);
+    assert_eq!(
+        Compression::Zstd
+            .decompress(&two, 2 * LIMIT as u64)
+            .unwrap()
+            .len(),
+        2 * LIMIT
+    );
+    assert!(matches!(
+        Compression::Zstd.decompress(&two, 2 * LIMIT as u64 - 1),
+        Err(CftError::SizeMismatch { .. })
+    ));
+}
+
+/// A complete frame with no content, declaring `window` as its window descriptor.
+fn empty_frame(window: u8) -> Vec<u8> {
+    let magic = [0x28, 0xb5, 0x2f, 0xfd];
+    let last_empty_raw_block = [0x01, 0x00, 0x00];
+    [&magic[..], &[0x00, window], &last_empty_raw_block].concat()
+}
+
+/// The window is decoder memory, named by the sender in a header. 8 MiB is accepted and
+/// anything larger is refused, even with nothing in the frame to decode.
+#[test]
+fn a_window_over_8_mib_is_refused() {
+    assert_eq!(
+        Compression::Zstd.decompress(&empty_frame(13 << 3), 0),
+        Ok(vec![])
+    );
+    assert_eq!(
+        Compression::Zstd.decompress(&empty_frame(14 << 3), 0),
+        Err(CftError::Codec)
+    );
+}
+
+#[test]
+fn a_stream_may_end_on_a_skippable_frame_but_not_on_junk() {
+    let frame = Compression::Zstd.compress(b"hello").unwrap();
+    let skippable = [0x50, 0x2a, 0x4d, 0x18, 2, 0, 0, 0, 0xaa, 0xbb];
+    assert_eq!(
+        Compression::Zstd.decompress(&[&frame[..], &skippable].concat(), 5),
+        Ok(b"hello".to_vec())
+    );
+    for bad in [
+        &[][..],
+        &frame[..frame.len() - 1],
+        &[&frame[..], b"junk"].concat(),
+    ] {
+        assert_eq!(
+            Compression::Zstd.decompress(bad, 5),
+            Err(CftError::Codec),
+            "{bad:?}"
+        );
+    }
+}
+
+/// The format is what other implementations have to read: compare against stock `zstd`,
+/// which `just wasm-size` already requires, in both directions and at sizes either side of
+/// a block and a window.
+#[test]
+fn interoperates_with_the_reference_zstd() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    fn run_zstd(args: &[&str], input: &[u8]) -> Vec<u8> {
+        let mut child = Command::new("zstd")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("the `zstd` command, listed as a requirement in README.md");
+        let mut stdin = child.stdin.take().unwrap();
+        let input = input.to_vec();
+        let writer = std::thread::spawn(move || stdin.write_all(&input).unwrap());
+        let out = child.wait_with_output().unwrap();
+        writer.join().unwrap();
+        assert!(out.status.success());
+        out.stdout
+    }
+
+    for len in [0, 1, 1000, 128 << 10, (128 << 10) + 1, 3 << 20] {
+        // Text-like: repeats to find, entropy to code, and a little noise.
+        let mut x = 0x2545_f491u32;
+        let data: Vec<u8> = (0..len)
+            .map(|i: usize| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                b"the quick brown fox "[(i + (x as usize % 3)) % 20]
+            })
+            .collect();
+
+        let ours = Compression::Zstd.compress(&data).unwrap();
+        assert_eq!(run_zstd(&["-dc"], &ours), data, "zstd reads {len}");
+
+        let theirs = run_zstd(&["-19", "-c"], &data);
+        assert_eq!(
+            Compression::Zstd.decompress(&theirs, len as u64).unwrap(),
+            data,
+            "we read {len}"
+        );
+    }
+}
+
 #[test]
 fn an_empty_file_round_trips() {
     let t = split(
